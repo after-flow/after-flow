@@ -1,0 +1,438 @@
+@import 'tailwindcss';
+
+/**
+ * デザイントークン。
+ *
+ * 利用者はご家族を亡くされた直後の方で、高齢の場合も多い。
+ * 華やかさや情報密度より、落ち着き・可読性・迷わなさを優先する。
+ * 本文16px以上、コントラスト比 WCAG AA 相当を確保する（仕様書セクション11）。
+ */
+@theme {
+  /* 日本語は system フォントの品質が十分に高く、第三者への通信も増やさずに済む。
+     自前ホストの Noto Sans JP へ差し替える場合はこの変数だけを変更する。 */
+  --font-sans:
+    'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic',
+    Meiryo, system-ui, sans-serif;
+
+  /* ---- 地と文字：わずかに暖かいニュートラル（冷たい灰色を避ける） ---- */
+  --color-canvas: #f6f5f2;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f4f3ef;
+  --color-ink: #22262b;
+  --color-ink-muted: #4d545d;
+  --color-ink-faint: #6e757e;
+  --color-line: #e2e0da;
+  --color-line-strong: #cfccc4;
+
+  /* ---- 主色：藍。落ち着きと信頼、かつ日本語の書類に馴染む ---- */
+  --color-brand: #1f4468;
+  --color-brand-strong: #16334f;
+  --color-brand-soft: #eaf0f6;
+  --color-brand-line: #c6d7e6;
+
+  /* ---- 状態色：彩度を抑え、白背景でAAを満たす濃さに揃える ---- */
+  --color-state-gray: #565d66;
+  --color-state-gray-soft: #eeedea;
+  --color-state-gray-line: #d8d6d0;
+  --color-state-blue: #175288;
+  --color-state-blue-soft: #e8f0f8;
+  --color-state-blue-line: #bed5ea;
+  --color-state-green: #1a6042;
+  --color-state-green-soft: #e7f2ec;
+  --color-state-green-line: #bcdcc9;
+  --color-state-yellow: #7d5200;
+  --color-state-yellow-soft: #fbf1db;
+  --color-state-yellow-line: #e8d29c;
+  --color-state-red: #a52a21;
+  --color-state-red-soft: #fbeae8;
+  --color-state-red-line: #eec4bf;
+  --color-state-purple: #5f3a92;
+  --color-state-purple-soft: #f0ebf9;
+  --color-state-purple-line: #d5c8ee;
+
+  /* ---- 奥行き：影は弱く、輪郭は線で作る ---- */
+  --shadow-sm: 0 1px 2px rgba(34, 38, 43, 0.05), 0 1px 3px rgba(34, 38, 43, 0.04);
+  --shadow-md: 0 2px 6px rgba(34, 38, 43, 0.06), 0 8px 20px rgba(34, 38, 43, 0.05);
+  --shadow-lg: 0 8px 24px rgba(34, 38, 43, 0.1), 0 24px 48px rgba(34, 38, 43, 0.08);
+
+  --radius-card: 0.875rem;
+  --radius-control: 0.5rem;
+}
+
+@layer base {
+  html {
+    /* 高齢の利用者を想定し標準よりやや大きめ */
+    font-size: 17px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* 日本語は行間を広めに取るほうが読みやすい */
+    line-height: 1.85;
+    font-feature-settings: 'palt' 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-brand);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    line-height: 1.45;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+
+  /* 見出しは字面を締めて、本文との差を大きさだけに頼らない */
+  h1 {
+    letter-spacing: 0.005em;
+  }
+
+  ::selection {
+    background: var(--color-brand-soft);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* ---- 面 ---- */
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .card-quiet {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+  }
+
+  /* 一覧の行。押せることを、影ではなく左端の色と輪郭で示す */
+  .row-card {
+    position: relative;
+    display: block;
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-sm);
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease,
+      transform 0.15s ease;
+  }
+  .row-card:hover {
+    border-color: var(--color-brand-line);
+    box-shadow: var(--shadow-md);
+  }
+  .row-card:active {
+    transform: translateY(1px);
+  }
+
+  /* ---- セクション見出し ---- */
+  .section-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .eyebrow {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--color-ink-faint);
+  }
+
+  /* ---- バッジ（色 + 記号で区別する） ---- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.1rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.83rem;
+    font-weight: 700;
+    line-height: 1.7;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .badge-gray {
+    background: var(--color-state-gray-soft);
+    color: var(--color-state-gray);
+    border-color: var(--color-state-gray-line);
+  }
+  .badge-blue {
+    background: var(--color-state-blue-soft);
+    color: var(--color-state-blue);
+    border-color: var(--color-state-blue-line);
+  }
+  .badge-green {
+    background: var(--color-state-green-soft);
+    color: var(--color-state-green);
+    border-color: var(--color-state-green-line);
+  }
+  .badge-yellow {
+    background: var(--color-state-yellow-soft);
+    color: var(--color-state-yellow);
+    border-color: var(--color-state-yellow-line);
+  }
+  .badge-red {
+    background: var(--color-state-red-soft);
+    color: var(--color-state-red);
+    border-color: var(--color-state-red-line);
+  }
+  .badge-purple {
+    background: var(--color-state-purple-soft);
+    color: var(--color-state-purple);
+    border-color: var(--color-state-purple-line);
+  }
+
+  /* ---- 期限の色分け（通常＝グレー、3日前＝黄、当日・超過＝赤） ---- */
+  .deadline-normal {
+    color: var(--color-state-gray);
+  }
+  .deadline-soon {
+    color: var(--color-state-yellow);
+    font-weight: 700;
+  }
+  .deadline-urgent,
+  .deadline-overdue {
+    color: var(--color-state-red);
+    font-weight: 700;
+  }
+
+  /* ---- ボタン ---- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.9rem;
+    padding: 0.5rem 1.25rem;
+    border-radius: var(--radius-control);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition:
+      background-color 0.14s ease,
+      border-color 0.14s ease,
+      box-shadow 0.14s ease;
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--color-brand);
+    color: #fff;
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #16334f;
+  }
+  .btn-secondary {
+    background: var(--color-surface);
+    color: var(--color-brand);
+    border-color: var(--color-line-strong);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--color-brand-soft);
+    border-color: var(--color-brand-line);
+  }
+  .btn-danger {
+    background: var(--color-surface);
+    color: var(--color-state-red);
+    border-color: var(--color-state-red-line);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--color-state-red-soft);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--color-ink-muted);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-state-gray-soft);
+    color: var(--color-ink);
+  }
+  .btn-sm {
+    min-height: 2.35rem;
+    padding: 0.25rem 0.85rem;
+    font-size: 0.9rem;
+  }
+
+  /* ---- フォーム ---- */
+  .input,
+  .select,
+  .textarea {
+    width: 100%;
+    min-height: 2.9rem;
+    padding: 0.5rem 0.8rem;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-size: 1rem;
+    font-family: inherit;
+    transition:
+      border-color 0.14s ease,
+      box-shadow 0.14s ease;
+  }
+  .input:hover,
+  .select:hover,
+  .textarea:hover {
+    border-color: var(--color-ink-faint);
+  }
+  .input:focus,
+  .select:focus,
+  .textarea:focus {
+    border-color: var(--color-brand);
+  }
+  .textarea {
+    min-height: 6rem;
+    line-height: 1.8;
+  }
+  .input[aria-invalid='true'],
+  .select[aria-invalid='true'],
+  .textarea[aria-invalid='true'] {
+    border-color: var(--color-state-red);
+    background: var(--color-state-red-soft);
+  }
+
+  /* ---- 警告バナー：左の帯で強さを示す ---- */
+  .banner {
+    display: flex;
+    gap: 0.8rem;
+    padding: 0.95rem 1.1rem;
+    border-radius: var(--radius-card);
+    border: 1px solid;
+    border-left-width: 5px;
+    font-size: 0.97rem;
+  }
+  .banner-critical {
+    background: var(--color-state-red-soft);
+    border-color: var(--color-state-red-line);
+    border-left-color: var(--color-state-red);
+    color: #7c1f18;
+  }
+  .banner-warning {
+    background: var(--color-state-yellow-soft);
+    border-color: var(--color-state-yellow-line);
+    border-left-color: #b57e12;
+    color: #63410b;
+  }
+  .banner-info {
+    background: var(--color-brand-soft);
+    border-color: var(--color-brand-line);
+    border-left-color: var(--color-brand);
+    color: #16334f;
+  }
+
+  /* ---- 専門用語の注釈 ---- */
+  .term {
+    border-bottom: 2px dotted var(--color-brand);
+    cursor: help;
+    font-weight: 600;
+  }
+
+  /* ---- 10段階フローの縦タイムライン ---- */
+  .timeline-item {
+    position: relative;
+    padding-left: 2.6rem;
+    padding-bottom: 1.15rem;
+  }
+  .timeline-item:last-child {
+    padding-bottom: 0;
+  }
+  /* 節と節をつなぐ線 */
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: 0.82rem;
+    top: 1.65rem;
+    bottom: -0.35rem;
+    width: 2px;
+    background: var(--color-line);
+  }
+  .timeline-item:last-child::before {
+    display: none;
+  }
+  .timeline-item[data-state='COMPLETED']::before {
+    background: var(--color-state-green-line);
+  }
+  .timeline-marker {
+    position: absolute;
+    left: 0;
+    top: 0.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 999px;
+    border: 2px solid var(--color-line-strong);
+    background: var(--color-surface);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--color-ink-faint);
+  }
+  .timeline-item[data-state='COMPLETED'] .timeline-marker {
+    border-color: var(--color-state-green);
+    background: var(--color-state-green);
+    color: #fff;
+  }
+  .timeline-item[data-state='IN_PROGRESS'] .timeline-marker {
+    border-color: var(--color-brand);
+    background: var(--color-brand-soft);
+    color: var(--color-brand);
+    box-shadow: 0 0 0 4px var(--color-brand-soft);
+  }
+
+  /* ---- 進捗バー ---- */
+  .meter {
+    height: 0.35rem;
+    border-radius: 999px;
+    background: var(--color-state-gray-soft);
+    overflow: hidden;
+  }
+  .meter > span {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: var(--color-brand);
+  }
+}
+
+@layer utilities {
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
