@@ -15,6 +15,13 @@ export interface OutboxEvent {
   type: string
   /** 配送先が解釈する内容。原本本文や資格情報は入れない。 */
   payload: Record<string, unknown>
+  /**
+   * この変更を起こした利用者。
+   *
+   * 配送時に同意 Policy を評価するために必要。要求本文の申告ではなく、
+   * 認証済みの actor から記録する。
+   */
+  initiatedByUserId: string | null
   status: OutboxStatus
   attempts: number
   /** 次に配送を試みる時刻。再試行の間隔制御に使う。 */

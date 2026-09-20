@@ -34,7 +34,8 @@ export const agreeConsentsBodySchema = z
     agreements: z
       .array(z.object({ kind: consentKindSchema, version: versionSchema }).strict())
       .min(1)
-      .max(10),
+      .max(10)
+      .refine((items) => new Set(items.map((item) => item.kind)).size === items.length, '同じ同意種別を複数指定できません。'),
   })
   .strict()
 
