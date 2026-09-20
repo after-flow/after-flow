@@ -25,3 +25,9 @@ dist-ssr
 
 # Claude Code のローカル設定
 .claude/
+
+# Credentials and generated TypeScript metadata
+.env
+.env.*
+!.env.example
+*.tsbuildinfo

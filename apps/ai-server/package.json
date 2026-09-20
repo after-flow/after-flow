@@ -1,0 +1,21 @@
+{
+  "name": "@aftercare/ai-server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "4.13.8",
+    "@hono/node-server": "2.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "~6.0.2",
+    "tsx": "4.23.13"
+  }
+}

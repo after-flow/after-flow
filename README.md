@@ -1,168 +1,135 @@
-# after-flow — フロントエンド
+# after-flow
 
-遺族手続き支援AIエージェント「after-flow」の Web UI（React + TypeScript）。
-企画書および「フロントエンド仕様書」の画面仕様を実装したものです。
+死亡後手続きの整理を支援するアプリケーションのTypeScriptモノレポです。
+設計の正本は [アーキテクチャ仕様](docs/architecture.md) です。
 
-## 前提と設計方針
+## 現在の実装範囲
 
-仕様書の前提をコードレベルで守っています。
+既存のReact + Viteフロントエンドを機能別に移し、画面、URL、モックAPI、ログイン状態の保存方式を維持しています。
+BackendとAIは独立したHonoプロセスとして起動します。現時点では生存確認APIのみで、業務API、認証、Firestore、Mastra、Orch Routerは未実装です。
+通常の開発起動では、これまでどおりMSWの架空データで全画面を操作できます。
 
-- **Public API のみを呼ぶ。** Mastra への直接通信は行いません。API 呼び出しは `src/api/` に集約しています。
-- **期限は再計算しない。** `DeadlineSummary`（期限日・起算日・根拠文言・残日数・重大度）は Go の Rule Engine が返した値をそのまま表示します。フロントエンドに期限計算ロジックはありません。
-- **承認は「反映してよいか」の確認であり、外部行為の実行許可ではない。** 承認画面・一覧・ダッシュボードすべてにその旨の説明を表示し、「提出する」「送信する」「解約する」といった、行為が完了したように読めるボタン文言は使っていません。
-- **放棄前ロック。** 相続方法が未確定（`inheritanceDecision.decided === false`）の間は、財産処分・現金化にあたる導線を表示しません。判定は `useRenunciationLock()` に一本化しており、overview 取得前は安全側に倒してロック扱いにします。
-- **マイナンバー記載書類は取り込まない。** アップロード時にサーバー側の検知結果（`MY_NUMBER_DETECTED`）を受けて明確なエラーを表示します。
+## Dockerで起動
 
-## セットアップ
+Docker EngineとCompose v2、makeがあれば起動できます。ホストへのNode.js／pnpmのインストールは不要です。
 
-```bash
-npm install
-npm run dev
+```sh
+make up
 ```
 
-`http://localhost:5173` が開きます。ログイン画面では任意のメールアドレス・パスワードで先に進めます（モック時）。
+- Web: **http://127.0.0.1:5173**（モックのログインは任意のメールアドレス・パスワード）
+- Backend生存確認: http://127.0.0.1:8080/api/v1/health
+- AI生存確認: コンテナ内 `http://ai-server:8081/internal/v1/health`。ホストへのポート公開はありません。
 
-## バックエンドとの接続
+`localhost` がIPv6上の別プロセスを指す場合もあるため、上記の `127.0.0.1` を使用してください。
+WebとBackendはループバックアドレスにのみ公開します。WebとAIはDockerネットワークも分けています。
 
-Go / Echo の Public API がまだ無い状態でも動くよう、開発時は [MSW](https://mswjs.io/) のモックAPIが有効になっています。
-
-| 環境変数 | 開発時の既定 | 本番ビルドの既定 | 説明 |
-| --- | --- | --- | --- |
-| `VITE_USE_MOCK` | 有効 | **無効** | 開発時は `false` で無効化。本番ビルドでモックを使うのはデモ用途のみで、`true` の明示が必要です |
-| `VITE_API_BASE_URL` | `/api/v1` | `/api/v1` | Public API のベースURL |
-| `VITE_API_PROXY` | なし | — | 設定すると dev server が `/api` をそのオリジンへプロキシします |
-
-**モックは本番ビルドに含まれません。** `npm run build` すると MSW 本体はバンドルから除外され、`dist/mockServiceWorker.js` も削除されます。架空の期限・財産が本番で表示されると利用者が誤った判断をするため、既定を「無効」にしています。
-
-実APIへつなぐ例：
-
-```bash
-VITE_USE_MOCK=false VITE_API_PROXY=http://localhost:8080 npm run dev
+```sh
+make ps                 # 3サービスの状態
+make logs               # ログ（Ctrl+Cで表示だけ終了）
+make logs SERVICE=web   # Webのみ
+make check              # Docker内で型・Lint・依存境界・本番ビルドを検証
+make down               # このプロジェクトを停止
 ```
 
-モックの実装は `src/mocks/`（`db.ts` がシードデータ、`handlers.ts` がエンドポイント）にあり、本番コードからは参照されません。
+既存プロセスとポートが重複する場合は、次のように変更できます。
 
-## ディレクトリ構成
-
-```
-src/
-  api/          types.ts（Public API のリソース型）, client.ts, queries.ts（TanStack Query）
-  app/          App.tsx（ルーティングと QueryClient）
-  components/
-    ui/         Button・Card・Banner・Modal・Term などの共通部品
-    domain/     状態バッジ、期限表示、放棄前ロック、書類アップローダ
-    layout/     ケース単位のヘッダー・サイドメニュー・ボトムナビ
-  lib/          labels.ts（enum → 日本語ラベル）, format.ts, terms.ts（用語集）
-  mocks/        開発用モックAPI
-  pages/        各画面
+```sh
+WEB_PORT=5174 BACKEND_PORT=8082 make up
 ```
 
-## 画面
+`.env` の作成は任意です。必要ならルートの `.env.example` を `.env` にコピーして編集してください。
+環境変数の変更後は `make up` を実行してください。Web、Backend、AIのソースはマウントされ、編集時に自動再読込されます。
+依存パッケージ、TypeScript設定、その他のイメージ内ファイルを変更した場合も `make up` で再ビルドします。
+Dockerfile／Composeはローカル開発用です。本番配信・デプロイ設定は今後追加します。
 
-| ルート | 画面 |
-| --- | --- |
-| `/login` | ログイン |
-| `/cases` | ケース一覧 |
-| `/cases/new` | ケース新規作成 |
-| `/cases/:caseId` | ケースダッシュボード |
-| `/cases/:caseId/documents` `/documents/:id` | 書類管理・詳細 |
-| `/cases/:caseId/tasks` `/tasks/:id` | タスク・期限一覧／詳細 |
-| `/cases/:caseId/property` | 財産・債務・契約・給付（タブ） |
-| `/cases/:caseId/approvals` `/approvals/:id` | 承認一覧・詳細 |
-| `/cases/:caseId/chat` | AI相談チャット |
-| `/cases/:caseId/family` | 家族・関係者管理、相続方法の判断 |
+## ローカルで起動
 
-## アクセシビリティ
+Node.js **22.23.2**（`.node-version`）とpnpm **10.28.1**を使用します。
+依存は `pnpm-lock.yaml` で固定し、npmのlockfileは使用しません。
 
-- ルート `font-size: 17px`、本文は 16px 以上。コントラストは WCAG AA 相当を確保。
-- 状態バッジ・警告は色だけでなく記号と文言でも区別（色覚特性への配慮）。
-- 専門用語は `<Term>` で平易な言い換えを併記（`src/lib/terms.ts`）。
-- フォームは必須／任意を明示し、エラーは修正方法を含む文言で表示。
+```sh
+pnpm install --frozen-lockfile
+pnpm dev                # 3プロセスを並列起動
+pnpm dev:web            # フロントエンドのみ
+```
 
-## Insight（AIが気づいたこと）の法的な境界線
+サービス単位でも操作できます。
 
-`GET /cases/:caseId/insights` で返す気づきは、**事実の指摘までに留めてください。**
+```sh
+pnpm --filter @aftercare/backend-server build
+pnpm --filter @aftercare/backend-server start
+pnpm --filter @aftercare/ai-server build
+pnpm --filter @aftercare/ai-server start
+```
 
-| 出してよい | 出してはいけない |
-| --- | --- |
-| 「通帳に毎月同額の引き落としがあります。未登録の契約かもしれません」 | 「この保険金は相続財産になります」（財産の法的性質の決定） |
-| 「3週間この手続きが動いていません」 | 「基礎控除を超えるので申告が必要です」（税務相談） |
-| 「相続人に未成年の方が含まれています」 | 「特別代理人の選任が必要です」（個別事案への法的当てはめ） |
-| 「戸籍の取り寄せには2〜3週間かかることがあります」 | 「あなたは相続放棄すべきです」（法律事件に関する鑑定） |
+## 配置
 
-根拠となる条文は弁護士法第72条、税理士法第52条、司法書士法第73条、行政書士法第19条です。
-とくに**税理士法第52条は無償でも独占**で、弁護士法第72条の「報酬を得る目的」という限定がありません。
-課税標準の計算に関わる指摘は、報酬の有無にかかわらず避けてください。
+```text
+apps/
+  web/
+    src/
+      app/                   既存ルーティング・QueryClient
+      features/              auth, cases, documents, tasks, approvals,
+                             estate, family, chat, insights
+      components/            共通UI・レイアウト・表示部品
+      lib/api/               公開APIクライアント・Query
+      mocks/                 既存MSWデータ・ハンドラー
+    public/                  favicon・開発用Service Worker
+  backend-server/
+    src/main.ts              公開サーバーの起動
+    src/app.ts               Hono設定
+    src/presentation/routes/public/v1/health.ts
+  ai-server/
+    src/main.ts              内部サーバーの起動
+    src/app.ts               Hono設定（公開ルートなし）
+    src/presentation/routes/internal/v1/health.ts
+packages/
+  public-contracts/src/dto/  既存フロントの公開リソース型
+scripts/
+  verify-boundaries.mjs     workspace依存・import境界の検証
+docs/
+  architecture.md           提供された仕様書を内容変更せず移動
+Dockerfile                  固定Node/pnpmと依存インストール
+compose.yaml                Web / Backend / AIの独立コンテナ
+Makefile                    起動・停止・検証
+```
 
-API 側で必ず守っていただきたいのは次の2点です。
+仕様書にあるDomain／Application、internal-contracts、Playbook、Rule、各Infrastructureなどは、機能実装時に追加します。
+将来対象の空フォルダーや成功を返すダミー実装は生成していません。
 
-1. **`requiresProfessional`** — 法律・税務・登記・裁判所手続の判断を含む気づきには必ず立ててください。
-   フロントエンドは、このフラグが立っていると専門家への確認を促す注記を**消せない形で表示**します。
-   判断を含む気づきにフラグが落ちていると、この担保が効きません。
-2. **`evidence` を必ず入れる** — 根拠が空の気づきはフロントエンドが表示しません。
-   利用者が自分で確かめられない指摘は、かえって判断を誤らせるためです。
+## API・モックの扱い
 
-## 自律調査（TaskGuidance の `research` と `sources`）
+Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
+仕様書の新しいレスポンス形式や認証への切替は、Backendの実装と合わせて行います。
+内部APIの契約ができた時点で `packages/internal-contracts` を追加し、Webから参照させません。
 
-エージェントが自治体のページ等を調べて窓口・持ち物を埋める機能の受け皿です。
-`POST /tasks/:taskId/guidance/research` で起動し、結果は `Task.guidance` に反映してください。
-フロントエンドは `research.status === 'RESEARCHING'` の間、対象タスクを2秒間隔でポーリングします。
+| 変数 | 開発時 | 本番ビルド時 |
+| --- | --- | --- |
+| `VITE_USE_MOCK` | 既定で有効、`false` で無効 | `true` を明示した場合だけ有効 |
+| `VITE_API_BASE_URL` | 既定 `/api/v1` | 既定 `/api/v1` |
+| `VITE_API_PROXY` | ローカルでのBackend転送先 | 使用しない |
+| `VITE_WATCH_POLLING` | Dockerでは有効 | 使用しない |
 
-### 返していただきたいもの
+ルートの `.env` はViteも読み込みます。Composeでは転送先を `http://backend-server:8080` に固定しています。
+実APIの開発時は次のように切り替えますが、現時点で使えるのは生存確認APIのみです。
 
-| フィールド | 用途 |
-| --- | --- |
-| `research.status` | `RESEARCHING` / `COMPLETED` / `PARTIAL` / `FAILED` を正確に。成功扱いで中身が空だと、利用者が誤った窓口へ向かいます |
-| `research.confidence` | `LOW` のとき、フロントは「そのまま信じず窓口で確認を」という警告を追加表示します |
-| `research.missing` | 調べきれなかった項目。隠さず列挙してください（例：宿直窓口の受付時間） |
-| `research.failureReason` | `FAILED` のとき利用者に見せる理由 |
-| `sources[].url` / `checkedAt` | **出典URLと確認日時は必須**。フロントは出典・ホスト名・確認日を表示します |
+```sh
+VITE_USE_MOCK=false VITE_API_PROXY=http://127.0.0.1:8080 pnpm dev:web
+```
 
-確認日が90日を超えると、フロントが「調べてから時間が経っています」と表示して再調査を促します。
+本番ビルドは `apps/web/dist` に出力され、既定ではMSW本体と `mockServiceWorker.js` を含みません。
+デモ用ビルドだけ `VITE_USE_MOCK=true pnpm --filter @aftercare/web build` とします。
 
-### 守っていただきたいこと
+## 検証
 
-- **調べきれなかったことを、調べられたことのように返さない。** これは法規制ではなく品質責任の問題です。誤った窓口を出して遺族が無駄足を踏めば信頼が壊れます
-- **検索クエリに個人情報を含めない。** 調査に必要なのは `Case.municipality`（市区町村まで）だけです。番地・氏名は不要で、フロントも市区町村しか入力させません
-- **対象サイトの robots.txt と利用規約を尊重する**
+```sh
+pnpm typecheck
+pnpm lint                # Lintと依存境界の検証
+pnpm build
+```
 
-Run Type は既存の `task_execution` を想定しています（企画書セクション7の一覧に新しい種類を足さずに済みます）。
+依存境界の検証は、WebからBackend／AI／内部契約への参照、サービス間の直接importを拒否します。
+既存UIの説明とBackendへの要件は [Web README](apps/web/README.md) を参照してください。
 
-## Rule Engine への依頼：熟慮期間にも残日数を付ける
-
-`CaseOverview.inheritanceDecision.deliberationDeadline` が日付文字列だけで、
-`DeadlineSummary` が持つ `daysRemaining` / `severity` / `basisLabel` がありません。
-
-このためフロントエンドが残日数を自前で計算しており、
-**「期限は Rule Engine の値をそのまま表示し、再計算しない」という方針が、ここだけ崩れています。**
-実際、日付のみの文字列が UTC として解釈されることで JST の残日数が1日ずれるバグが出ました（修正済み）。
-
-熟慮期間も `DeadlineSummary` と同じ形で返してください。期限の伸長（家庭裁判所への申立て）や
-起算日の違いを Rule Engine 側で反映しても、いまのままだとフロントの素朴な減算に取り残されます。
-
-## Rule Engine への依頼：Case 作成時に法定タスクを生成する
-
-利用シミュレーションで判明した、体験を左右する要件です。
-
-**ご逝去日が入力された時点で、死亡届7日・世帯主変更14日・健康保険の資格喪失14日・年金の受給停止・相続方法の判断3か月・準確定申告4か月・相続税10か月の期限は確定します。** 書類のアップロードや AI 解析を待つ必要はありません。
-
-Case 作成のレスポンス直後に `GET /cases/:id/overview` を呼んだ時点で、これらが `upcomingDeadlines` と `tasks` に載っている状態にしてください。ここが空だと、利用者は「死亡届まであと4日」という最も重要な情報を、書類を上げるまで知ることができません。
-
-モック（`src/mocks/db.ts` の `createStatutoryTasks`）に、期待する挙動と最低限そろえたいタスク定義を書いてあります。
-
-## バックエンドに必要な追加エンドポイント
-
-仕様書の API 一覧に明記がないもののうち、UI 上必要なため使用しているもの：
-
-- `POST /api/v1/auth/login` — 認証基盤は要選定（仕様書セクション13）
-- `POST /api/v1/cases/:caseId/inheritance-decisions` — 相続方法の記録。「確定」の判定は利用者の入力で持つ方針（企画書セクション5）に基づき、放棄前ロックの解除条件になります
-- `GET /api/v1/cases/:caseId/insights` / `PATCH /api/v1/insights/:id` — AIが気づいたこと。上記「法的な境界線」を参照
-- `PATCH /api/v1/cases/:caseId` — 市区町村の登録（自律調査の前提）
-- `POST /api/v1/tasks/:taskId/guidance/research` — 手順案内の自律調査の起動
-
-## 未確定事項（仕様書セクション13 に対応）
-
-- 通知方式（メール／プッシュ／SMS）は未実装。期限アラートは画面内表示のみ。
-- 複数相続人が同一ケースへアクセスする場合の権限設計は未反映。
-- 専門家紹介の対価開示（「紹介料が発生する場合があります」等）は方針確定後に文言を追加する必要があります。
-- 文言は法務確認後に最終化する前提です。
+導入時の公式資料: [Hono Node.js](https://hono.dev/docs/getting-started/nodejs)、[pnpm workspaces](https://pnpm.io/workspaces)、[Node.js releases](https://nodejs.org/en/about/previous-releases)。
