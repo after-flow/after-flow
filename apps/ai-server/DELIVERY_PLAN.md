@@ -5,9 +5,9 @@
 | 順番 | PRの単位 | 状態 |
 |---|---|---|
 | 1 | #50 AI専用FirestoreのWorkflow保存、プロセス再起動試験、ADR | PR #102、CI全11件成功 |
-| 2 | #57 永続受付/Worker/実行所有権/共有予算/待機再開 | 実装・検証中。業務Handler接続は後続 |
+| 2 | #57 永続受付/Worker/実行所有権/共有予算/待機再開 | PR #103、CI全11件成功。業務Handler接続は後続 |
 | 3 | #53/#54 Provider policy、モデル選択/Fallback/計測 | 未着手。実Provider選定・利用条件は別途 |
-| 4 | #55 検索/資料取得境界、Source Catalog、SSRF検証 | 未着手。検索製品と業務資料の選定は別途 |
+| 4 | #55 検索/資料取得境界、Source Catalog、SSRF検証 | Catalog検索・HTTPS取得とSSRF/本文検証を実装。外部検索製品と業務資料は別途 |
 | 5 | #59 P-01接続、チャットWorkflow、結果再送 | 未着手。実Orch/Providerなしで提供開始しない |
 | 6 | #51/#60 Contextの残る契約とProposal/承認/反映確認 | 未着手 |
 | 7 | #61 P-02加工済み書類の候補/根拠/矛盾/不足 | 未着手。検査済み配信・OCRの実接続は別途 |
