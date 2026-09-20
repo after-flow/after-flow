@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { DocumentResource } from '@aftercare/public-contracts'
+import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
+import { isRunWaiting } from '../../domain/agent/agent-run.js'
+import { readDocumentLinks } from './document-links.js'
 import { assertSupportedDocument } from '../../domain/document/content-type.js'
 import type { DocumentEntity, DocumentKind } from '../../domain/document/document.js'
 import { isInspectionComplete } from '../../domain/document/inspection.js'
@@ -29,6 +33,10 @@ export type AnalysisBlockedReason =
   | 'CONSENT_REQUIRED'
 
 export interface DocumentView {
+  extractionCandidates: DocumentResource['extractionCandidates']
+  proposalRefs: DocumentResource['proposalRefs']
+  approvalRefs: DocumentResource['approvalRefs']
+  evidenceRefs: DocumentResource['evidenceRefs']
   id: string
   caseId: string
   fileName: string
@@ -45,6 +53,7 @@ export interface DocumentView {
     findings: DocumentEntity['inspection']['findings']
   }
   analysis: {
+    run: DocumentResource['analysis']['run']
     state: DocumentEntity['analysisState']
     agentRunId: string | null
     canRequest: boolean
@@ -92,14 +101,20 @@ export class DocumentService {
     private readonly aiConnected: boolean = false,
   ) {}
 
-  private async toView(user: AuthenticatedUser, entity: DocumentEntity): Promise<DocumentView> {
+  private async toView(user: AuthenticatedUser, entity: DocumentEntity,
+    links?: Awaited<ReturnType<typeof readDocumentLinks>>): Promise<DocumentView> {
     const blockedReasons: AnalysisBlockedReason[] = []
     if (entity.inspection.status !== 'PASSED') blockedReasons.push('INSPECTION_NOT_PASSED')
     if (!this.aiConnected) blockedReasons.push('AI_NOT_CONNECTED')
     const policy = await this.consent.policy(user)
     if (!policy.externalAi) blockedReasons.push('CONSENT_REQUIRED')
+    const related = links ?? await readDocumentLinks(this.read, user.tenantId, entity.caseId!)
+    const run = entity.agentRunId ? await this.read.get<AgentRunEntity>(user.tenantId,
+      { collection: collections.agentRuns, caseId: entity.caseId, id: entity.agentRunId }) : null
+    if (run && (run.targetType !== 'DOCUMENT' || run.targetId !== entity.id || run.operation !== 'document_analysis')) throw errors.internal({ internal: { reason: 'document run scope mismatch' } })
 
     return {
+      ...related(entity.id),
       id: entity.id,
       caseId: entity.caseId ?? '',
       fileName: entity.fileName,
@@ -115,6 +130,8 @@ export class DocumentService {
         findings: entity.inspection.findings,
       },
       analysis: {
+        run: run ? { id: run.id, status: run.status, waiting: isRunWaiting(run.status), waitingFor: run.waitingFor,
+          failureReason: run.failureReason, version: run.version } : null,
         state: entity.analysisState,
         agentRunId: entity.agentRunId,
         canRequest: blockedReasons.length === 0,
@@ -298,7 +315,8 @@ export class DocumentService {
       ...(options.includeArchived ? {} : { where: [{ field: 'archived', op: '==', value: false }] }),
     }
     const page = await this.read.list<DocumentEntity>(user.tenantId, collections.documents, caseId, listOptions)
-    const items = await Promise.all(page.items.map((entity) => this.toView(user, entity)))
+    const links = page.items.length ? await readDocumentLinks(this.read, user.tenantId, caseId) : undefined
+    const items = await Promise.all(page.items.map((entity) => this.toView(user, entity, links)))
     return page.nextCursor === undefined ? { items } : { items, nextCursor: page.nextCursor }
   }
 
