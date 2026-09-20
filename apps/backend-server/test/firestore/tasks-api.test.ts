@@ -1,0 +1,455 @@
+import assert from 'node:assert/strict'
+import { it } from 'node:test'
+import type { RuleCatalog } from '../../src/domain/task/rule-engine.js'
+import { PLACEHOLDER_RULE_CATALOG } from '../../src/domain/task/rule-catalog.js'
+import { INFRASTRUCTURE_COLLECTIONS } from '../../src/domain/shared/collections.js'
+import {
+  agreeRequiredConsents,
+  buildApp,
+  call,
+  jsonRequest,
+  seedTenantMember,
+} from './helpers/app.js'
+import type { Json, TestAppOptions } from './helpers/app.js'
+import { describeFirestore, firestore, newTenantId } from './helpers/emulator.js'
+
+/** 業務レビュー済みという前提の架空ルール。実際の法定期限ではない。 */
+const REVIEWED_CATALOG: RuleCatalog = {
+  placeholder: false,
+  deadlineRules: [
+    {
+      id: 'fixture-notification',
+      version: '1.0.0',
+      label: '架空の届出期限',
+      basis: 'KNOWN_AT',
+      offsetDays: 7,
+      jurisdiction: '架空市',
+      reviewed: true,
+      sourceUrl: 'https://example.test/fixture',
+      sourceCheckedAt: '2026-09-20T00:00:00+09:00',
+      extendable: false,
+      critical: true,
+    },
+  ],
+  initialProcedures: [
+    {
+      id: 'fixture-notification',
+      title: '架空の届出を行う',
+      summary: '試験用の手続きです。',
+      stage: 'immediate',
+      category: '行政手続き',
+      submitTo: null,
+      evidenceRequired: false,
+      assetDisposal: false,
+      requiredDocuments: [],
+      deadlineRuleId: 'fixture-notification',
+    },
+    {
+      id: 'fixture-disposal',
+      title: '架空の財産処分を行う',
+      summary: '相続方法の確定まで実行できない手続きです。',
+      stage: 'division',
+      category: '財産',
+      submitTo: null,
+      evidenceRequired: true,
+      assetDisposal: true,
+      requiredDocuments: [],
+      deadlineRuleId: null,
+    },
+  ],
+}
+
+const caseBody = {
+  deceasedName: '架空 太郎',
+  dateOfDeath: '2026-04-01',
+  knownAt: '2026-04-03',
+  ownerName: '架空 花子',
+  relationshipToDeceased: '配偶者',
+}
+
+let keyCounter = 0
+function nextKey(prefix: string): string {
+  keyCounter += 1
+  return `${prefix}-${String(keyCounter).padStart(8, '0')}`
+}
+
+async function setup(options: TestAppOptions = {}, overrides: Partial<typeof caseBody> = {}) {
+  const tenantId = newTenantId()
+  const userId = 'user-owner'
+  await seedTenantMember(tenantId, userId)
+  const app = buildApp(tenantId, userId, options)
+  await agreeRequiredConsents(app)
+  const created = await call(app, '/cases', jsonRequest('POST', { ...caseBody, ...overrides }, nextKey('idem-case')))
+  assert.equal(created.status, 201)
+  return { tenantId, userId, app, caseId: created.body.data.id as string }
+}
+
+async function initialize(app: ReturnType<typeof buildApp>, caseId: string) {
+  const response = await call(
+    app,
+    `/cases/${caseId}/tasks/initialize`,
+    jsonRequest('POST', {}, nextKey('idem-init')),
+  )
+  assert.equal(response.status, 200)
+  return response
+}
+
+async function findTask(
+  app: ReturnType<typeof buildApp>,
+  caseId: string,
+  title: string,
+): Promise<Json> {
+  const list = await call(app, `/cases/${caseId}/tasks?limit=50`)
+  const found = list.body.data.find((task: Json) => task.title === title)
+  assert.ok(found, `${title} が見つからない`)
+  return found
+}
+
+describeFirestore('初期手続きの生成', () => {
+  it('Case から定義どおりの手続きを作る', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    const response = await initialize(app, caseId)
+
+    assert.equal(response.body.data.created.length, 2)
+    const list = await call(app, `/cases/${caseId}/tasks`)
+    assert.equal(list.body.data.length, 2)
+    assert.equal(list.body.data[0].source, 'RULE_ENGINE')
+  })
+
+  it('再実行しても手続きが重複しない', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    const second = await initialize(app, caseId)
+
+    // 同じ定義から二度作らない。
+    assert.equal(second.body.data.created.length, 0)
+    const list = await call(app, `/cases/${caseId}/tasks`)
+    assert.equal(list.body.data.length, 2)
+  })
+
+  it('レビュー済みルールから期限を算定する', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+
+    const deadlines = await call(app, `/cases/${caseId}/deadlines`)
+    const deadline = deadlines.body.data[0]
+    assert.equal(deadline.confirmation, 'CONFIRMED')
+    // 知った日 2026-04-03 + 7 日
+    assert.equal(deadline.dueDate, '2026-04-10')
+    assert.equal(deadline.startDate, '2026-04-03')
+    assert.equal(deadline.timezone, 'Asia/Tokyo')
+    assert.equal(deadline.ruleVersion, '1.0.0')
+    assert.ok(deadline.sourceUrl)
+  })
+
+  it('業務レビュー未了のルールでは日付を返さない', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: PLACEHOLDER_RULE_CATALOG })
+    await initialize(app, caseId)
+
+    const deadlines = await call(app, `/cases/${caseId}/deadlines?limit=50`)
+    assert.ok(deadlines.body.data.length > 0)
+    for (const deadline of deadlines.body.data) {
+      assert.equal(deadline.confirmation, 'UNCONFIRMED')
+      // 未確認の期限を確定済みの表示用 DTO として返さない。
+      assert.equal(deadline.dueDate, null)
+      assert.equal(deadline.daysRemaining, null)
+      assert.equal(deadline.severity, null)
+      assert.equal(deadline.unresolvedReason, 'RULE_UNCONFIRMED')
+      // 何を待っているかが分かるよう、根拠の説明は返す。
+      assert.ok(deadline.basisLabel.length > 0)
+    }
+  })
+
+  it('起算日が未入力なら理由を示して期限を出さない', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG }, { knownAt: undefined })
+    await initialize(app, caseId)
+
+    const deadlines = await call(app, `/cases/${caseId}/deadlines`)
+    const deadline = deadlines.body.data[0]
+    assert.equal(deadline.dueDate, null)
+    assert.equal(deadline.unresolvedReason, 'MISSING_BASIS_DATE')
+  })
+
+  it('起算日を訂正すると期限を作り直す', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+
+    const current = await call(app, `/cases/${caseId}`)
+    await call(
+      app,
+      `/cases/${caseId}`,
+      jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-10' }),
+    )
+    const reevaluated = await call(
+      app,
+      `/cases/${caseId}/deadlines/reevaluate`,
+      jsonRequest('POST', {}, nextKey('idem-reeval')),
+    )
+    assert.equal(reevaluated.body.data.updated.length, 1)
+
+    const deadlines = await call(app, `/cases/${caseId}/deadlines`)
+    assert.equal(deadlines.body.data[0].dueDate, '2026-04-17')
+  })
+})
+
+describeFirestore('手続きの状態遷移', () => {
+  it('status を PATCH で変更できない', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    const task = await findTask(app, caseId, '架空の届出を行う')
+
+    const response = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}`,
+      jsonRequest('PATCH', { expectedVersion: task.version, status: 'COMPLETED' }),
+    )
+    assert.equal(response.status, 400)
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED')
+  })
+
+  it('準備完了・提出報告・完了を別の状態として扱う', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    let task = await findTask(app, caseId, '架空の届出を行う')
+
+    const run = async (command: string, version: number) => {
+      const response = await call(
+        app,
+        `/cases/${caseId}/tasks/${task.id}/commands`,
+        jsonRequest('POST', { command, expectedVersion: version }),
+      )
+      assert.equal(response.status, 200, `${command}: ${JSON.stringify(response.body)}`)
+      task = response.body.data
+      return response.body.data
+    }
+
+    assert.equal((await run('start', task.version)).status, 'COLLECTING_INFORMATION')
+    assert.equal((await run('markReady', task.version)).status, 'READY')
+    assert.equal((await run('reportSubmission', task.version)).status, 'SUBMITTED')
+    assert.equal((await run('awaitExternal', task.version)).status, 'WAITING_EXTERNAL')
+
+    const completed = await run('complete', task.version)
+    assert.equal(completed.status, 'COMPLETED')
+    // 本人による完了報告であり、外部機関の確認ではない。
+    assert.equal(completed.completionReportedBy, 'user-owner')
+    assert.ok(completed.completionReportedAt)
+  })
+
+  it('許されない遷移を拒否する', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    const task = await findTask(app, caseId, '架空の届出を行う')
+
+    const response = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'reportSubmission', expectedVersion: task.version }),
+    )
+    assert.equal(response.status, 409)
+    assert.equal(response.body.error.details.reason, 'INVALID_TRANSITION')
+  })
+
+  it('古い版の操作を拒否する', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    const task = await findTask(app, caseId, '架空の届出を行う')
+
+    await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'start', expectedVersion: task.version }),
+    )
+    const stale = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'markReady', expectedVersion: task.version }),
+    )
+    assert.equal(stale.status, 409)
+    assert.equal(stale.body.error.code, 'CONFLICT')
+  })
+
+  it('expectedVersion の欠落を 428 で返す', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    const task = await findTask(app, caseId, '架空の届出を行う')
+
+    const response = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'start' }),
+    )
+    assert.equal(response.status, 428)
+  })
+
+  it('完了を Outbox に残す', async () => {
+    const { tenantId, app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    const task = await findTask(app, caseId, '架空の届出を行う')
+
+    await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'complete', expectedVersion: task.version }),
+    )
+    const outbox = await firestore()
+      .collection(`tenants/${tenantId}/${INFRASTRUCTURE_COLLECTIONS.outbox}`)
+      .where('type', '==', 'task.completed')
+      .get()
+    assert.equal(outbox.size, 1)
+  })
+})
+
+describeFirestore('完了条件', () => {
+  it('一般的な手動の手続きは本人の報告で完了できる', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    const created = await call(
+      app,
+      `/cases/${caseId}/tasks`,
+      jsonRequest(
+        'POST',
+        { title: '自分用のメモ手続き', stage: 'immediate', category: 'その他' },
+        nextKey('idem-task'),
+      ),
+    )
+    assert.equal(created.status, 201)
+    // 全 Task に一律の書類添付を強制しない。
+    assert.ok(created.body.data.allowedActions.includes('complete'))
+
+    const completed = await call(
+      app,
+      `/cases/${caseId}/tasks/${created.body.data.id}/commands`,
+      jsonRequest('POST', { command: 'complete', expectedVersion: created.body.data.version }),
+    )
+    assert.equal(completed.status, 200)
+    assert.equal(completed.body.data.status, 'COMPLETED')
+  })
+
+  it('根拠が必要な手続きは根拠なしで完了できない', async () => {
+    const { app, caseId } = await setup({
+      ruleCatalog: REVIEWED_CATALOG,
+      decisions: { isConfirmed: async () => true },
+    })
+    await initialize(app, caseId)
+    const task = await findTask(app, caseId, '架空の財産処分を行う')
+
+    assert.ok(
+      task.blockedActions.some(
+        (blocked: Json) => blocked.action === 'complete' && blocked.reason === 'EVIDENCE_REQUIRED',
+      ),
+    )
+
+    const rejected = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'complete', expectedVersion: task.version }),
+    )
+    assert.equal(rejected.status, 409)
+    assert.equal(rejected.body.error.details.reason, 'EVIDENCE_REQUIRED')
+
+    const withEvidence = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/evidences`,
+      jsonRequest('POST', { label: '受付印のある控え', kind: 'RECEIPT' }, nextKey('idem-evidence')),
+    )
+    assert.equal(withEvidence.status, 201)
+    assert.equal(withEvidence.body.data.evidences.length, 1)
+
+    const completed = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'complete', expectedVersion: withEvidence.body.data.version }),
+    )
+    assert.equal(completed.status, 200)
+  })
+})
+
+describeFirestore('放棄前ロック', () => {
+  it('相続方法が未確定の間は財産処分の手続きを実行できない', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    const task = await findTask(app, caseId, '架空の財産処分を行う')
+
+    // フロントの非表示ではなく Backend が判定する。
+    assert.deepEqual(task.allowedActions, [])
+    assert.ok(
+      task.blockedActions.some(
+        (blocked: Json) => blocked.reason === 'INHERITANCE_DECISION_REQUIRED',
+      ),
+    )
+
+    const rejected = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'start', expectedVersion: task.version }),
+    )
+    assert.equal(rejected.status, 409)
+    assert.equal(rejected.body.error.details.reason, 'INHERITANCE_DECISION_REQUIRED')
+  })
+
+  it('確定していれば着手できる', async () => {
+    const { app, caseId } = await setup({
+      ruleCatalog: REVIEWED_CATALOG,
+      decisions: { isConfirmed: async () => true },
+    })
+    await initialize(app, caseId)
+    const task = await findTask(app, caseId, '架空の財産処分を行う')
+
+    const started = await call(
+      app,
+      `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'start', expectedVersion: task.version }),
+    )
+    assert.equal(started.status, 200)
+  })
+})
+
+describeFirestore('権限と境界', () => {
+  it('閲覧のみの利用者には操作を許さない', async () => {
+    const owner = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(owner.app, owner.caseId)
+    const task = await findTask(owner.app, owner.caseId, '架空の届出を行う')
+
+    await seedTenantMember(owner.tenantId, 'user-viewer')
+    await firestore()
+      .doc(`tenants/${owner.tenantId}/cases/${owner.caseId}/caseMembers/user-viewer`)
+      .set({
+        id: 'user-viewer',
+        tenantId: owner.tenantId,
+        caseId: owner.caseId,
+        version: 1,
+        schemaVersion: 1,
+        userId: 'user-viewer',
+        role: 'VIEWER',
+        active: true,
+        personId: null,
+      })
+
+    const viewer = buildApp(owner.tenantId, 'user-viewer', { ruleCatalog: REVIEWED_CATALOG })
+    await agreeRequiredConsents(viewer)
+
+    const fetched = await call(viewer, `/cases/${owner.caseId}/tasks/${task.id}`)
+    assert.equal(fetched.status, 200)
+    assert.deepEqual(fetched.body.data.allowedActions, [])
+
+    const rejected = await call(
+      viewer,
+      `/cases/${owner.caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'start', expectedVersion: task.version }),
+    )
+    assert.equal(rejected.status, 403)
+  })
+
+  it('別 Case の taskId へ差し替えても操作できない', async () => {
+    const owner = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(owner.app, owner.caseId)
+    const task = await findTask(owner.app, owner.caseId, '架空の届出を行う')
+
+    const another = await call(
+      owner.app,
+      '/cases',
+      jsonRequest('POST', caseBody, nextKey('idem-case')),
+    )
+    const response = await call(owner.app, `/cases/${another.body.data.id}/tasks/${task.id}`)
+    assert.equal(response.status, 404)
+  })
+})

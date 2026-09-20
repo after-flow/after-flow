@@ -1,0 +1,64 @@
+import { z } from 'zod'
+import { idSchema, isoDateTimeSchema, expectedVersionSchema, listQuerySchema } from './common.js'
+
+export const documentKindSchema = z.enum([
+  'DEATH_CERTIFICATE',
+  'FAMILY_REGISTER',
+  'WILL',
+  'CONTRACT',
+  'BANK_STATEMENT',
+  'INSURANCE_POLICY',
+  'OTHER',
+])
+
+const findingSchema = z.object({
+  kind: z.enum(['SENSITIVE_NUMBER', 'UNSUPPORTED_CONTENT', 'UNREADABLE']),
+  message: z.string(),
+  locationHint: z.string().nullable(),
+})
+
+export const documentResourceSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  fileName: z.string(),
+  contentType: z.string(),
+  sizeBytes: z.number().int(),
+  sha256: z.string(),
+  kind: documentKindSchema,
+  kindSource: z.enum(['MANUAL', 'AI']),
+  storageState: z.enum(['UPLOADING', 'STORED', 'FAILED']),
+  inspection: z.object({
+    status: z.enum(['PENDING', 'IN_PROGRESS', 'PASSED', 'REJECTED', 'FAILED']),
+    completed: z.boolean(),
+    findings: z.array(findingSchema),
+  }),
+  analysis: z.object({
+    state: z.enum(['NOT_REQUESTED', 'NOT_CONNECTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED']),
+    agentRunId: z.string().nullable(),
+    canRequest: z.boolean(),
+    blockedReasons: z.array(z.enum(['INSPECTION_NOT_PASSED', 'AI_NOT_CONNECTED', 'CONSENT_REQUIRED'])),
+  }),
+  archived: z.boolean(),
+  archivedAt: isoDateTimeSchema.nullable(),
+  version: z.number().int(),
+  createdAt: isoDateTimeSchema,
+  updatedAt: isoDateTimeSchema,
+})
+
+export const documentIdParamsSchema = z.object({ caseId: idSchema, documentId: idSchema })
+
+export const documentListQuerySchema = listQuerySchema.extend({
+  /**
+   * 除外済みも含めるか。
+   * 既定では通常の一覧から外す。完全消去とは別の扱いであることを
+   * 呼び出し側が選べるようにする。
+   */
+  includeArchived: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+})
+
+export const archiveDocumentBodySchema = z
+  .object({ expectedVersion: expectedVersionSchema })
+  .strict()
