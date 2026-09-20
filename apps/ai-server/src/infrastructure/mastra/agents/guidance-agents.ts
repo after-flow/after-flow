@@ -2,8 +2,8 @@ import { Agent } from '@mastra/core/agent'
 import type { DelegationConfig, ToolsInput } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { getPlaybook } from '../../../orchestration/playbooks/registry.js'
-import { delegationSelectionSchema, researchBriefSchema, researchFindingsSchema, validateFindings } from '../../../orchestration/research/contracts.js'
-import type { ResearchBrief } from '../../../orchestration/research/contracts.js'
+import { delegationSelectionSchema, researchBriefSchema, researchFindingsSchema, researchEvidenceSchema, validateFindings } from '../../../orchestration/research/contracts.js'
+import type { ResearchBrief, ResearchEvidence } from '../../../orchestration/research/contracts.js'
 import { createAgentSkills } from '../skills.js'
 
 export const CORE_AGENT_ID = 'case-agent'
@@ -68,7 +68,8 @@ ${mandatoryInstructions(researchSkills)}`
   })
 
   let attempts = 0
-  let active: { toolCallId: string; brief: ResearchBrief } | undefined
+  const outcomes: ResearchEvidence['outcomes'] = []
+  let active: { toolCallId: string; brief: ResearchBrief; outcome: ResearchEvidence['outcomes'][number] } | undefined
   const delegation: DelegationConfig = {
     hookErrorStrategy: 'throw',
     includeSubAgentToolResultsInModelContext: false,
@@ -94,7 +95,9 @@ ${mandatoryInstructions(researchSkills)}`
       // Mastra shallow-copies RequestContext: remove credentials, parent state and nested objects.
       context.requestContext.clear()
       context.requestContext.set('researchBriefId', brief.briefId)
-      active = { toolCallId: context.toolCallId, brief }
+      const outcome = { briefId: brief.briefId, findings: null }
+      outcomes.push(outcome)
+      active = { toolCallId: context.toolCallId, brief, outcome }
       return {
         proceed: true, modifiedPrompt: JSON.stringify(brief),
         modifiedInstructions: researchInstructions, modifiedMaxSteps: 6,
@@ -106,15 +109,17 @@ ${mandatoryInstructions(researchSkills)}`
       if (!active || active.toolCallId !== context.toolCallId) {
         throw new Error('Research result does not match the active delegation')
       }
-      const { brief } = active
+      const { brief, outcome } = active
       active = undefined
       dependencies.signal.throwIfAborted()
       if (!context.success) {
-        return { resultText: JSON.stringify({ status: 'failed', answers: [], missing: ['調査を完了できませんでした。'], conflicts: [] }) }
+        outcome.findings = { status: 'failed', answers: [], missing: ['調査を完了できませんでした。'], conflicts: [] }
+        return { resultText: JSON.stringify(outcome.findings) }
       }
       let result: unknown
       try { result = JSON.parse(context.result.text) } catch { throw new Error('Invalid structured research result') }
       const findings = validateFindings(result, brief, dependencies.retrievedSourceIds(brief.briefId))
+      outcome.findings = findings
       return { resultText: JSON.stringify(findings) }
     },
   }
@@ -132,5 +137,8 @@ ${mandatoryInstructions(coreSkills)}`,
     agents: { researchAgent },
     defaultOptions: { maxSteps: 8, modelSettings: { maxRetries: 0 }, abortSignal: dependencies.signal, delegation },
   })
-  return { coreAgent, researchAgent, playbook }
+  return { coreAgent, researchAgent, playbook,
+    // Schema parsing returns a detached snapshot; neither the model nor the caller can mutate the ledger.
+    researchEvidence: () => researchEvidenceSchema.parse({ briefs: [...briefs.values()], outcomes }),
+  }
 }

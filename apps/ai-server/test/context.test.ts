@@ -6,7 +6,7 @@ function artifact(operation: 'case_planning' | 'task_guidance' = 'case_planning'
   const content = {
     operation,
     case: { id: 'case-1', version: 1, deceasedName: 'PRIVATE-NAME', dateOfDeath: '2026-01-01', knownAt: null, municipality: '架空市', status: 'ACTIVE' },
-    ...(operation === 'task_guidance' ? { task: { id: 'task-1', version: 1, title: 'PRIVATE-CONTRACT-123', category: 'insurance' } } : {
+    ...(operation === 'task_guidance' ? { task: { id: 'task-1', version: 1, title: '架空手続き', category: 'insurance', submitTo: '架空機関', summary: 'PRIVATE-CONTRACT-123' } } : {
       assets: [
         { id: 'asset-1', version: 2, amount: 0, confirmation: { state: 'CONFIRMED', confirmedVersion: 1 } },
         { id: 'asset-2', version: 1, amount: 100, confirmation: { state: 'UNCONFIRMED' } },
@@ -26,6 +26,7 @@ function artifact(operation: 'case_planning' | 'task_guidance' = 'case_planning'
 const scope = {
   id: 'research-1', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き',
   institution: '架空機関', jurisdiction: '架空市', municipality: '架空市', sourceCatalogIds: ['catalog-1'],
+  taskTitles: ['架空手続き'], taskCategories: ['insurance'],
   questions: [{ id: 'documents', text: '必要な書類は何ですか' }],
 }
 

@@ -1,6 +1,6 @@
 # AI Server 要件定義
 
-- 版: 1.1
+- 版: 1.2
 - 決定日: 2026-09-20
 - 状態: 機能・責務・初期提供範囲を確定。実装・実接続の完了を示す文書ではない。
 - 対象: `apps/ai-server`。コアと検索・調査の2エージェントを同一AIサービス内で実装する。
@@ -11,7 +11,7 @@
 
 Backend提供範囲の拡張は [Issue #3](https://github.com/mimish0778/after-flow/issues/3)、接続条件は [実行制御ADR](../../docs/adr/0003-execution-control.md)、[確定経路ADR](../../docs/adr/0004-confirmation-path.md)、[書類検査ADR](../../docs/adr/0002-document-inspection.md) を参照する。本書はこれらの必須境界を緩めない。
 
-技術製品・対象機関の資料・運用値の選定が必要な項目は第14章の提供開始条件として管理する。未接続をFakeや成功固定で補って本番提供可能としない。Mastra 1.67.0、Skill/Playbook定義、案内用2 Agentと限定委任の基盤を実装中。HTTPは引き続き生存確認のみで、実モデル・検索・Orch・永続実行は未接続。採用判断・実装範囲・Devinへの引継ぎは [実装方針](IMPLEMENTATION.md) を参照する。
+技術製品・対象機関の資料・運用値の選定が必要な項目は第14章の提供開始条件として管理する。未接続をFakeや成功固定で補って本番提供可能としない。Mastra 1.67.0、Skill/Playbook定義、案内用2 Agent、内部HTTP、Context、P-01 Workflowを実装し合成fixtureで検証している。実モデル・検索・Orch・永続Runtimeは未接続のためHTTPの実行受付は503。採用判断・実装範囲・Devinへの引継ぎは [実装方針](IMPLEMENTATION.md) を参照する。
 
 ## 2. 目的と提供範囲
 

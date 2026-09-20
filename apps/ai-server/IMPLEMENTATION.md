@@ -1,6 +1,9 @@
 # AI Server 実装と引継ぎ
 
-対象: #46 / #52 と #55 / #56 の基盤部分。機能全体の完成や本番提供開始を示さない。
+対象: #46 / #52 の基盤、#49 のHTTP、#51 のContext、#55 / #56 / #59 の案内機能。機能全体の完成や本番提供開始を示さない。
+
+PR順序: [基盤 #78](https://github.com/mimish0778/after-flow/pull/78) → [内部HTTP #80](https://github.com/mimish0778/after-flow/pull/80) → [Context #81](https://github.com/mimish0778/after-flow/pull/81) → P-01案内Workflow。
+詳細は [内部HTTP](INTERNAL_HTTP.md)、[Context](CONTEXT.md)、[P-01](PROCEDURE_GUIDANCE.md)。後続PRは直前のブランチを比較先にする。
 
 ## 採用する基盤
 
@@ -78,8 +81,9 @@ orchestration/research         最小化された依頼・調査結果のSchema
 Mastra本体を使ってSkillの読込、限定委任、構造化結果、不正Prompt/権限指定の拒否、出典ID検証を確認する。
 fixtureモデルの成功は実LLMの回答品質・本番接続の成功を意味しない。
 
-未接続: Backend内部HTTP、Orch、実Provider、検索/取得Adapter、Source Catalog、永続Workflow、累積予算、P-01の結果保存とP-02〜P-04の実行、品質/性能評価。
-HTTP・UI・Dockerの挙動は今回変更しない。Issue #55/#56/#59 やMVP全体は未完了のままとする。
+実装済み: Backend Clientと認証付きIngress、Context構築、P-01の調査・案内・鮮度検証・結果報告Workflow。合成fixtureで検証する。
+未接続: 実Orch/Provider/検索取得Adapter、レビュー済みSource Catalog、永続Runtime、累積予算、実Backendとの通し試験、P-02〜P-04、品質/性能評価。
+HTTPの実行受付はRuntime未設定のため503。UI・Dockerは変更しない。Issue #55/#56/#59 やMVP全体は未完了のままとする。
 
 ## レビュー対応: 内部通信と単体検証
 
@@ -87,3 +91,6 @@ BackendClientはHTTPSを既定とします。ローカルDockerのHTTPには、�
 AI単体の`build`/`typecheck`も内部共有契約を先にbuildするため、clean checkoutで実行できます。テストは`src`のHTTP生存確認と`test`の基盤・内部HTTPの両方を実行します。
 
 Contextの確認区分はフィールド単位で決めます。Case/Taskの状態や段階、Decisionの状態、確認状態そのものなどBackend管理の記録は`confirmed`、Caseの申告項目は`user_reported`、出自のない説明や未確認の金額は`unknown`です。Decisionの`state`が正式な記録でも、その`method`を本人確定扱いにはしません。正式なTask状態は外部機関の受理確認とは区別します。
+
+
+P-01の調査結果はモデル会話とは別にハーネスが記録し、Workflowの型付きStep出力に保持します。完了報告時には、全ての許可済み調査依頼について検証済みcomplete結果があり、全必須questionを回答し、missing/conflictsがないことを再検証します。調査未実行・中断・failed・partial・needs_input、無効な調査結果はコアがcompleteを返しても完了報告を拒否します。モデルの出典IDが取得済みであることだけでは完了条件を満たしません。

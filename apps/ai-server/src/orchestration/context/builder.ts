@@ -154,6 +154,8 @@ export const reviewedResearchScopeSchema = z.object({
   id: internalId, version: z.string().min(1).max(40), reviewedAt: z.string().datetime(),
   procedure: z.string().min(1).max(200), institution: z.string().min(1).max(200),
   jurisdiction: z.string().min(1).max(200), municipality: z.string().min(1).max(200).nullable(),
+  taskTitles: z.array(z.string().min(1).max(200)).min(1).max(20),
+  taskCategories: z.array(z.string().min(1).max(100)).min(1).max(20),
   sourceCatalogIds: z.array(internalId).min(1).max(20),
   questions: z.array(z.object({ id: internalId, text: z.string().min(1).max(300) }).strict()).min(1).max(12),
 }).strict()
@@ -164,6 +166,11 @@ export function buildResearchBrief(context: CoreContext, rawScope: z.infer<typeo
   const municipality = context.modelInput.facts.find(fact => fact.group === 'case' && fact.field === 'municipality')?.value
   if (scope.municipality !== null && municipality !== scope.municipality) {
     return { status: 'needs_input' as const, missing: ['対象の市区町村を確認してください。'] }
+  }
+  const taskValue = (field: string) => context.modelInput.facts.find(fact => fact.group === 'task' && fact.field === field)?.value
+  if (context.operation === 'task_guidance' && (taskValue('submitTo') !== scope.institution ||
+      !scope.taskTitles.includes(String(taskValue('title'))) || !scope.taskCategories.includes(String(taskValue('category'))))) {
+    return { status: 'needs_input' as const, missing: ['この手続き・提出先に対応する確認済み資料を指定してください。'] }
   }
   return { status: 'ready' as const, brief: researchBriefSchema.parse({
     briefId: scope.id, procedure: scope.procedure, institution: scope.institution,
