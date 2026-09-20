@@ -23,6 +23,9 @@ importers:
       '@aftercare/internal-contracts':
         specifier: workspace:*
         version: link:../../packages/internal-contracts
+      '@google-cloud/firestore':
+        specifier: 9.2.0
+        version: 9.2.0
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.8)

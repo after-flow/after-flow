@@ -3,17 +3,21 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "pnpm contracts:build && tsx watch src/main.ts",
     "contracts:build": "pnpm --filter @aftercare/internal-contracts build",
     "build": "pnpm contracts:build && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "typecheck": "pnpm contracts:build && tsc --noEmit -p tsconfig.test.json",
-    "test": "pnpm contracts:build && node ../../scripts/test-workspace.mjs && node --import tsx --test \"test/**/*.test.ts\""
+    "test": "pnpm contracts:build && node ../../scripts/test-workspace.mjs && node --import tsx --test \"test/**/*.test.ts\"",
+    "test:firestore": "pnpm contracts:build && node ../../scripts/with-firestore-emulator.mjs -- node ../../scripts/test-ai-firestore.mjs"
   },
   "dependencies": {
     "@aftercare/internal-contracts": "workspace:*",
+    "@google-cloud/firestore": "9.2.0",
     "@hono/node-server": "2.1.1",
     "@mastra/core": "1.67.0",
     "hono": "4.13.8",
