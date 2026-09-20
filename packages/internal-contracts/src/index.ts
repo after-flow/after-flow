@@ -102,3 +102,10 @@ export const dispatchSchema = z.object({
 }).strict()
 export type RunDispatch = z.infer<typeof dispatchSchema>
 export const dispatchAckSchema = z.object({ jobId: internalId, runId: internalId, status: z.enum(['ACCEPTED', 'DUPLICATE']) }).strict()
+
+/** Formal Proposal status for a Run; approval itself must never be inferred from an AI message. */
+export const proposalActionStateSchema = z.object({
+  id: internalId, actionId: internalId.nullable(), proposalVersion: z.number().int().positive(),
+  payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  status: z.enum(['SUBMITTED', 'VALIDATED', 'AWAITING_APPROVAL', 'APPLIED', 'REJECTED', 'STALE', 'EXPIRED']),
+}).strict()

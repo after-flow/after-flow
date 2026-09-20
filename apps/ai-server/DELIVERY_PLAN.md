@@ -6,10 +6,10 @@
 |---|---|---|
 | 1 | #50 AI専用FirestoreのWorkflow保存、プロセス再起動試験、ADR | PR #102、CI全11件成功 |
 | 2 | #57 永続受付/Worker/実行所有権/共有予算/待機再開 | PR #103、CI全11件成功。業務Handler接続は後続 |
-| 3 | #53/#54 Provider policy、モデル選択/Fallback/計測 | Policy認可・Orch境界・標準Fallback・実呼出し予算・計測を実装。実Provider選定・利用条件は別途 |
+| 3 | #53/#54 Provider policy、モデル選択/Fallback/計測 | PR #105、CI全11件成功。実Provider選定・利用条件は別途 |
 | 4 | #55 検索/資料取得境界、Source Catalog、SSRF検証 | PR #104、CI全11件成功。外部検索製品と業務資料は別途 |
 | 5 | #59 P-01接続、チャットWorkflow、結果再送 | 未着手。実Orch/Providerなしで提供開始しない |
-| 6 | #51/#60 Contextの残る契約とProposal/承認/反映確認 | 未着手 |
+| 6 | #51/#60 Contextの残る契約とProposal/承認/反映確認 | Proposal待機・反映照合を実装。計画履歴Contextは後続 |
 | 7 | #61 P-02加工済み書類の候補/根拠/矛盾/不足 | 未着手。検査済み配信・OCRの実接続は別途 |
 | 8 | #62 P-03計画・訂正/却下を踏まえた再計画 | 未着手 |
 | 9 | #63/#64 P-04準備判定・気づき/引継ぎ | 未着手。対象機関の確認済み資料が必要 |

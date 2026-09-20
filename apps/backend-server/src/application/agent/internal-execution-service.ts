@@ -152,7 +152,7 @@ export class InternalExecutionService {
         limit: 100, where: [{ field: 'agentRunId', op: '==', value: run.id }],
       })
       if (actions.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
-      content.actions = actions.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, status: p.status, proposalVersion: p.proposalVersion }))
+      content.actions = actions.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, status: p.status, proposalVersion: p.proposalVersion, payloadHash: p.payloadHash }))
       if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
       if (run.operation === 'task_guidance') {
         if (run.targetType !== 'TASK') throw errors.forbidden()
