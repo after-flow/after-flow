@@ -78,8 +78,13 @@ apps/
     public/                  favicon・開発用Service Worker
   backend-server/
     src/main.ts              公開サーバーの起動
-    src/app.ts               Hono設定
+    src/app.ts               Hono設定・共通middleware
+    src/shared/              AppErrorとコード／status対応表
+    src/presentation/http/   requestId・検証・共通エラー処理・route定義
+    src/presentation/schemas/ 共通入力スキーマと公開契約との一致検証
+    src/presentation/openapi/ route定義からのOpenAPI生成
     src/presentation/routes/public/v1/health.ts
+    test/                    契約テスト（node:test）
   ai-server/
     src/main.ts              内部サーバーの起動
     src/app.ts               Hono設定（公開ルートなし）
@@ -101,7 +106,11 @@ Makefile                    起動・停止・検証
 ## API・モックの扱い
 
 Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
-仕様書の新しいレスポンス形式や認証への切替は、Backendの実装と合わせて行います。
+
+Backendの公開APIは共通の封筒で応答します。成功は `{ data, meta }`、失敗は `{ error, meta }` で、どちらも `meta.requestId` を含みます。
+`error.code` は入力不正・未認証・権限不足・not found・競合・同意不足・機能未接続・一時障害を区別し、`error.retryable` が同じ要求の再送可否を示します。
+一覧の続きは `meta.nextCursor` で表します。件数だけを見て1ページ目を全件として扱わないでください。
+既存MSWの旧形式との対応付けと、Web側クライアントの変換は #3 の対応表で扱います。現時点でWebは変更していません。
 内部APIの契約ができた時点で `packages/internal-contracts` を追加し、Webから参照させません。
 
 | 変数 | 開発時 | 本番ビルド時 |
@@ -126,7 +135,15 @@ VITE_USE_MOCK=false VITE_API_PROXY=http://127.0.0.1:8080 pnpm dev:web
 ```sh
 pnpm typecheck
 pnpm lint                # Lintと依存境界の検証
+pnpm test                # Backendの契約テスト
+pnpm openapi:check       # 生成済みOpenAPIと実装routeの一致を検証
 pnpm build
+```
+
+公開APIのOpenAPIは `docs/api/public-openapi.yaml` に生成します。route定義を変更したら次を実行して差分をcommitしてください。
+
+```sh
+pnpm openapi:generate
 ```
 
 依存境界の検証は、WebからBackend／AI／内部契約への参照、サービス間の直接importを拒否します。
@@ -140,7 +157,7 @@ pnpm build
 - **Docker smoke**: 3サービスのhealthyを待ち、Web配信、Backendの公開API、WebのAPIプロキシ、BackendからAIへの内部HTTP接続を確認します。AIのホストポート非公開とWebからのネットワーク分離も検証します。最後にログを表示し、コンテナを終了します。
 
 Nodeとpnpmのバージョンは `.node-version` と `package.json` を参照します。外部クラウドやLLMの資格情報は不要です。
-初期CIは型・ビルドと疎通の検証です。業務ロジック・契約の自動テストやブラウザーE2Eは、各機能の実装時に追加します。
+QualityジョブはBackendの契約テストと、生成済みOpenAPIが実装routeと一致することも検証します。ブラウザーE2Eは各機能の実装時に追加します。
 Lintの既存警告4件は現状どおり警告として扱います。
 
 Docker起動後、同じ疎通チェックをローカルでも実行できます。

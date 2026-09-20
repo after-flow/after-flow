@@ -1,0 +1,127 @@
+# 自動生成ファイル。直接編集しない。
+# 生成: pnpm --filter @aftercare/backend-server openapi:generate
+openapi: 3.0.3
+info:
+  title: after-flow 公開 API
+  version: 0.1.0
+  description: Web からの業務通信はこの公開 API のみを経由する。成功は { data, meta }、失敗は { error, meta } を返し、いずれも meta.requestId を含む。
+servers:
+  - url: /api/v1
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ApiFailure:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_FAILED
+                - UNAUTHENTICATED
+                - FORBIDDEN
+                - NOT_FOUND
+                - CONFLICT
+                - IDEMPOTENCY_KEY_REUSED
+                - PRECONDITION_REQUIRED
+                - PRECONDITION_FAILED
+                - CONSENT_REQUIRED
+                - FEATURE_NOT_CONNECTED
+                - PAYLOAD_TOO_LARGE
+                - UNSUPPORTED_MEDIA_TYPE
+                - RATE_LIMITED
+                - UNAVAILABLE
+                - INTERNAL
+            message:
+              type: string
+            retryable:
+              type: boolean
+            details:
+              type: object
+              additionalProperties: {}
+          required:
+            - code
+            - message
+            - retryable
+          additionalProperties: false
+        meta:
+          type: object
+          properties:
+            requestId:
+              type: string
+            nextCursor:
+              type: string
+          required:
+            - requestId
+          additionalProperties: false
+      required:
+        - error
+        - meta
+      additionalProperties: false
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: プロセスの生存確認
+      description: 公開サーバーが要求を受け付けられることだけを示す。依存サービスの疎通や業務機能の準備完了は意味しない。
+      tags:
+        - system
+      security: []
+      parameters:
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 稼働中
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      service:
+                        type: string
+                        enum:
+                          - backend-server
+                      status:
+                        type: string
+                        enum:
+                          - ok
+                    required:
+                      - service
+                      - status
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"

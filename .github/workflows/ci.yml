@@ -39,6 +39,10 @@ jobs:
         run: pnpm typecheck
       - name: Lint and verify dependency boundaries
         run: pnpm lint
+      - name: Verify the generated OpenAPI matches the implemented routes
+        run: pnpm openapi:check
+      - name: Run workspace tests
+        run: pnpm test
       - name: Build all workspaces
         run: pnpm build
       - name: Verify production excludes the mock service worker
