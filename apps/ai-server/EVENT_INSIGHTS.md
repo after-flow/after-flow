@@ -1,0 +1,9 @@
+# イベント起点の気づき
+
+`buildEventInsight` はBackendが検出した期限確認・不足書類・専門家確認イベントを、根拠と版付きのInsight候補へ変換する。LLMの巡回や期限計算は行わない。一般的な案件変更は未対応として返し、架空の発見を作らない。
+
+同一Case/eventはRunが変わっても同じresultIdになる。これは冪等性キーの生成であり、実際の重複登録防止はBackend受信側の永続ledgerで保証する必要がある。現在の内部result契約にInsightのvariantはなく、イベント配信/受信への接続は未提供。
+
+DOCUMENT_REQUEST・ESCALATION_PROPOSALは表示する気づきと別の候補として返す。正式状態の変更には既存のProposal/人の確認が必要。気づきの生成だけで引継ぎ完了・外部連絡を行わない。
+
+この関数へのeventは認証済みBackendから取得し、最新Case/Task版と照合する。モデルや公開API入力をそのまま渡さない。期限・根拠はBackendの確定Rule情報を使い、AIの法的判断を追加しない。
