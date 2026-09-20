@@ -166,6 +166,10 @@ export interface OpenApiOptions {
   basePath: string
 }
 
+/** 生成ファイルとローカルAPIドキュメントで共有する公開APIの識別子。 */
+export const PUBLIC_API_VERSION = '0.1.0'
+export const PUBLIC_API_BASE_PATH = '/api/v1'
+
 /**
  * 公開 route の定義から OpenAPI 文書を組み立てる。
  *
