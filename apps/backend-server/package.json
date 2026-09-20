@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "pnpm contracts:build && tsx watch src/main.ts",
     "contracts:build": "pnpm --filter @aftercare/internal-contracts build",
@@ -30,6 +32,6 @@
     "@types/node": "24.13.3",
     "tsx": "4.23.13",
     "typescript": "~6.0.2",
-    "yaml": "2.8.1"
+    "yaml": "2.8.3"
   }
 }

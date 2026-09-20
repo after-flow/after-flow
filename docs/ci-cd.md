@@ -173,5 +173,6 @@ artifact期限切れ時は復元可能なCloud Run revisionを使用します。
 
 - 本変更のローカル検証対象は型・Lint・テスト・OpenAPI・Emulator統合テスト・build・actionlint/ShellCheck・開発/本番DockerのHTTP/分離チェックです。
 - GHCRへの実push、GitHub-hosted runner実行、OIDC/IAM、実Cloud Runへのdeploy/traffic切替は、接続後にstagingで検証が必要です。
-- ブラウザー操作のE2E、業務の成功シナリオ、DB migration、バックアップ復元、LLM呼出し、負荷試験はこのliveness検証に含みません。
+- ブラウザー操作のE2E、実環境での業務シナリオ、DB migration、バックアップ復元、LLM呼出し、負荷試験はこのliveness検証に含みません。
+- Outbox workerの常駐実行・Cloud Run Jobs/Schedulerへの配備はこの3サービスのDeployに含みません。
 - Backendの業務APIとFirestore Adapterは実装されていますが、認証Provider・本番データ接続・同意文書・ルールカタログなどの設定は別途必要です。Mastra/Orchは未接続です。liveness成功だけを根拠に実データ運用を開始しないでください。
