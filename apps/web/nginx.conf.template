@@ -1,0 +1,43 @@
+server {
+    listen ${PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;
+    client_max_body_size 10m;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location = /healthz {
+        access_log off;
+        default_type application/json;
+        return 200 '{"data":{"service":"web","status":"ok"}}';
+    }
+
+    location ^~ /api/ {
+        resolver ${NGINX_LOCAL_RESOLVERS} valid=30s;
+        set $backend "${BACKEND_ORIGIN}";
+        proxy_pass $backend$request_uri;
+        proxy_ssl_server_name on;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_http_version 1.1;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Serverless-Authorization "";
+        proxy_read_timeout 60s;
+    }
+
+    location ^~ /internal/ { return 404; }
+    location = /mockServiceWorker.js { return 404; }
+    location ~ /\. { return 404; }
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+    }
+    location / {
+        add_header Cache-Control no-cache;
+        try_files $uri $uri/ /index.html;
+    }
+}

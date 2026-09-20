@@ -8,14 +8,15 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint --config ../../.oxlintrc.json src",
     "preview": "vite preview",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test": "node ../../scripts/test-workspace.mjs"
   },
   "dependencies": {
+    "@aftercare/public-contracts": "workspace:*",
     "@tanstack/react-query": "^5.103.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.4",
-    "@aftercare/public-contracts": "workspace:*"
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -26,6 +27,7 @@
     "msw": "^2.15.0",
     "oxlint": "^1.81.0",
     "tailwindcss": "^4.3.3",
+    "tsx": "4.23.13",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   },
