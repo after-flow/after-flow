@@ -1,3 +1,5 @@
+import { createBudgetProcessors } from '../budget-processors.js'
+import type { AgentBudget } from '../budget-processors.js'
 import { Agent } from '@mastra/core/agent'
 import type { DelegationConfig, ToolsInput } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
@@ -10,6 +12,7 @@ export const CORE_AGENT_ID = 'case-agent'
 export const RESEARCH_AGENT_ID = 'research-agent'
 
 export interface GuidanceAgentDependencies {
+  budget?: AgentBudget
   models: { core: MastraModelConfig; research: MastraModelConfig }
   /** Application-approved briefs only. Never pass raw Backend artifacts here. */
   briefs: readonly ResearchBrief[]
@@ -24,6 +27,8 @@ export interface GuidanceAgentDependencies {
  * The HTTP worker must not enable this until Orch, auth, storage and shared budgets are connected.
  */
 export function createGuidanceAgents(dependencies: GuidanceAgentDependencies) {
+  const processors = dependencies.budget ? createBudgetProcessors(dependencies.budget) : undefined
+  const coreBudget = processors?.('core'); const researchBudget = processors?.('research')
   const playbook = getPlaybook('procedure-guidance', '1')
   const briefs = new Map<string, ResearchBrief>()
   for (const input of dependencies.briefs) {
@@ -50,6 +55,7 @@ export function createGuidanceAgents(dependencies: GuidanceAgentDependencies) {
 ${mandatoryInstructions(researchSkills)}`
 
   const researchAgent = new Agent({
+    ...(researchBudget ? { inputProcessors: [researchBudget.input], outputProcessors: [researchBudget.output] } : {}),
     id: RESEARCH_AGENT_ID, name: '検索・調査エージェント',
     description: '許可済みの調査依頼を調べる。委任promptは厳密にJSON {"briefId":"許可ID"}とする。',
     model: dependencies.models.research,
@@ -69,12 +75,13 @@ ${mandatoryInstructions(researchSkills)}`
 
   let attempts = 0
   const outcomes: ResearchEvidence['outcomes'] = []
+  let reserving = false
   let active: { toolCallId: string; brief: ResearchBrief; outcome: ResearchEvidence['outcomes'][number] } | undefined
   const delegation: DelegationConfig = {
     hookErrorStrategy: 'throw',
     includeSubAgentToolResultsInModelContext: false,
     enableResultReferences: false,
-    onDelegationStart(context) {
+    async onDelegationStart(context) {
       dependencies.signal.throwIfAborted()
       if (context.primitiveId !== RESEARCH_AGENT_ID || context.primitiveType !== 'agent') {
         throw new Error('Unapproved delegation target')
@@ -83,7 +90,10 @@ ${mandatoryInstructions(researchSkills)}`
         throw new Error('Delegation cannot override instructions or memory identity')
       }
       // Rejected calls count as attempts too; concurrent calls cannot multiply the allowance.
-      if (++attempts > 2 || active) throw new Error('Research delegation limit reached')
+      if (++attempts > 2 || active || reserving) throw new Error('Research delegation limit reached')
+      // Reserve before yielding so concurrent delegation cannot pass the local gate.
+      reserving = true
+      try { await dependencies.budget?.charge({ research: 1 }) } finally { reserving = false }
       let selection: ReturnType<typeof delegationSelectionSchema.parse>
       try {
         selection = delegationSelectionSchema.parse(JSON.parse(context.prompt))
@@ -125,6 +135,7 @@ ${mandatoryInstructions(researchSkills)}`
   }
 
   const coreAgent = new Agent({
+    ...(coreBudget ? { inputProcessors: [coreBudget.input], outputProcessors: [coreBudget.output] } : {}),
     id: CORE_AGENT_ID, name: 'コアエージェント',
     model: dependencies.models.core,
     instructions: `あなたは死亡後手続きの案内を支援するコア担当です。現在はguidanceモードです。
