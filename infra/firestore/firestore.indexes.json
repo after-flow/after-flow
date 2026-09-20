@@ -1,0 +1,5 @@
+{
+  "comment": "実際に発行する Query に対応する複合 index だけを登録する。将来のコレクション用に先回りして作らない。現時点の一覧は単一コレクションの orderBy のみで、Firestore の自動 index で足りる。",
+  "indexes": [],
+  "fieldOverrides": []
+}

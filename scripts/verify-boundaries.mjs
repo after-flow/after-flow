@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { parse as parseYaml } from 'yaml'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const units = ['apps', 'packages'].flatMap((group) =>
@@ -59,6 +60,27 @@ for (const unit of units) {
     }
     visit(source)
   }
+}
+
+/**
+ * AI Serverへ業務データの接続設定を渡していないことを検証する。
+ *
+ * 仕様書17.4の受入条件。importの検査だけでは、環境変数やネットワーク経由で
+ * AIに業務Firestoreを触らせる構成を防げない。
+ */
+const compose = parseYaml(readFileSync(path.join(root, 'compose.yaml'), 'utf8'))
+const aiService = compose?.services?.['ai-server'] ?? {}
+const businessDataEnv = /^(FIRESTORE_|GOOGLE_APPLICATION_CREDENTIALS|STORAGE_)/
+for (const key of Object.keys(aiService.environment ?? {})) {
+  if (businessDataEnv.test(key)) {
+    errors.push(`compose.yaml: ai-server must not receive business data settings (${key})`)
+  }
+}
+const dataNetworkServices = Object.entries(compose?.services ?? {})
+  .filter(([, service]) => (service?.networks ?? []).includes('data'))
+  .map(([name]) => name)
+if (dataNetworkServices.includes('ai-server')) {
+  errors.push('compose.yaml: ai-server must not join the data network')
 }
 
 if (errors.length) {

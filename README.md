@@ -80,11 +80,15 @@ apps/
     src/main.ts              公開サーバーの起動
     src/app.ts               Hono設定・共通middleware
     src/shared/              AppErrorとコード／status対応表
+    src/domain/shared/       Entity共通形・監査・Outbox・コレクション定義
+    src/application/ports/   永続化のポート（UnitOfWork・Repository）
+    src/infrastructure/firestore/ Firestore実装・パス検証・カーソル
     src/presentation/http/   requestId・検証・共通エラー処理・route定義
     src/presentation/schemas/ 共通入力スキーマと公開契約との一致検証
     src/presentation/openapi/ route定義からのOpenAPI生成
     src/presentation/routes/public/v1/health.ts
     test/                    契約テスト（node:test）
+    test/firestore/          Emulatorに対する統合テスト
   ai-server/
     src/main.ts              内部サーバーの起動
     src/app.ts               Hono設定（公開ルートなし）
@@ -92,9 +96,13 @@ apps/
 packages/
   public-contracts/src/dto/  既存フロントの公開リソース型
 scripts/
-  verify-boundaries.mjs     workspace依存・import境界の検証
+  verify-boundaries.mjs     workspace依存・import境界・AIへのデータ設定分離の検証
+  with-firestore-emulator.mjs Firestore Emulatorを起動してコマンドを実行
 docs/
   architecture.md           提供された仕様書を内容変更せず移動
+  api/public-openapi.yaml   route定義から生成する公開API仕様
+infra/
+  firestore/                Security Rules・index・Emulatorの説明
 Dockerfile                  固定Node/pnpmと依存インストール
 compose.yaml                Web / Backend / AIの独立コンテナ
 Makefile                    起動・停止・検証
@@ -135,10 +143,14 @@ VITE_USE_MOCK=false VITE_API_PROXY=http://127.0.0.1:8080 pnpm dev:web
 ```sh
 pnpm typecheck
 pnpm lint                # Lintと依存境界の検証
-pnpm test                # Backendの契約テスト
+pnpm test                # Backendの契約テスト（Emulator不要）
+pnpm test:firestore      # Firestore Emulatorを起動して統合テスト
 pnpm openapi:check       # 生成済みOpenAPIと実装routeの一致を検証
 pnpm build
 ```
+
+`pnpm test:firestore` はFirestore EmulatorをDockerコンテナで起動します。ホストへのJavaの導入は不要です。
+Emulatorが起動していない状態で `pnpm test` を実行すると、Firestoreの統合テストは理由を表示してskipします。成功扱いにはしません。
 
 公開APIのOpenAPIは `docs/api/public-openapi.yaml` に生成します。route定義を変更したら次を実行して差分をcommitしてください。
 
@@ -154,10 +166,13 @@ pnpm openapi:generate
 [GitHub Actions](.github/workflows/ci.yml) は `main` 向けPR、`main` へのpush、手動実行で動きます。
 
 - **Quality**: 固定lockfileでインストールし、全workspaceの型・Lint・依存境界・本番ビルドを検証します。本番成果物にモックのService Workerが含まれないことも確認します。
+- **Firestore integration**: Firestore Emulatorに対してTransaction・冪等性・版競合・カーソルページングを検証します。
 - **Docker smoke**: 3サービスのhealthyを待ち、Web配信、Backendの公開API、WebのAPIプロキシ、BackendからAIへの内部HTTP接続を確認します。AIのホストポート非公開とWebからのネットワーク分離も検証します。最後にログを表示し、コンテナを終了します。
 
 Nodeとpnpmのバージョンは `.node-version` と `package.json` を参照します。外部クラウドやLLMの資格情報は不要です。
-QualityジョブはBackendの契約テストと、生成済みOpenAPIが実装routeと一致することも検証します。ブラウザーE2Eは各機能の実装時に追加します。
+QualityジョブはBackendの契約テストと、生成済みOpenAPIが実装routeと一致することも検証します。
+Firestore integrationジョブは、Emulatorに対して永続化の統合テストを実行します。実Firestoreの資格情報は使いません。
+ブラウザーE2Eは各機能の実装時に追加します。
 Lintの既存警告4件は現状どおり警告として扱います。
 
 Docker起動後、同じ疎通チェックをローカルでも実行できます。

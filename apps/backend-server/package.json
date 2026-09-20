@@ -10,10 +10,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "openapi:generate": "tsx src/tools/generate-openapi.ts",
-    "openapi:check": "tsx src/tools/generate-openapi.ts --check"
+    "openapi:check": "tsx src/tools/generate-openapi.ts --check",
+    "test:firestore": "node ../../scripts/with-firestore-emulator.mjs -- node --import tsx --test \"test/firestore/**/*.test.ts\""
   },
   "dependencies": {
     "@aftercare/public-contracts": "workspace:*",
+    "@google-cloud/firestore": "9.2.0",
     "@hono/node-server": "2.1.1",
     "hono": "4.13.8",
     "zod": "4.6.5"

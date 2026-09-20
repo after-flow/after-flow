@@ -39,6 +39,10 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
+      # 業務Firestoreの接続設定はBackendにだけ渡す。ai-serverには渡さない。
+      # 既定では未設定。`make up-data` がEmulatorの宛先を入れる。
+      FIRESTORE_EMULATOR_HOST: ${FIRESTORE_EMULATOR_HOST-}
+      FIRESTORE_PROJECT_ID: ${FIRESTORE_PROJECT_ID:-after-flow-local}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     volumes:
@@ -49,7 +53,7 @@ services:
       timeout: 3s
       start_period: 10s
       retries: 3
-    networks: [frontend, services]
+    networks: [frontend, services, data]
 
   ai-server:
     <<: *development
@@ -68,7 +72,25 @@ services:
       retries: 3
     networks: [services]
 
+  # 業務Firestoreの代わりに使う開発用Emulator。
+  # 既定では起動しない（イメージが大きいため）。`make up-data` で有効になる。
+  # ai-serverは data ネットワークに接続しない。AIへ業務DBを触らせないため。
+  firestore-emulator:
+    image: ${FIRESTORE_EMULATOR_IMAGE:-gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators}
+    profiles: [data]
+    init: true
+    command: gcloud emulators firestore start --host-port=0.0.0.0:8085
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8085/"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 20
+    networks: [data]
+
 networks:
   frontend:
   services:
+    internal: true
+  data:
     internal: true
