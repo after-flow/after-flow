@@ -1,4 +1,6 @@
+import { createMiddleware } from 'hono/factory'
 import { z } from 'zod'
+import type { AppEnv } from '../../src/presentation/http/context.js'
 import { defineRoute, ok } from '../../src/presentation/http/route.js'
 import { successEnvelope, caseIdParamSchema, expectedVersionSchema, listQuerySchema } from '../../src/presentation/schemas/common.js'
 import { errors } from '../../src/shared/app-error.js'
@@ -143,3 +145,14 @@ export const fixtureRoutes = [
   knownFailureRoute,
   unexpectedFailureRoute,
 ]
+
+/**
+ * 基盤試験用の認証済み状態。
+ *
+ * 認証の検証そのものは authentication.test.ts が実 Adapter で行う。
+ * ここでは「認証済みなら共通契約がどう動くか」だけを見る。
+ */
+export const stubAuthentication = createMiddleware<AppEnv>(async (c, next) => {
+  c.set('user', { userId: 'user-test-0001', tenantId: 'tenant-test' })
+  await next()
+})

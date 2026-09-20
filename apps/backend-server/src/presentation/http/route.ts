@@ -177,6 +177,10 @@ function assertExpectedVersion(body: unknown, requirement: RouteSpec['expectedVe
 export function registerRoutes(app: Hono<AppEnv>, routes: RegisteredRoute[]) {
   for (const { spec, handler } of routes) {
     app.on(spec.method.toUpperCase(), spec.path, async (c) => {
+      // 認証が必要な route は、認証 middleware の有無に関係なくここで止める。
+      // middleware の付け忘れが「誰でも通る API」にならないようにする。
+      if (spec.auth === 'user' && !c.get('user')) throw errors.unauthenticated()
+
       const request = spec.request ?? {}
 
       const params = request.params

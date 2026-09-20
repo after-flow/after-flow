@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { MiddlewareHandler } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import type { AppEnv } from './presentation/http/context.js'
 import { handleError, handleNotFound } from './presentation/http/error-handler.js'
@@ -14,13 +15,18 @@ import { errors } from './shared/app-error.js'
  */
 export const MAX_JSON_BODY_BYTES = 1024 * 1024
 
-/**
- * 公開サーバーの構成。
- *
- * routes を差し替えられるようにしてあるのは、基盤（検証・エラー契約・
- * requestId）を本番の route 一覧に依存せず試験するため。
- */
-export function createApp(routes: RegisteredRoute[] = publicV1Routes) {
+export interface CreateAppOptions {
+  routes?: RegisteredRoute[]
+  /**
+   * 認証 middleware。
+   *
+   * 未指定でも `auth: 'user'` の route は 401 になる。設定漏れが
+   * 「誰でも通る API」ではなく「誰も通れない API」になるようにしてある。
+   */
+  authentication?: MiddlewareHandler<AppEnv>
+}
+
+export function createApp(options: CreateAppOptions = {}) {
   const app = new Hono<AppEnv>()
 
   // requestId は最初に設定する。以降のあらゆる応答が meta.requestId を持つ。
@@ -40,7 +46,8 @@ export function createApp(routes: RegisteredRoute[] = publicV1Routes) {
   app.notFound(handleNotFound)
 
   const v1 = new Hono<AppEnv>()
-  registerRoutes(v1, routes)
+  if (options.authentication) v1.use('*', options.authentication)
+  registerRoutes(v1, options.routes ?? publicV1Routes)
   app.route('/api/v1', v1)
 
   return app

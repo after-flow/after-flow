@@ -81,7 +81,9 @@ apps/
     src/app.ts               Hono設定・共通middleware
     src/shared/              AppErrorとコード／status対応表
     src/domain/shared/       Entity共通形・監査・Outbox・コレクション定義
-    src/application/ports/   永続化のポート（UnitOfWork・Repository）
+    src/application/ports/   永続化・認証のポート
+    src/application/authorization/ tenant・Case membershipの認可
+    src/infrastructure/identity/ トークン検証Adapterと設定
     src/infrastructure/firestore/ Firestore実装・パス検証・カーソル
     src/presentation/http/   requestId・検証・共通エラー処理・route定義
     src/presentation/schemas/ 共通入力スキーマと公開契約との一致検証
@@ -100,6 +102,7 @@ scripts/
   with-firestore-emulator.mjs Firestore Emulatorを起動してコマンドを実行
 docs/
   architecture.md           提供された仕様書を内容変更せず移動
+  adr/                      未確定事項と決定の記録
   api/public-openapi.yaml   route定義から生成する公開API仕様
 infra/
   firestore/                Security Rules・index・Emulatorの説明
@@ -114,6 +117,9 @@ Makefile                    起動・停止・検証
 ## API・モックの扱い
 
 Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
+
+公開APIは認証済みユーザーとCase membershipに限定します。採用する認証Providerは未確定で、実接続の着手条件は [ADR 0001](docs/adr/0001-authentication-provider.md) に記録しています。
+認証の設定が無いまま起動した場合、認証が必要なAPIはすべて401を返します。検証を省略して通す既定値はありません。
 
 Backendの公開APIは共通の封筒で応答します。成功は `{ data, meta }`、失敗は `{ error, meta }` で、どちらも `meta.requestId` を含みます。
 `error.code` は入力不正・未認証・権限不足・not found・競合・同意不足・機能未接続・一時障害を区別し、`error.retryable` が同じ要求の再送可否を示します。
