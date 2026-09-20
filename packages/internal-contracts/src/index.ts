@@ -102,3 +102,47 @@ export const dispatchSchema = z.object({
 }).strict()
 export type RunDispatch = z.infer<typeof dispatchSchema>
 export const dispatchAckSchema = z.object({ jobId: internalId, runId: internalId, status: z.enum(['ACCEPTED', 'DUPLICATE']) }).strict()
+
+/** Formal Proposal status for a Run; approval itself must never be inferred from an AI message. */
+export const proposalActionStateSchema = z.object({
+  id: internalId, actionId: internalId.nullable(), proposalVersion: z.number().int().positive(),
+  payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  status: z.enum(['SUBMITTED', 'VALIDATED', 'AWAITING_APPROVAL', 'APPLIED', 'REJECTED', 'STALE', 'EXPIRED']),
+}).strict()
+
+const proposalHistoryItemSchema = proposalActionStateSchema.extend({
+  kind: aiProposalSchema.shape.kind, source: z.enum(['USER', 'SYSTEM', 'AI']),
+  title: z.string().max(120), summary: z.string().max(2000),
+  targetTitle: z.string().max(500).nullable(), targetTaskId: internalId.nullable(),
+  assetDisposal: z.boolean(), supersedesProposalVersion: z.number().int().positive().nullable(),
+}).strict()
+export const planningHistorySchema = z.object({
+  complete: z.literal(true),
+  proposals: z.array(proposalHistoryItemSchema).max(100),
+  versions: z.array(z.object({
+    proposalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    title: z.string().max(120), summary: z.string().max(2000), targetTitle: z.string().max(500).nullable(),
+    supersedesProposalVersion: z.number().int().positive().nullable(),
+  }).strict()).max(100),
+  approvals: z.array(z.object({
+    proposalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED']), applicationStatus: z.enum(['NOT_APPLIED', 'APPLIED', 'FAILED']),
+    decisionNote: z.string().max(2000).nullable(), applicationFailureReason: z.string().max(2000).nullable(),
+  }).strict()).max(100),
+}).strict().superRefine((history, ctx) => {
+  const versions = new Map(history.versions.map(item => [`${item.proposalId}:${item.proposalVersion}`, item]))
+  if (versions.size !== history.versions.length || new Set(history.proposals.map(item => item.id)).size !== history.proposals.length) {
+    ctx.addIssue({ code: 'custom', message: 'Planning history identity collision' })
+  }
+  for (const proposal of history.proposals) {
+    if (proposal.proposalVersion > 100) { ctx.addIssue({ code: 'custom', message: 'Planning history is incomplete' }); continue }
+    for (let version = 1; version <= proposal.proposalVersion; version++) {
+      const stored = versions.get(`${proposal.id}:${version}`)
+      if (!stored || (version === proposal.proposalVersion && stored.payloadHash !== proposal.payloadHash)) ctx.addIssue({ code: 'custom', message: 'Planning history is incomplete' })
+    }
+  }
+  for (const approval of history.approvals) {
+    if (versions.get(`${approval.proposalId}:${approval.proposalVersion}`)?.payloadHash !== approval.payloadHash) ctx.addIssue({ code: 'custom', message: 'Approval history does not match its version' })
+  }
+})
+export type PlanningHistory = z.infer<typeof planningHistorySchema>

@@ -173,12 +173,31 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "execution_receipts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
     {
       "collectionGroup": "workflow_snapshots",
       "fieldPath": "payload",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "execution_receipts",
+      "fieldPath": "encryptedDispatch",
       "indexes": []
     }
   ]

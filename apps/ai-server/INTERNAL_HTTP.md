@@ -19,8 +19,8 @@ Backend Clientは別のAI→Backend service tokenとBackend originをcomposition
 `ExecutionRuntime`は永続WorkerのPort。**production実装はまだ注入しない**。
 未設定の場合、livenessは200、実行受付・Snapshot照会は503になる。404や503を配送成功に変換しない。
 
-後続 #50/#57 で、Backendへのcontrol照会によるcapability検証・operation一致確認、
-永続receipt、Job衝突拒否、旧attempt拒否を実装してからACCEPTEDを返す。
+[Runtime](RUNTIME.md)で、Backend control/contextによるcapability検証・operation一致確認、
+永続receipt、Job衝突拒否、旧attempt拒否を実装した。実Provider/業務Handler接続後にcomposition rootから注入する。
 単なるメモリMapやHTTP完了後のPromiseを永続Workerの代わりに使わない。
 取消は現行Backendのcontrol=STOPで協調停止する。直接cancel配送は共有契約・Backend送信側とも未接続であり、完了に含めない。
 

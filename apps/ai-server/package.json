@@ -13,7 +13,9 @@
     "start": "node dist/main.js",
     "typecheck": "pnpm contracts:build && tsc --noEmit -p tsconfig.test.json",
     "test": "pnpm contracts:build && node ../../scripts/test-workspace.mjs && node --import tsx --test \"test/**/*.test.ts\"",
-    "test:firestore": "pnpm contracts:build && node ../../scripts/with-firestore-emulator.mjs -- node ../../scripts/test-ai-firestore.mjs"
+    "test:firestore": "pnpm contracts:build && node ../../scripts/with-firestore-emulator.mjs -- node ../../scripts/test-ai-firestore.mjs",
+    "eval:fixture": "pnpm contracts:build && tsx eval/run.ts",
+    "eval:compare": "tsx eval/compare.ts"
   },
   "dependencies": {
     "@aftercare/internal-contracts": "workspace:*",
@@ -21,6 +23,7 @@
     "@hono/node-server": "2.1.1",
     "@mastra/core": "1.67.0",
     "hono": "4.13.8",
+    "parse5": "8.0.0",
     "zod": "4.6.5"
   },
   "devDependencies": {

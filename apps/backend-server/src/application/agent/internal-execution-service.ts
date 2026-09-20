@@ -1,3 +1,6 @@
+import { planningHistorySchema } from '@aftercare/internal-contracts'
+import type { ProposalVersionEntity } from '../../domain/proposal/proposal-version.js'
+import type { ApprovalEntity } from '../../domain/proposal/approval.js'
 import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent, WaitRequestInput } from '@aftercare/internal-contracts'
 import { INTERNAL_LIMITS } from '@aftercare/internal-contracts'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
@@ -152,7 +155,7 @@ export class InternalExecutionService {
         limit: 100, where: [{ field: 'agentRunId', op: '==', value: run.id }],
       })
       if (actions.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
-      content.actions = actions.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, status: p.status, proposalVersion: p.proposalVersion }))
+      content.actions = actions.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, status: p.status, proposalVersion: p.proposalVersion, payloadHash: p.payloadHash }))
       if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
       if (run.operation === 'task_guidance') {
         if (run.targetType !== 'TASK') throw errors.forbidden()
@@ -167,6 +170,26 @@ export class InternalExecutionService {
       } else {
         if (run.targetType !== 'CASE' || run.targetId !== claims.caseId) throw errors.forbidden()
         for (const [collection, fields] of contextCollections) content[collection.name] = await this.contextList(reader, claims, collection, fields)
+        const [proposals, versions, approvals] = await Promise.all([
+          reader.list<ProposalEntity>(claims.tenantId, collections.proposals, claims.caseId, { limit: 100 }),
+          reader.list<ProposalVersionEntity>(claims.tenantId, collections.proposalVersions, claims.caseId, { limit: 100 }),
+          reader.list<ApprovalEntity>(claims.tenantId, collections.approvals, claims.caseId, { limit: 100 }),
+        ])
+        if (proposals.nextCursor || versions.nextCursor || approvals.nextCursor) throw errors.preconditionFailed({ details: { reason: 'PLANNING_HISTORY_LIMIT_EXCEEDED' } })
+        const targetTitle = (payload: Record<string, unknown>) => typeof payload.title === 'string' ? payload.title : null
+        const planningHistory = planningHistorySchema.safeParse({ complete: true,
+          proposals: proposals.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, kind: p.kind, source: p.source,
+            status: p.status, proposalVersion: p.proposalVersion, payloadHash: p.payloadHash, title: p.title, summary: p.summary,
+            targetTitle: targetTitle(p.payload), targetTaskId: typeof p.payload.taskId === 'string' ? p.payload.taskId : null,
+            assetDisposal: p.assetDisposal, supersedesProposalVersion: p.supersedesProposalVersion })),
+          versions: versions.items.map(v => ({ proposalId: v.proposalId, proposalVersion: v.content.proposalVersion,
+            payloadHash: v.content.payloadHash, title: v.content.title, summary: v.content.summary,
+            targetTitle: targetTitle(v.content.payload), supersedesProposalVersion: v.content.supersedesProposalVersion })),
+          approvals: approvals.items.map(a => ({ proposalId: a.proposalId, proposalVersion: a.proposalVersion, payloadHash: a.payloadHash,
+            status: a.status, applicationStatus: a.applicationStatus, decisionNote: a.decisionNote, applicationFailureReason: a.applicationFailureReason })),
+        })
+        if (!planningHistory.success) throw errors.preconditionFailed({ details: { reason: 'PLANNING_HISTORY_UNAVAILABLE' } })
+        content.planningHistory = planningHistory.data
       }
       // 原本・ファイル名・Storage keyは含めない。検査済みでも文書本文は#27接続まで配信しない。
       const documents = await reader.list<DocumentEntity>(claims.tenantId, collections.documents, claims.caseId, {
