@@ -76,6 +76,9 @@ test('worker executes a stored Mastra workflow once and exposes only verified sn
   const context = { caseVersion: 1, contextSnapshotId: 'context-one', fencingToken: 1, artifactVersion: 1,
     contentHash: contentHash(contextContent), content: contextContent, expiresAt: new Date(Date.now() + 60000).toISOString() }
   const client = { control: async () => ({ instruction: stopped ? 'STOP' as const : 'CONTINUE' as const, reason: null, caseVersion: 1 }),
+    result: async () => { throw new Error('Unexpected result in storage fixture') },
+    propose: async () => { throw new Error('Unexpected proposal in storage fixture') },
+    wait: async () => { throw new Error('Unexpected wait in storage fixture') },
     context: async () => context, heartbeat: async () => ({ accepted: true as const }), event: async () => ({ applied: true, reason: null }) }
   const vault = new DispatchVault(randomBytes(32).toString('base64'))
   const runtime = new DurableExecutionRuntime({ store, snapshots, vault, client: () => client, sectionTimeoutMs: 10000,

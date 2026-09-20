@@ -11,9 +11,10 @@ import type { DispatchVault } from '../runtime-storage/credential-vault.js'
 import { ExecutionRejected, resumeSchema } from '../../application/execution/contracts.js'
 import type { BudgetCharge, Receipt } from '../../application/execution/contracts.js'
 
-type Client = Pick<BackendClient, 'control' | 'context' | 'heartbeat' | 'event'>
+export type ExecutionBackend = Pick<BackendClient, 'control' | 'context' | 'heartbeat' | 'event' | 'result' | 'propose' | 'wait'>
+type Client = ExecutionBackend
 export interface ExecutionSession {
-  receipt: Receipt; context: ContextArtifact; signal: AbortSignal
+  receipt: Receipt; context: ContextArtifact; signal: AbortSignal; backend: ExecutionBackend
   /** Use immediately before every external action, including subagents and model retries. */
   guard(charge?: BudgetCharge): Promise<void>
   /** Call after Backend wait registration, before Mastra suspend. */
@@ -111,7 +112,7 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
       })().catch(error => { if (!pulseStop.signal.aborted) controller.abort(error) })
       const handler = this.deps.handlers[receipt.operation]
       if (!handler || handler.workflowName !== receipt.workflowName) throw new Error('Workflow version is not connected')
-      const result = await handler.execute({ receipt, context, signal, guard,
+      const result = await handler.execute({ receipt, context, signal, guard, backend: client,
         registerWait: waitRequestId => this.deps.store.registerWait(receipt.jobId, owner, waitRequestId) })
       signal.throwIfAborted()
       const snapshot = await this.deps.snapshots.loadWorkflowSnapshot({ workflowName: receipt.workflowName, runId: receipt.workflowRunId })
