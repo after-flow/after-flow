@@ -90,6 +90,16 @@ export interface ListOptions {
   where?: { field: string; op: '==' | '<' | '<=' | '>' | '>='; value: unknown }[]
 }
 
+export interface ListGroupOptions extends ListOptions {
+  /**
+   * 並び替えキーが同値のときに順序を決める項目。
+   *
+   * collection group query では文書 ID が完全パスになり、ページ境界の
+   * 比較に使いづらい。問い合わせ条件の中で一意になる項目を指定する。
+   */
+  tiebreakField: string
+}
+
 export interface Page<T> {
   items: T[]
   /** 続きがある場合のみ。件数から全件を推測させない。 */
@@ -107,5 +117,16 @@ export interface ReadRepository {
     collection: CollectionDescriptor,
     caseId: string | null,
     options: ListOptions,
+  ): Promise<Page<T>>
+  /**
+   * Case を跨いだ横断検索。
+   *
+   * 「自分がメンバーである Case の一覧」のように、親が特定できない
+   * 問い合わせだけに使う。tenant の境界は必ず条件に含める。
+   */
+  listGroup<T extends EntityBase>(
+    tenantId: string,
+    collection: CollectionDescriptor,
+    options: ListGroupOptions,
   ): Promise<Page<T>>
 }

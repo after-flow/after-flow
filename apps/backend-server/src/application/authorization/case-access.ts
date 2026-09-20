@@ -73,6 +73,32 @@ export class CaseAccess {
 }
 
 /**
+ * Case をまだ特定していない操作の実行文脈。
+ *
+ * Case 作成のように認可対象の Case が存在しない操作でも、
+ * WorkContext は認証済みの情報からしか作れないようにしておく。
+ */
+export class TenantAccess {
+  constructor(
+    readonly tenantId: string,
+    private readonly userId: string,
+  ) {}
+
+  get actor(): ActorRef {
+    return { type: 'USER', userId: this.userId, agentRunId: null }
+  }
+
+  toWorkContext(requestId: string | null, idempotency?: IdempotencyRequest | null): WorkContext {
+    return {
+      tenantId: this.tenantId,
+      actor: this.actor,
+      requestId,
+      idempotency: idempotency ?? null,
+    }
+  }
+}
+
+/**
  * 認証済み利用者から tenant / Case の権限を導出する。
  *
  * 要求本文の自己申告（ownerName、続柄、role）は一切使わない。
@@ -100,6 +126,30 @@ export class AccessService {
       })
     }
     return { userId: identity.subject, tenantId }
+  }
+
+  /** Case を特定しない操作の文脈。認証済みであることだけが前提。 */
+  tenantAccess(user: AuthenticatedUser): TenantAccess {
+    return new TenantAccess(user.tenantId, user.userId)
+  }
+
+  /**
+   * すでに取得済みの membership から認可結果を組み立てる。
+   *
+   * 一覧のように membership を起点に引いた後、同じ文書をもう一度
+   * 読み直さないための入口。権限の判定条件は authorizeCase と同じ。
+   */
+  accessFromMembership(
+    user: AuthenticatedUser,
+    member: CaseMember,
+    operation: CaseOperation,
+  ): CaseAccess {
+    if (!member.active || member.userId !== user.userId || member.caseId === null) {
+      throw errors.notFound({ internal: { reason: 'membership does not belong to the caller' } })
+    }
+    const access = new CaseAccess(user.tenantId, member.caseId, member.role, member, user.userId)
+    access.assertCan(operation)
+    return access
   }
 
   /**

@@ -1,39 +1,60 @@
-import type { MiddlewareHandler } from 'hono'
+import type { Hono } from 'hono'
+import { createApp } from './app.js'
 import { AccessService } from './application/authorization/case-access.js'
+import { CaseService } from './application/case/case-service.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
+import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
 import { createTokenVerifier, readAuthConfig } from './infrastructure/identity/config.js'
 import { authentication } from './presentation/http/authentication.js'
 import type { AppEnv } from './presentation/http/context.js'
 import { logger } from './presentation/http/logger.js'
+import { createPublicV1Routes } from './presentation/routes/public/v1/index.js'
 
 /**
  * 実行時の組み立て。
  *
  * 認証 Provider は未決定（仕様書 19 章）で、Firestore の接続先も
- * 開発環境では未設定のことがある。設定が無い場合は機能を無効のままにし、
- * 「検証を省略して通す」既定には絶対にしない。
- * `auth: 'user'` の route は認証 middleware が無ければ 401 になる。
+ * 開発環境では未設定のことがある。設定が無い場合は、その機能を
+ * 「接続されていない」として明示的に拒否する。検証を省略して通す
+ * 既定値や、空配列を返して成功に見せる実装にはしない。
  */
-export function createAuthentication(
-  env: NodeJS.ProcessEnv = process.env,
-): MiddlewareHandler<AppEnv> | undefined {
-  if (!env.AUTH_ISSUER) {
-    logger.warn('authentication is not configured', {
-      // 設定が無いこと自体を毎回はっきり残す。無効のまま本番へ出さないため。
-      effect: 'routes that require a user will reject every request with 401',
-      required: ['AUTH_ISSUER', 'AUTH_AUDIENCE', 'AUTH_JWKS_URI'],
+export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv> {
+  const database = createDatabase(env)
+
+  if (!database) {
+    logger.warn('business database is not configured', {
+      effect: 'business APIs reject every request with FEATURE_NOT_CONNECTED',
+      required: ['FIRESTORE_PROJECT_ID'],
     })
-    return undefined
-  }
-  if (!env.FIRESTORE_PROJECT_ID && !env.GOOGLE_CLOUD_PROJECT) {
-    // membership を確認できなければ、トークンの tenant 主張を裏取りできない。
-    logger.warn('authentication is disabled because the business database is not configured', {
-      effect: 'routes that require a user will reject every request with 401',
-    })
-    return undefined
+    return createApp({ routes: createPublicV1Routes(null) })
   }
 
-  const read = new FirestoreReadRepository(createFirestore(readFirestoreConfig(env)))
-  return authentication(createTokenVerifier(readAuthConfig(env)), new AccessService(read))
+  const access = new AccessService(database.read)
+  const routes = createPublicV1Routes({
+    caseService: new CaseService(access, database.read, database.uow),
+  })
+
+  if (!env.AUTH_ISSUER) {
+    // 設定が無いこと自体をはっきり残す。無効のまま本番へ出さないため。
+    logger.warn('authentication is not configured', {
+      effect: 'routes that require a user reject every request with 401',
+      required: ['AUTH_ISSUER', 'AUTH_AUDIENCE', 'AUTH_JWKS_URI'],
+    })
+    return createApp({ routes })
+  }
+
+  return createApp({
+    routes,
+    authentication: authentication(createTokenVerifier(readAuthConfig(env)), access),
+  })
+}
+
+function createDatabase(env: NodeJS.ProcessEnv) {
+  if (!env.FIRESTORE_PROJECT_ID && !env.GOOGLE_CLOUD_PROJECT) return null
+  const firestore = createFirestore(readFirestoreConfig(env))
+  return {
+    read: new FirestoreReadRepository(firestore),
+    uow: new FirestoreUnitOfWork(firestore),
+  }
 }

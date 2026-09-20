@@ -27,8 +27,13 @@ export const collections = {
   /** tenant のメンバー。Case membership とは別。 */
   members: tenantCollection('members'),
   cases: tenantCollection('cases'),
-  /** Case ごとの role / scope */
-  caseMembers: caseCollection('members'),
+  /**
+   * Case ごとの role / scope。
+   *
+   * tenant 直下の members と別の名前にしてある。案件横断の membership 検索は
+   * collection group query を使うため、同名だと tenant メンバーまで拾ってしまう。
+   */
+  caseMembers: caseCollection('caseMembers'),
   auditEvents: caseCollection('auditEvents'),
 } as const
 

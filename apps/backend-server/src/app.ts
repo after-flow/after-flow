@@ -6,7 +6,7 @@ import { handleError, handleNotFound } from './presentation/http/error-handler.j
 import { requestId } from './presentation/http/request-id.js'
 import type { RegisteredRoute } from './presentation/http/route.js'
 import { registerRoutes } from './presentation/http/route.js'
-import { publicV1Routes } from './presentation/routes/public/v1/index.js'
+import { healthRoute } from './presentation/routes/public/v1/health.js'
 import { errors } from './shared/app-error.js'
 
 /**
@@ -47,7 +47,7 @@ export function createApp(options: CreateAppOptions = {}) {
 
   const v1 = new Hono<AppEnv>()
   if (options.authentication) v1.use('*', options.authentication)
-  registerRoutes(v1, options.routes ?? publicV1Routes)
+  registerRoutes(v1, options.routes ?? [healthRoute])
   app.route('/api/v1', v1)
 
   return app

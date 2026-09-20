@@ -196,6 +196,7 @@ describe('認証 middleware', () => {
   const emptyRead: ReadRepository = {
     get: async () => null,
     list: async () => ({ items: [] }),
+    listGroup: async () => ({ items: [] }),
   }
 
   function appWith(read: ReadRepository) {
@@ -234,6 +235,7 @@ describe('認証 middleware', () => {
     const read: ReadRepository = {
       get: async () => ({ userId: 'user-1', active: false }) as never,
       list: async () => ({ items: [] }),
+      listGroup: async () => ({ items: [] }),
     }
     const { response } = await callWith(`Bearer ${await signToken()}`, read)
     assert.equal(response.status, 403)
@@ -243,6 +245,7 @@ describe('認証 middleware', () => {
     const read: ReadRepository = {
       get: async () => ({ userId: 'user-1', active: true }) as never,
       list: async () => ({ items: [] }),
+      listGroup: async () => ({ items: [] }),
     }
     const { response, body } = await callWith(`Bearer ${await signToken()}`, read)
     assert.equal(response.status, 200)

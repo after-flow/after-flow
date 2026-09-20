@@ -88,7 +88,9 @@ apps/
     src/presentation/http/   requestId・検証・共通エラー処理・route定義
     src/presentation/schemas/ 共通入力スキーマと公開契約との一致検証
     src/presentation/openapi/ route定義からのOpenAPI生成
-    src/presentation/routes/public/v1/health.ts
+    src/domain/case/           Case Entityと版の規則
+    src/application/case/      Case のCommand・Query
+    src/presentation/routes/public/v1/ health・cases
     test/                    契約テスト（node:test）
     test/firestore/          Emulatorに対する統合テスト
   ai-server/
@@ -117,6 +119,9 @@ Makefile                    起動・停止・検証
 ## API・モックの扱い
 
 Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
+
+現在の公開APIは生存確認と案件（作成・一覧・詳細・訂正）です。案件の一覧は自分が参加しているものだけを返します。
+業務データベースが未設定の状態では、業務APIは `FEATURE_NOT_CONNECTED` を理由付きで返します。空配列や固定の成功では返しません。
 
 公開APIは認証済みユーザーとCase membershipに限定します。採用する認証Providerは未確定で、実接続の着手条件は [ADR 0001](docs/adr/0001-authentication-provider.md) に記録しています。
 認証の設定が無いまま起動した場合、認証が必要なAPIはすべて401を返します。検証を省略して通す既定値はありません。

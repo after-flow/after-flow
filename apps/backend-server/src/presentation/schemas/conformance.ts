@@ -1,6 +1,13 @@
-import type { ApiErrorBody, ApiErrorCode, ApiFailure, ResponseMeta } from '@aftercare/public-contracts'
+import type {
+  ApiErrorBody,
+  ApiErrorCode,
+  ApiFailure,
+  CaseResource,
+  ResponseMeta,
+} from '@aftercare/public-contracts'
 import type { z } from 'zod'
 import { apiErrorBodySchema, apiErrorCodeSchema, apiFailureSchema, responseMetaSchema } from './common.js'
+import { caseResourceSchema } from './case.js'
 
 /**
  * Zod スキーマの出力型が公開契約の型と一致することを、型検査で保証する。
@@ -16,3 +23,4 @@ export type ErrorCodeMatches = Assert<Equals<z.infer<typeof apiErrorCodeSchema>,
 export type ErrorBodyMatches = Assert<Equals<z.infer<typeof apiErrorBodySchema>, ApiErrorBody>>
 export type ResponseMetaMatches = Assert<Equals<z.infer<typeof responseMetaSchema>, ResponseMeta>>
 export type FailureMatches = Assert<Equals<z.infer<typeof apiFailureSchema>, ApiFailure>>
+export type CaseResourceMatches = Assert<Equals<z.infer<typeof caseResourceSchema>, CaseResource>>

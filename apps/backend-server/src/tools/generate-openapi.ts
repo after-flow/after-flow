@@ -3,7 +3,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { buildOpenApiDocument } from '../presentation/openapi/document.js'
-import { publicV1Routes } from '../presentation/routes/public/v1/index.js'
+import { publicV1Specs } from '../presentation/routes/public/v1/index.js'
 
 /**
  * 公開 OpenAPI の生成と検証。
@@ -21,7 +21,7 @@ const { values } = parseArgs({
 // pnpm script は package ディレクトリーで実行されるため、そこからの相対で解決する。
 const outputPath = path.resolve(process.cwd(), values.out ?? '../../docs/api/public-openapi.yaml')
 
-const document = buildOpenApiDocument(publicV1Routes, {
+const document = buildOpenApiDocument(publicV1Specs, {
   version: '0.1.0',
   basePath: '/api/v1',
 })
