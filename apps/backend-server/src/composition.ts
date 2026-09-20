@@ -1,6 +1,8 @@
+import { ContractService } from './application/contracts/contract-service.js'
 import { EstateService } from './application/estate/estate-service.js'
 import { PersonService } from './application/persons/person-service.js'
 import type { CaseMembership } from './application/ports.js'
+import type { Benefit, Contract } from './domain/contract/contract.js'
 import type { Asset, Liability } from './domain/estate/estate-item.js'
 import type { Person, Relationship } from './domain/person/person.js'
 import {
@@ -36,6 +38,9 @@ export interface Container {
   assets: InMemoryCaseRepository<Asset>
   liabilities: InMemoryCaseRepository<Liability>
   estateService: EstateService
+  contracts: InMemoryCaseRepository<Contract>
+  benefits: InMemoryCaseRepository<Benefit>
+  contractService: ContractService
 }
 
 export function parseDevMemberships(spec: string | undefined, tenantId: string): CaseMembership[] {
@@ -81,6 +86,8 @@ export function createContainer(env: AppEnv = process.env): Container {
   const personReferences = new InMemoryPersonReferences()
   const assets = new InMemoryCaseRepository<Asset>()
   const liabilities = new InMemoryCaseRepository<Liability>()
+  const contracts = new InMemoryCaseRepository<Contract>()
+  const benefits = new InMemoryCaseRepository<Benefit>()
 
   return {
     identity,
@@ -93,5 +100,8 @@ export function createContainer(env: AppEnv = process.env): Container {
     assets,
     liabilities,
     estateService: new EstateService({ ...shared, assets, liabilities }),
+    contracts,
+    benefits,
+    contractService: new ContractService({ ...shared, contracts, benefits }),
   }
 }

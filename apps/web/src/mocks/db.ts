@@ -438,6 +438,7 @@ export const db: Store = {
         where: '○○電力 カスタマーセンター（0120-XXX-XXX）',
         bring: ['お客様番号がわかるもの（検針票など）', '手続きをする方の本人確認書類'],
       },
+      version: 1,
     },
     {
       id: 'contract_2',
@@ -448,6 +449,7 @@ export const db: Store = {
       policy: 'UNDECIDED',
       progress: 'NOT_STARTED',
       source: 'AI',
+      version: 1,
     },
   ],
 
@@ -467,6 +469,7 @@ export const db: Store = {
         days: 1095,
         basisLabel: '保険事故発生時 ＋ 3年（時効）',
       }),
+      version: 1,
     },
     {
       id: 'benefit_2',
@@ -482,6 +485,7 @@ export const db: Store = {
         days: 1825,
         basisLabel: '受給権発生時 ＋ 原則5年',
       }),
+      version: 1,
     },
   ],
 
