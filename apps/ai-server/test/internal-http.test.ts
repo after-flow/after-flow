@@ -23,8 +23,26 @@ async function provider() {
   ])
   const message = ready[0] as { type: string; port: number }
   assert.equal(message.type, 'ready')
-  return { child, config: { baseUrl: `http://127.0.0.1:${message.port}`, serviceToken: 'fixture-service' } }
+  return { child, config: { baseUrl: `http://127.0.0.1:${message.port}`, serviceToken: 'fixture-service',
+    allowInsecureHttp: true, insecureHttpAllowedHosts: ['127.0.0.1'] } }
 }
+
+test('credentials require HTTPS by default; HTTP needs both opt-in and an exact allowed host', t => {
+  const requests = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Unexpected request') })
+  const config = { serviceToken: 'fixture-service', baseUrl: 'https://backend.example.test' }
+  assert.doesNotThrow(() => new BackendClient(config, dispatch()))
+  for (const baseUrl of ['http://backend.example.test', 'http://127.0.0.1:8080', 'http://backend-server:8080']) {
+    assert.throws(() => new BackendClient({ ...config, baseUrl }, dispatch()), /requires HTTPS/)
+    assert.throws(() => new BackendClient({ ...config, baseUrl, allowInsecureHttp: true }, dispatch()), /requires HTTPS/)
+  }
+  const local = { ...config, baseUrl: 'http://backend-server:8080', insecureHttpAllowedHosts: ['backend-server'] }
+  assert.throws(() => new BackendClient(local, dispatch()), /requires HTTPS/)
+  assert.doesNotThrow(() => new BackendClient({ ...local, allowInsecureHttp: true }, dispatch()))
+  for (const baseUrl of ['http://backend-server.example.test', 'http://backend-server.', 'http://other-server:8080']) {
+    assert.throws(() => new BackendClient({ ...local, baseUrl, allowInsecureHttp: true }, dispatch()), /requires HTTPS/)
+  }
+  assert.equal(requests.mock.callCount(), 0)
+})
 
 test('Backend client sends scoped metadata over independent-process HTTP and rotates capability', async t => {
   const { child, config } = await provider()
