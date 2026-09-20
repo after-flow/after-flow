@@ -5,6 +5,7 @@ import type {
   CaseResource,
   ConsentStatusResource,
   AgentRunResource,
+  CaseOverviewResource,
   GuidanceResource,
   MessageAcceptedResource,
   ApprovalResource,
@@ -21,6 +22,7 @@ import { caseResourceSchema } from './case.js'
 import { consentStatusResourceSchema } from './consent.js'
 import { documentResourceSchema } from './document.js'
 import { agentRunResourceSchema } from './agent.js'
+import { caseOverviewResourceSchema } from './overview.js'
 import { guidanceResourceSchema, messageAcceptedResourceSchema } from './chat.js'
 import {
   approvalResourceSchema,
@@ -71,4 +73,7 @@ export type MessageAcceptedMatches = Assert<
 >
 export type GuidanceResourceMatches = Assert<
   Equals<z.infer<typeof guidanceResourceSchema>, GuidanceResource>
+>
+export type CaseOverviewMatches = Assert<
+  Equals<z.infer<typeof caseOverviewResourceSchema>, CaseOverviewResource>
 >

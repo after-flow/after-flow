@@ -9332,3 +9332,471 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/overview:
+    get:
+      operationId: getCaseOverview
+      summary: 案件の概要
+      description: 保存済みの状態を集計クエリで数える。一覧の1ページ目だけを数えず、対象の手続きが0件の段階は完了にしない。
+      tags:
+        - overview
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 集約した概要
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      case:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          deceasedName:
+                            type: string
+                          deceasedNameKana:
+                            nullable: true
+                            type: string
+                          dateOfDeath:
+                            type: string
+                          dateOfBirth:
+                            nullable: true
+                            type: string
+                          knownAt:
+                            nullable: true
+                            type: string
+                          ownerName:
+                            type: string
+                          relationshipToDeceased:
+                            type: string
+                          municipality:
+                            nullable: true
+                            type: string
+                          status:
+                            type: string
+                            enum:
+                              - ACTIVE
+                              - CLOSED
+                          version:
+                            type: integer
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
+                          caseVersion:
+                            type: integer
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
+                          createdAt:
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          updatedAt:
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          allowedActions:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - UPDATE_BASIC_INFO
+                                - ADMINISTER
+                        required:
+                          - id
+                          - deceasedName
+                          - deceasedNameKana
+                          - dateOfDeath
+                          - dateOfBirth
+                          - knownAt
+                          - ownerName
+                          - relationshipToDeceased
+                          - municipality
+                          - status
+                          - version
+                          - caseVersion
+                          - createdAt
+                          - updatedAt
+                          - allowedActions
+                        additionalProperties: false
+                      aggregatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      caseVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      taskCounts:
+                        type: object
+                        additionalProperties:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                      totalTasks:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      flowStages:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              enum:
+                                - immediate
+                                - funeral
+                                - government
+                                - contracts
+                                - investigation
+                                - decision
+                                - division
+                                - transfer
+                                - tax
+                                - closing
+                            label:
+                              type: string
+                            totalTasks:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            completedTasks:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            state:
+                              type: string
+                              enum:
+                                - NOT_STARTED
+                                - IN_PROGRESS
+                                - COMPLETED
+                                - NO_TASKS
+                          required:
+                            - id
+                            - label
+                            - totalTasks
+                            - completedTasks
+                            - state
+                          additionalProperties: false
+                      upcomingDeadlines:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            taskId:
+                              nullable: true
+                              type: string
+                            label:
+                              type: string
+                            basisLabel:
+                              type: string
+                            startDate:
+                              nullable: true
+                              type: string
+                            dueDate:
+                              nullable: true
+                              type: string
+                            daysRemaining:
+                              nullable: true
+                              type: number
+                            severity:
+                              nullable: true
+                              type: string
+                              enum:
+                                - NORMAL
+                                - SOON
+                                - URGENT
+                                - OVERDUE
+                            confirmation:
+                              type: string
+                              enum:
+                                - CONFIRMED
+                                - UNCONFIRMED
+                            unresolvedReason:
+                              nullable: true
+                              type: string
+                              enum:
+                                - MISSING_BASIS_DATE
+                                - RULE_UNCONFIRMED
+                            jurisdiction:
+                              type: string
+                            timezone:
+                              type: string
+                            ruleId:
+                              type: string
+                            ruleVersion:
+                              type: string
+                            sourceUrl:
+                              nullable: true
+                              type: string
+                            sourceCheckedAt:
+                              nullable: true
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            extendable:
+                              nullable: true
+                              type: boolean
+                            critical:
+                              type: boolean
+                          required:
+                            - id
+                            - taskId
+                            - label
+                            - basisLabel
+                            - startDate
+                            - dueDate
+                            - daysRemaining
+                            - severity
+                            - confirmation
+                            - unresolvedReason
+                            - jurisdiction
+                            - timezone
+                            - ruleId
+                            - ruleVersion
+                            - sourceUrl
+                            - sourceCheckedAt
+                            - extendable
+                            - critical
+                          additionalProperties: false
+                      unresolvedDeadlineCount:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      pendingApprovalCount:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      appliedApprovalCount:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      inheritanceDecision:
+                        type: object
+                        properties:
+                          decided:
+                            type: boolean
+                          unknown:
+                            type: boolean
+                          perHeir:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                personId:
+                                  type: string
+                                personName:
+                                  nullable: true
+                                  type: string
+                                method:
+                                  nullable: true
+                                  type: string
+                                  enum:
+                                    - SIMPLE_ACCEPTANCE
+                                    - LIMITED_ACCEPTANCE
+                                    - RENUNCIATION
+                                state:
+                                  type: string
+                                  enum:
+                                    - DRAFT
+                                    - REPORTED
+                                    - CONFIRMED
+                                confirmed:
+                                  type: boolean
+                              required:
+                                - personId
+                                - personName
+                                - method
+                                - state
+                                - confirmed
+                              additionalProperties: false
+                        required:
+                          - decided
+                          - unknown
+                          - perHeir
+                        additionalProperties: false
+                      recentAgentRuns:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            caseId:
+                              type: string
+                            operation:
+                              type: string
+                              enum:
+                                - document_analysis
+                                - case_planning
+                                - task_guidance
+                                - chat_reply
+                            status:
+                              type: string
+                              enum:
+                                - QUEUED
+                                - RUNNING
+                                - WAITING_DOCUMENT
+                                - WAITING_APPROVAL
+                                - RETRY_SCHEDULED
+                                - NEEDS_ATTENTION
+                                - SUCCEEDED
+                                - FAILED
+                                - CANCELLED
+                            targetType:
+                              type: string
+                              enum:
+                                - CASE
+                                - TASK
+                                - DOCUMENT
+                                - MESSAGE
+                            targetId:
+                              type: string
+                            attempt:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            waiting:
+                              type: boolean
+                            waitingFor:
+                              nullable: true
+                              type: string
+                            failureReason:
+                              nullable: true
+                              type: string
+                            caseVersionAtAccept:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            startedAt:
+                              nullable: true
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            finishedAt:
+                              nullable: true
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            allowedActions:
+                              type: array
+                              items:
+                                type: string
+                                enum:
+                                  - cancel
+                                  - retry
+                            version:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            createdAt:
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            updatedAt:
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          required:
+                            - id
+                            - caseId
+                            - operation
+                            - status
+                            - targetType
+                            - targetId
+                            - attempt
+                            - waiting
+                            - waitingFor
+                            - failureReason
+                            - caseVersionAtAccept
+                            - startedAt
+                            - finishedAt
+                            - allowedActions
+                            - version
+                            - createdAt
+                            - updatedAt
+                          additionalProperties: false
+                      aiConnected:
+                        type: boolean
+                    required:
+                      - case
+                      - aggregatedAt
+                      - caseVersion
+                      - taskCounts
+                      - totalTasks
+                      - flowStages
+                      - upcomingDeadlines
+                      - unresolvedDeadlineCount
+                      - pendingApprovalCount
+                      - appliedApprovalCount
+                      - inheritanceDecision
+                      - recentAgentRuns
+                      - aiConnected
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"

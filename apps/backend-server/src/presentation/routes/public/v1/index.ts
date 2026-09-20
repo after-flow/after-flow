@@ -4,6 +4,7 @@ import type { DocumentService } from '../../../../application/document/document-
 import type { AgentRunService } from '../../../../application/agent/agent-run-service.js'
 import type { InheritanceDecisionService } from '../../../../application/decision/decision-service.js'
 import type { MessageService } from '../../../../application/chat/message-service.js'
+import type { CaseOverviewService } from '../../../../application/overview/overview-service.js'
 import type { ProposalService } from '../../../../application/proposal/proposal-service.js'
 import type { TaskService } from '../../../../application/task/task-service.js'
 import { errors } from '../../../../shared/app-error.js'
@@ -14,6 +15,7 @@ import { consentSpecs, createConsentRoutes } from './consents.js'
 import { createDocumentRoutes, documentSpecs } from './documents.js'
 import { agentRunSpecs, createAgentRunRoutes } from './agent-runs.js'
 import { createMessageRoutes, messageSpecs } from './messages.js'
+import { createOverviewRoutes, overviewSpecs } from './overview.js'
 import { createProposalRoutes, proposalSpecs } from './proposals.js'
 import { createTaskRoutes, taskSpecs } from './tasks.js'
 import { healthRoute, healthSpec } from './health.js'
@@ -68,6 +70,7 @@ export const publicV1Specs: RouteSpec[] = [
   messageSpecs.postMessage,
   messageSpecs.getTaskGuidance,
   messageSpecs.requestTaskGuidance,
+  overviewSpecs.getCaseOverview,
 ]
 
 export interface PublicRouteDependencies {
@@ -79,6 +82,7 @@ export interface PublicRouteDependencies {
   proposalService: ProposalService
   decisionService: InheritanceDecisionService
   messageService: MessageService
+  overviewService: CaseOverviewService
 }
 
 /**
@@ -112,5 +116,6 @@ export function createPublicV1Routes(
     ...createAgentRunRoutes(dependencies.agentRunService),
     ...createProposalRoutes(dependencies.proposalService, dependencies.decisionService),
     ...createMessageRoutes(dependencies.messageService),
+    ...createOverviewRoutes(dependencies.overviewService),
   ]
 }

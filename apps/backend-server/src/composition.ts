@@ -12,6 +12,7 @@ import {
   StoredInheritanceDecisionReader,
 } from './application/decision/decision-service.js'
 import { MessageService } from './application/chat/message-service.js'
+import { CaseOverviewService } from './application/overview/overview-service.js'
 import { AgentResultIntake } from './application/chat/result-intake.js'
 import { ProposalService } from './application/proposal/proposal-service.js'
 import { taskProposalApplier } from './application/proposal/task-applier.js'
@@ -103,6 +104,11 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     proposalService: new ProposalService(access, database.read, database.uow, [taskProposalApplier]),
     decisionService: new InheritanceDecisionService(access, database.read, database.uow),
     messageService: new MessageService(access, database.read, database.uow, agentRunService),
+    overviewService: new CaseOverviewService(
+      access,
+      database.read,
+      connectedOperations(env).size > 0,
+    ),
   })
 
   // 認証済み利用者にだけ同意を要求する。未認証は先に 401 で止まる。
