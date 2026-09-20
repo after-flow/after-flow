@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { internalResultSchema } from '@aftercare/internal-contracts'
 import type { ContextProof, InternalResult } from '@aftercare/internal-contracts'
 import type { SourceDocument } from '../research/sources.js'
+import { assertCompleteResearch } from '../research/contracts.js'
+import type { ResearchEvidence } from '../research/contracts.js'
 
 const claim = z.object({ text: z.string().min(1).max(500), sourceIds: z.array(z.string().min(1).max(128)).min(1).max(10) }).strict()
 export const guidanceDraftSchema = z.object({
@@ -16,9 +18,10 @@ export const guidanceDraftSchema = z.object({
 })
 export type GuidanceDraft = z.infer<typeof guidanceDraftSchema>
 
-export function guidanceResult(input: { draft: GuidanceDraft; sources: readonly SourceDocument[]; proof: ContextProof; resultId: string; target: string }): InternalResult {
+export function guidanceResult(input: { draft: GuidanceDraft; sources: readonly SourceDocument[]; research: ResearchEvidence; proof: ContextProof; resultId: string; target: string }): InternalResult {
   const draft = guidanceDraftSchema.parse(input.draft)
   const available = new Map(input.sources.map(source => [source.id, source]))
+  if (draft.status === 'complete') assertCompleteResearch(input.research, new Set(available.keys()))
   const used = new Set<string>()
   for (const item of [...(draft.where ? [draft.where] : []), ...draft.bring, ...draft.steps]) {
     for (const id of item.sourceIds) {

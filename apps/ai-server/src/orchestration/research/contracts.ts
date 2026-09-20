@@ -41,6 +41,30 @@ export const researchFindingsSchema = z.object({
 })
 export type ResearchFindings = z.infer<typeof researchFindingsSchema>
 
+/** Harness-owned evidence. Null means started but not successfully validated. */
+export const researchEvidenceSchema = z.object({
+  briefs: z.array(researchBriefSchema).max(2),
+  outcomes: z.array(z.object({ briefId: id, findings: researchFindingsSchema.nullable() }).strict()).max(2),
+}).strict()
+export type ResearchEvidence = z.infer<typeof researchEvidenceSchema>
+
+export function assertCompleteResearch(input: ResearchEvidence, sourceIds: ReadonlySet<string>): void {
+  const evidence = researchEvidenceSchema.parse(input)
+  const briefs = new Map(evidence.briefs.map(brief => [brief.briefId, brief]))
+  if (!briefs.size || briefs.size !== evidence.briefs.length ||
+      evidence.briefs.some(brief => !evidence.outcomes.some(outcome => outcome.briefId === brief.briefId))) {
+    throw new Error('Guidance requires completed research for every approved brief')
+  }
+  for (const outcome of evidence.outcomes) {
+    const brief = briefs.get(outcome.briefId)
+    if (!brief || !outcome.findings || outcome.findings.status !== 'complete') {
+      throw new Error('Unresolved research cannot produce complete guidance')
+    }
+    // Recheck missing/conflicts, required questions and source references after snapshot transport.
+    validateFindings(outcome.findings, brief, sourceIds)
+  }
+}
+
 /** Referential validation, not a semantic truthfulness scorer. */
 export function validateFindings(input: unknown, brief: ResearchBrief, retrievedSourceIds: ReadonlySet<string>): ResearchFindings {
   const result = researchFindingsSchema.parse(input)

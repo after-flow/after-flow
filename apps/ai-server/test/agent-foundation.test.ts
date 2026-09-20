@@ -69,7 +69,7 @@ test('two roles have narrow tool sets and all playbooks resolve required skills'
 })
 
 test('actual Mastra delegation excludes parent secrets and validates structured research output', async () => {
-  const { coreAgent, research, core } = setup([
+  const { coreAgent, research, core, researchEvidence } = setup([
     { tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: brief.briefId }) } },
     { text: '資料の確認が必要です。' },
   ])
@@ -85,6 +85,12 @@ test('actual Mastra delegation excludes parent secrets and validates structured 
   assert.ok(JSON.stringify(core.calls[1].prompt).includes('needs_input'))
   assert.equal(context.get('token'), 'credential-MUST-NOT-LEAK')
   assert.deepEqual(context.get('case'), { name: 'PRIVATE-PERSON' })
+  assert.equal(researchEvidence().outcomes[0]?.findings?.status, 'needs_input')
+  const snapshot = researchEvidence()
+  snapshot.outcomes.length = 0
+  snapshot.briefs.length = 0
+  assert.equal(researchEvidence().outcomes.length, 1)
+  assert.equal(researchEvidence().briefs.length, 1)
 })
 
 test('native Skill tool can load an attached skill', async () => {

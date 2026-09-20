@@ -92,3 +92,5 @@ AI単体の`build`/`typecheck`も内部共有契約を先にbuildするため、
 
 Contextの確認区分はフィールド単位で決めます。Case/Taskの状態や段階、Decisionの状態、確認状態そのものなどBackend管理の記録は`confirmed`、Caseの申告項目は`user_reported`、出自のない説明や未確認の金額は`unknown`です。Decisionの`state`が正式な記録でも、その`method`を本人確定扱いにはしません。正式なTask状態は外部機関の受理確認とは区別します。
 
+
+P-01の調査結果はモデル会話とは別にハーネスが記録し、Workflowの型付きStep出力に保持します。完了報告時には、全ての許可済み調査依頼について検証済みcomplete結果があり、全必須questionを回答し、missing/conflictsがないことを再検証します。調査未実行・中断・failed・partial・needs_input、無効な調査結果はコアがcompleteを返しても完了報告を拒否します。モデルの出典IDが取得済みであることだけでは完了条件を満たしません。

@@ -8,6 +8,7 @@ import { createResearchTools } from '../src/infrastructure/mastra/tools/research
 import { createProcedureGuidanceWorkflow } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
 import type { ProcedureGuidanceDependencies } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
 import { scriptedModel } from './helpers/scripted-model.js'
+import { assertCompleteResearch, researchEvidenceSchema } from '../src/orchestration/research/contracts.js'
 
 const candidate = { id: 'source-1', catalogId: 'catalog-1', title: '架空機関の資料', issuer: '架空機関', url: 'https://official.example/procedure' }
 const scope = { id: 'brief-1', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き',
@@ -19,13 +20,13 @@ const claim = (text: string) => ({ text, sourceIds: ['source-1'] })
 const draft = { status: 'complete', where: claim('架空機関の窓口'), bring: [claim('架空書類A')], steps: [claim('窓口で確認する')], missing: [] }
 const findings = { status: 'complete', answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する', sourceIds: ['source-1'], applicability: '架空市の架空手続き' }], missing: [], conflicts: [] }
 
-function setup() {
+function setup(researchFindings: unknown = findings) {
   const core = scriptedModel([
     { tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief-1' }) } }, { text: JSON.stringify(draft) },
   ])
   const research = scriptedModel([
     { tool: 'searchOfficialSources', input: { query: '必要書類' } },
-    { tool: 'readOfficialSource', input: { sourceId: 'source-1' } }, { text: JSON.stringify(findings) },
+    { tool: 'readOfficialSource', input: { sourceId: 'source-1' } }, { text: JSON.stringify(researchFindings) },
   ])
   const content = { operation: 'task_guidance', case: { id: 'case-1', version: 1, deceasedName: 'PRIVATE-NAME', municipality: '架空市', knownAt: null },
     task: { id: 'task-1', version: 1, title: '架空手続き', category: 'insurance', submitTo: '架空機関' }, documents: [] }
@@ -99,6 +100,47 @@ test('route gate must succeed before any model call', async () => {
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
   assert.equal(core.calls.length + research.calls.length + reported.length, 0)
+})
+
+test('core cannot report COMPLETED after incomplete, failed or contradictory research with real retrieved citations', async () => {
+  for (const unresolved of [
+    { ...findings, status: 'partial', missing: ['一部の書類が未確認'] },
+    { ...findings, status: 'needs_input', missing: ['適用条件が不明'] },
+    { ...findings, status: 'failed', missing: ['調査に失敗'] },
+    { ...findings, status: 'partial', conflicts: ['資料間で必要書類が異なる'] },
+    { ...findings, missing: ['完了という自己申告に反して不足あり'] },
+    { ...findings, conflicts: ['完了という自己申告に反して矛盾あり'] },
+  ]) {
+    const { deps, reported, core, research } = setup(unresolved)
+    const run = await createProcedureGuidanceWorkflow(deps).createRun()
+    const result = await run.start({ inputData: { resultId: 'result-1' } })
+    assert.equal(result.status, 'failed', JSON.stringify(unresolved))
+    assert.equal(reported.length, 0)
+    assert.equal(research.calls.length, 3, 'source was really retrieved before the incomplete findings')
+    assert.equal(core.calls.length, 2, 'core still attempted to claim complete')
+  }
+})
+
+test('missing required questions block completion even when core cites a retrieved source', async () => {
+  const { deps, reported, core } = setup()
+  deps.scope = { ...scope, questions: [...scope.questions, { id: 'eligibility', text: '適用条件は何か' }] }
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
+  assert.equal(core.calls.length, 2)
+  assert.equal(reported.length, 0)
+})
+
+test('completion gate revalidates harness snapshots, including unattempted and interrupted research', () => {
+  const evidence = researchEvidenceSchema.parse({ briefs: [brief], outcomes: [{ briefId: brief.briefId, findings }] })
+  const sources = new Set(['source-1'])
+  assert.doesNotThrow(() => assertCompleteResearch(evidence, sources))
+  assert.throws(() => assertCompleteResearch({ briefs: [], outcomes: [] }, sources))
+  assert.throws(() => assertCompleteResearch({ ...evidence, outcomes: [] }, sources))
+  assert.throws(() => assertCompleteResearch({ ...evidence, outcomes: [{ briefId: brief.briefId, findings: null }] }, sources))
+  assert.throws(() => assertCompleteResearch({ ...evidence, briefs: [brief, { ...brief, briefId: 'brief-2' }] }, sources))
+  assert.throws(() => assertCompleteResearch({ ...evidence, outcomes: [{ ...evidence.outcomes[0]!, briefId: 'unknown' }] }, sources))
+  assert.throws(() => assertCompleteResearch({ ...evidence, briefs: [{ ...brief, questions: [...brief.questions, { id: 'extra', text: '追加の問い' }] }] }, sources))
+  assert.throws(() => assertCompleteResearch(evidence, new Set()))
 })
 
 test('tools reject off-catalog sources, unsearched IDs and cancellation before provider I/O', async () => {
