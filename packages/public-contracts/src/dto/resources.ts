@@ -7,6 +7,37 @@
 export type ISODate = string // YYYY-MM-DD
 export type ISODateTime = string
 
+/* ---------- Envelope / Pagination (Backend Public API) ---------- */
+
+export interface ResponseMeta {
+  requestId: string
+  /** 次ページのカーソル。一覧レスポンスのみ。無い場合は null */
+  nextCursor?: string | null
+}
+
+export interface ApiSuccess<T> {
+  data: T
+  meta: ResponseMeta
+}
+
+export interface ApiErrorBody {
+  code: string
+  message: string
+  /** 同じ内容で再試行して成功する見込みがあるか（503/429 など） */
+  retryable: boolean
+  details?: unknown
+}
+
+export interface ApiFailure {
+  error: ApiErrorBody
+  meta: ResponseMeta
+}
+
+/** 更新系リクエストに載せる楽観ロック用バージョン */
+export interface ExpectedVersion {
+  expectedVersion: number
+}
+
 /* ---------- Case ---------- */
 
 export type CaseStatus = 'ACTIVE' | 'CLOSED'
@@ -80,20 +111,69 @@ export interface InheritanceDecisionSummary {
 
 export type PersonRole = 'HEIR_CANDIDATE' | 'DECEASED' | 'RELATED' | 'PROFESSIONAL'
 
+export type SpecialCircumstance = 'MINOR' | 'MISSING' | 'CAPACITY_CONCERN'
+
 export interface Person {
   id: string
   caseId: string
   name: string
   nameKana?: string
+  /** 故人との続柄（利用者が入力した表示用ラベル。法的判定ではない） */
   relationship: string
   role: PersonRole
+  /** 利用者が「相続人候補として扱う」と記録した値。法定相続人の判定ではない */
   isHeir: boolean
   dateOfBirth?: ISODate
   /** 未成年・行方不明・判断能力に懸念など、特別な代理が必要な状況 */
-  specialCircumstance?: 'MINOR' | 'MISSING' | 'CAPACITY_CONCERN' | null
+  specialCircumstance?: SpecialCircumstance | null
   contact?: string
   note?: string
+  /** 楽観ロック用。更新時は expectedVersion に載せる */
+  version: number
+  /** 除外済みの場合の日時。除外は個人情報の完全削除ではない */
+  excludedAt?: ISODateTime | null
 }
+
+export type PersonWritableFields = Pick<
+  Person,
+  'name' | 'nameKana' | 'relationship' | 'role' | 'isHeir' | 'dateOfBirth' | 'specialCircumstance' | 'contact' | 'note'
+>
+
+export type CreatePersonRequest = Omit<PersonWritableFields, 'role' | 'isHeir'> &
+  Partial<Pick<PersonWritableFields, 'role' | 'isHeir'>>
+
+export type UpdatePersonRequest = Partial<PersonWritableFields> & ExpectedVersion
+
+export interface ExcludePersonRequest extends ExpectedVersion {
+  reason?: string
+}
+
+export type RelationshipKind =
+  | 'SPOUSE'
+  | 'CHILD'
+  | 'PARENT'
+  | 'SIBLING'
+  | 'GRANDCHILD'
+  | 'GRANDPARENT'
+  | 'ADOPTED_CHILD'
+  | 'OTHER'
+
+/** 同一Case内の関係者2名の関係。両端は同じ caseId でなければならない */
+export interface Relationship {
+  id: string
+  caseId: string
+  fromPersonId: string
+  toPersonId: string
+  /** from から見た to の関係（例: from=故人, to=長男 なら CHILD） */
+  kind: RelationshipKind
+  note?: string
+  version: number
+  excludedAt?: ISODateTime | null
+}
+
+export type CreateRelationshipRequest = Pick<Relationship, 'fromPersonId' | 'toPersonId' | 'kind' | 'note'>
+export type UpdateRelationshipRequest = Partial<Pick<Relationship, 'kind' | 'note'>> & ExpectedVersion
+export type ExcludeRelationshipRequest = ExcludePersonRequest
 
 /* ---------- Document ---------- */
 

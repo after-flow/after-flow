@@ -14,7 +14,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "oxlint apps packages scripts && pnpm check:boundaries",
-    "check:boundaries": "node scripts/verify-boundaries.mjs"
+    "check:boundaries": "node scripts/verify-boundaries.mjs",
+    "test": "pnpm -r --if-present test"
   },
   "devDependencies": {
     "oxlint": "^1.81.0",

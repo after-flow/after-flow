@@ -39,6 +39,8 @@ jobs:
         run: pnpm typecheck
       - name: Lint and verify dependency boundaries
         run: pnpm lint
+      - name: Run workspace tests
+        run: pnpm test
       - name: Build all workspaces
         run: pnpm build
       - name: Verify production excludes the mock service worker

@@ -59,6 +59,7 @@ pnpm dev:web            # フロントエンドのみ
 ```sh
 pnpm --filter @aftercare/backend-server build
 pnpm --filter @aftercare/backend-server start
+pnpm --filter @aftercare/backend-server test
 pnpm --filter @aftercare/ai-server build
 pnpm --filter @aftercare/ai-server start
 ```
@@ -126,8 +127,13 @@ VITE_USE_MOCK=false VITE_API_PROXY=http://127.0.0.1:8080 pnpm dev:web
 ```sh
 pnpm typecheck
 pnpm lint                # Lintと依存境界の検証
+pnpm test                # Backend の node:test（in-memory アダプタで API を検証）
 pnpm build
 ```
+
+Backend の Case 配下 API はローカルでは `AUTH_MODE=dev-header` のときだけ `x-dev-user-id` ヘッダーを主体として受け付け、
+`DEV_CASE_MEMBERSHIPS="caseId:userId:OWNER,..."` で所属を与えます。未設定の環境では保護ルートは 503 を返し、無認証では通しません。
+永続化は現時点で in-memory です（Firestore 接続は #5）。
 
 依存境界の検証は、WebからBackend／AI／内部契約への参照、サービス間の直接importを拒否します。
 既存UIの説明とBackendへの要件は [Web README](apps/web/README.md) を参照してください。
@@ -136,7 +142,7 @@ pnpm build
 
 [GitHub Actions](.github/workflows/ci.yml) は `main` 向けPR、`main` へのpush、手動実行で動きます。
 
-- **Quality**: 固定lockfileでインストールし、全workspaceの型・Lint・依存境界・本番ビルドを検証します。本番成果物にモックのService Workerが含まれないことも確認します。
+- **Quality**: 固定lockfileでインストールし、全workspaceの型・Lint・依存境界・テスト・本番ビルドを検証します。本番成果物にモックのService Workerが含まれないことも確認します。
 - **Docker smoke**: 3サービスのhealthyを待ち、Web配信、Backendの公開API、WebのAPIプロキシ、BackendからAIへの内部HTTP接続を確認します。AIのホストポート非公開とWebからのネットワーク分離も検証します。最後にログを表示し、コンテナを終了します。
 
 Nodeとpnpmのバージョンは `.node-version` と `package.json` を参照します。外部クラウドやLLMの資格情報は不要です。

@@ -140,6 +140,7 @@ export const db: Store = {
       role: 'HEIR_CANDIDATE',
       isHeir: true,
       specialCircumstance: null,
+      version: 1,
     },
     {
       id: 'person_2',
@@ -149,6 +150,7 @@ export const db: Store = {
       role: 'HEIR_CANDIDATE',
       isHeir: true,
       specialCircumstance: null,
+      version: 1,
     },
     {
       id: 'person_3',
@@ -159,6 +161,7 @@ export const db: Store = {
       isHeir: true,
       specialCircumstance: 'MINOR',
       note: '17歳',
+      version: 1,
     },
   ],
 
