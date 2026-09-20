@@ -1,0 +1,33 @@
+{
+  "comment": "期限ルールと初期手続きの定義。仕様書や旧モックの値をそのまま本番ルールにしない。reviewed を true にできるのは、業務レビューを経て根拠URLと確認日を記入した後だけ。reviewed が false のルールから確定した期限は算定されない。",
+  "placeholder": true,
+  "deadlineRules": [
+    {
+      "id": "death-notification",
+      "version": "0.0.0-draft",
+      "label": "死亡届の提出期限",
+      "basis": "KNOWN_AT",
+      "offsetDays": 7,
+      "jurisdiction": "市区町村",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true
+    }
+  ],
+  "initialProcedures": [
+    {
+      "id": "death-notification",
+      "title": "死亡届を提出する",
+      "summary": "市区町村の窓口へ死亡届を提出します。必要書類と受付時間は自治体ごとに異なります。",
+      "stage": "immediate",
+      "category": "行政手続き",
+      "submitTo": null,
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [{ "id": "death-certificate", "label": "死亡診断書" }],
+      "deadlineRuleId": "death-notification"
+    }
+  ]
+}
