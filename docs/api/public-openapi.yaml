@@ -8640,3 +8640,695 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/messages:
+    get:
+      operationId: listMessages
+      summary: チャットの履歴
+      description: 利用者の発言とAIの回答を区別して返す。
+      tags:
+        - chat
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: limit
+          in: query
+          required: false
+          schema:
+            default: 50
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: ^[A-Za-z0-9_-]+={0,2}$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 発言の一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        caseId:
+                          type: string
+                        role:
+                          type: string
+                          enum:
+                            - user
+                            - assistant
+                        body:
+                          type: string
+                        agentRunId:
+                          nullable: true
+                          type: string
+                        replyRunId:
+                          nullable: true
+                          type: string
+                        professionalNotice:
+                          type: boolean
+                        escalationProposalId:
+                          nullable: true
+                          type: string
+                        createdAt:
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      required:
+                        - id
+                        - caseId
+                        - role
+                        - body
+                        - agentRunId
+                        - replyRunId
+                        - professionalNotice
+                        - escalationProposalId
+                        - createdAt
+                      additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+    post:
+      operationId: postMessage
+      summary: 発言して回答を依頼する
+      description: 202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を受け付けられない場合も発言は残し、理由を返す。
+      tags:
+        - chat
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                body:
+                  type: string
+                  minLength: 1
+                  maxLength: 4000
+              required:
+                - body
+              additionalProperties: false
+      responses:
+        "202":
+          description: 受け付けた発言
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          caseId:
+                            type: string
+                          role:
+                            type: string
+                            enum:
+                              - user
+                              - assistant
+                          body:
+                            type: string
+                          agentRunId:
+                            nullable: true
+                            type: string
+                          replyRunId:
+                            nullable: true
+                            type: string
+                          professionalNotice:
+                            type: boolean
+                          escalationProposalId:
+                            nullable: true
+                            type: string
+                          createdAt:
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        required:
+                          - id
+                          - caseId
+                          - role
+                          - body
+                          - agentRunId
+                          - replyRunId
+                          - professionalNotice
+                          - escalationProposalId
+                          - createdAt
+                        additionalProperties: false
+                      runId:
+                        nullable: true
+                        type: string
+                      runAccepted:
+                        type: boolean
+                      reason:
+                        nullable: true
+                        type: string
+                    required:
+                      - message
+                      - runId
+                      - runAccepted
+                      - reason
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: IDEMPOTENCY_KEY_REUSED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/tasks/{taskId}/guidance:
+    get:
+      operationId: getTaskGuidance
+      summary: 手続きの案内
+      description: 出典と確認日、調べきれなかった項目を必ず添えて返す。未依頼と依頼済みを区別する。
+      tags:
+        - chat
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 案内
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      taskId:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - NOT_REQUESTED
+                          - RESEARCHING
+                          - WAITING
+                          - COMPLETED
+                          - PARTIAL
+                          - FAILED
+                      target:
+                        nullable: true
+                        type: string
+                      where:
+                        nullable: true
+                        type: string
+                      bring:
+                        type: array
+                        items:
+                          type: string
+                      steps:
+                        type: array
+                        items:
+                          type: string
+                      formExampleUrl:
+                        nullable: true
+                        type: string
+                      formExampleLabel:
+                        nullable: true
+                        type: string
+                      note:
+                        nullable: true
+                        type: string
+                      sources:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            label:
+                              type: string
+                            url:
+                              type: string
+                            checkedAt:
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          required:
+                            - label
+                            - url
+                            - checkedAt
+                          additionalProperties: false
+                      missing:
+                        type: array
+                        items:
+                          type: string
+                      failureReason:
+                        nullable: true
+                        type: string
+                      researchedBy:
+                        nullable: true
+                        type: string
+                        enum:
+                          - AI
+                          - MANUAL
+                      agentRunId:
+                        nullable: true
+                        type: string
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      updatedAt:
+                        type: string
+                    required:
+                      - taskId
+                      - status
+                      - target
+                      - where
+                      - bring
+                      - steps
+                      - formExampleUrl
+                      - formExampleLabel
+                      - note
+                      - sources
+                      - missing
+                      - failureReason
+                      - researchedBy
+                      - agentRunId
+                      - version
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/tasks/{taskId}/guidance/requests:
+    post:
+      operationId: requestTaskGuidance
+      summary: 手続きの案内を依頼する
+      description: 公開された業務操作としてのみ受け付ける。任意のAgent・モデル・Prompt・URLは指定できない。
+      tags:
+        - chat
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "202":
+          description: 受け付けた案内
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      taskId:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - NOT_REQUESTED
+                          - RESEARCHING
+                          - WAITING
+                          - COMPLETED
+                          - PARTIAL
+                          - FAILED
+                      target:
+                        nullable: true
+                        type: string
+                      where:
+                        nullable: true
+                        type: string
+                      bring:
+                        type: array
+                        items:
+                          type: string
+                      steps:
+                        type: array
+                        items:
+                          type: string
+                      formExampleUrl:
+                        nullable: true
+                        type: string
+                      formExampleLabel:
+                        nullable: true
+                        type: string
+                      note:
+                        nullable: true
+                        type: string
+                      sources:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            label:
+                              type: string
+                            url:
+                              type: string
+                            checkedAt:
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          required:
+                            - label
+                            - url
+                            - checkedAt
+                          additionalProperties: false
+                      missing:
+                        type: array
+                        items:
+                          type: string
+                      failureReason:
+                        nullable: true
+                        type: string
+                      researchedBy:
+                        nullable: true
+                        type: string
+                        enum:
+                          - AI
+                          - MANUAL
+                      agentRunId:
+                        nullable: true
+                        type: string
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      updatedAt:
+                        type: string
+                    required:
+                      - taskId
+                      - status
+                      - target
+                      - where
+                      - bring
+                      - steps
+                      - formExampleUrl
+                      - formExampleLabel
+                      - note
+                      - sources
+                      - missing
+                      - failureReason
+                      - researchedBy
+                      - agentRunId
+                      - version
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: IDEMPOTENCY_KEY_REUSED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "501":
+          description: "error.code: FEATURE_NOT_CONNECTED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"

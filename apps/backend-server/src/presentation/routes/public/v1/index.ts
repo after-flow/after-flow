@@ -3,6 +3,7 @@ import type { ConsentService } from '../../../../application/consent/consent-ser
 import type { DocumentService } from '../../../../application/document/document-service.js'
 import type { AgentRunService } from '../../../../application/agent/agent-run-service.js'
 import type { InheritanceDecisionService } from '../../../../application/decision/decision-service.js'
+import type { MessageService } from '../../../../application/chat/message-service.js'
 import type { ProposalService } from '../../../../application/proposal/proposal-service.js'
 import type { TaskService } from '../../../../application/task/task-service.js'
 import { errors } from '../../../../shared/app-error.js'
@@ -12,6 +13,7 @@ import { caseSpecs, createCaseRoutes } from './cases.js'
 import { consentSpecs, createConsentRoutes } from './consents.js'
 import { createDocumentRoutes, documentSpecs } from './documents.js'
 import { agentRunSpecs, createAgentRunRoutes } from './agent-runs.js'
+import { createMessageRoutes, messageSpecs } from './messages.js'
 import { createProposalRoutes, proposalSpecs } from './proposals.js'
 import { createTaskRoutes, taskSpecs } from './tasks.js'
 import { healthRoute, healthSpec } from './health.js'
@@ -62,6 +64,10 @@ export const publicV1Specs: RouteSpec[] = [
   proposalSpecs.listDecisions,
   proposalSpecs.recordDecision,
   proposalSpecs.confirmDecision,
+  messageSpecs.listMessages,
+  messageSpecs.postMessage,
+  messageSpecs.getTaskGuidance,
+  messageSpecs.requestTaskGuidance,
 ]
 
 export interface PublicRouteDependencies {
@@ -72,6 +78,7 @@ export interface PublicRouteDependencies {
   agentRunService: AgentRunService
   proposalService: ProposalService
   decisionService: InheritanceDecisionService
+  messageService: MessageService
 }
 
 /**
@@ -104,5 +111,6 @@ export function createPublicV1Routes(
     ...createTaskRoutes(dependencies.taskService),
     ...createAgentRunRoutes(dependencies.agentRunService),
     ...createProposalRoutes(dependencies.proposalService, dependencies.decisionService),
+    ...createMessageRoutes(dependencies.messageService),
   ]
 }

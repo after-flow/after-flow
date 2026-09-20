@@ -48,6 +48,7 @@ export const collections = {
   approvals: caseCollection('approvals'),
   decisions: caseCollection('decisions'),
   messages: caseCollection('messages'),
+  guidance: caseCollection('guidance'),
 } as const
 
 export type CollectionKey = keyof typeof collections
