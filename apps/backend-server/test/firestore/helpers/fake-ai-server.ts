@@ -20,6 +20,8 @@ export interface FakeAiServer {
   respondWith(status: number): void
   /** 応答を返さずに接続を切る。送信したか分からない状態を作る。 */
   dropNext(): void
+  /** 受理後の応答を保留し、送信後・記録前の停止を再現する。 */
+  holdNext(status?: number): { received: Promise<string>; release(): void }
   close(): Promise<void>
 }
 
@@ -30,6 +32,7 @@ export async function startFakeAiServer(
   const accepted = new Set<string>()
   let nextStatus: number | null = null
   let dropNextRequest = false
+  let held: { signal(id: string): void; wait: Promise<void>; status: number } | null = null
 
   const server = createServer((request, response) => {
     let body = ''
@@ -48,6 +51,15 @@ export async function startFakeAiServer(
         attempt: job.attempt ?? 0,
         audience: request.headers['x-audience'] as string | undefined,
       })
+
+      if (held) {
+        const current = held
+        held = null
+        if (job.eventId && current.status === 202) accepted.add(job.eventId)
+        current.signal(job.eventId ?? '')
+        void current.wait.then(() => response.writeHead(current.status).end())
+        return
+      }
 
       if (dropNextRequest) {
         dropNextRequest = false
@@ -86,6 +98,14 @@ export async function startFakeAiServer(
     },
     dropNext: () => {
       dropNextRequest = true
+    },
+    holdNext: (status = 202) => {
+      let signal!: (id: string) => void
+      let release!: () => void
+      const received = new Promise<string>(resolve => { signal = resolve })
+      const wait = new Promise<void>(resolve => { release = resolve })
+      held = { signal, wait, status }
+      return { received, release }
     },
     close: () =>
       new Promise<void>((resolve) => {

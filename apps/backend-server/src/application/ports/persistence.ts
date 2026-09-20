@@ -151,3 +151,9 @@ export interface ReadRepository {
     where?: { field: string; op: '==' | '<' | '<=' | '>' | '>='; value: unknown }[],
   ): Promise<number>
 }
+
+/** 複数クエリ・ページを同一のDB読取時点で評価する。時刻はDB由来。 */
+export interface SnapshotReader extends ReadRepository {
+  snapshot<T>(tenantId: string, anchor: DocLocation,
+    fn: (read: ReadRepository, readAt: string) => Promise<T>): Promise<T>
+}

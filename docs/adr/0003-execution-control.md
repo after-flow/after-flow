@@ -58,7 +58,8 @@ Backendの試験は独立したFake AI HTTPサーバーに対して行ってい�
 
 1. Backend内部APIの契約と認可（#36）。内部OpenAPIは公開契約から分離します。
 2. WaitRequestとresume intent、定期Reconciler（#37）。先行して届いた承認イベントを捨てずInboxに残し、条件成立時に一度だけ再開配送します。
-3. Outbox配送の定期実行と再起動後の継続（#38）。
+3. Outbox配送の定期実行と再起動後の継続（#38）は独立workerとして実装。
+   claim世代検証、SIGKILL後の別プロセスからの回復、滞留検知を含む。[運用手順](../runbooks/outbox-worker.md)。
 
 ## 対象外
 

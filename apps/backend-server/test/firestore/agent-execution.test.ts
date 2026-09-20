@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { AccessService } from '../../src/application/authorization/case-access.js'
 import { ConsentService } from '../../src/application/consent/consent-service.js'
 import { CaseLeaseService } from '../../src/application/agent/lease-service.js'
@@ -346,6 +348,78 @@ describeFirestore('Outbox の配送', () => {
     return snapshot.docs
   }
 
+  it('並行workerの二重claimと旧世代の遅い応答を防ぐ', async t => {
+    const ai = await startFakeAiServer()
+    t.after(() => ai.close())
+    const { tenantId, app, caseId } = await setup()
+    const firstWorker = dispatcherFor(ai.url, tenantId, 120_000)
+    const secondWorker = dispatcherFor(ai.url, tenantId, 120_000)
+    await drain(firstWorker, tenantId)
+    await call(app, `/cases/${caseId}/agent-runs`, jsonRequest('POST', acceptBody(caseId)))
+    const held = ai.holdNext(503)
+    const first = firstWorker.dispatchBatch(tenantId)
+    const eventId = await held.received
+    const second = await secondWorker.dispatchBatch(tenantId)
+    assert.equal(second.delivered.length, 0)
+    assert.equal(ai.countOf(eventId), 1)
+    const ref = firestore().doc(`tenants/${tenantId}/outbox/${eventId}`)
+    await ref.update({ nextAttemptAt: new Date(0).toISOString(), leaseExpiresAt: new Date(0).toISOString() })
+    const recovered = await secondWorker.dispatchBatch(tenantId)
+    assert.equal(recovered.delivered.length, 1)
+    held.release()
+    await first
+    assert.equal((await ref.get()).get('status'), 'DELIVERED', '旧503で再配送へ戻さない')
+  })
+
+  it('workerプロセスを強制停止して再起動すると未確定配送を再開し受信側で一度だけ処理する', { timeout: 30_000 }, async t => {
+    const ai = await startFakeAiServer()
+    t.after(() => ai.close())
+    const { tenantId, app, caseId } = await setup()
+    await call(app, `/cases/${caseId}/agent-runs`, jsonRequest('POST', acceptBody(caseId)))
+    function worker() {
+      const child = spawn(process.execPath, ['--import', 'tsx', 'src/worker-main.ts', '--once'], {
+        env: { ...process.env, NODE_ENV: 'test', OUTBOX_TENANT_IDS: tenantId, AI_SERVER_URL: ai.url,
+          AI_SERVICE_TOKEN: SERVICE_TOKEN, AI_SERVICE_TIMEOUT_MS: '1000', OUTBOX_VISIBILITY_MS: '2000' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let output = ''
+      child.stdout.on('data', chunk => { output += String(chunk) })
+      child.stderr.on('data', chunk => { output += String(chunk) })
+      t.after(() => { if (child.exitCode === null) child.kill('SIGKILL') })
+      return { child, output: () => output }
+    }
+    const held = ai.holdNext()
+    t.after(() => held.release())
+    const first = worker()
+    const closed = once(first.child, 'close')
+    const eventId = await held.received
+    first.child.kill('SIGKILL')
+    await closed
+    const ref = firestore().doc(`tenants/${tenantId}/outbox/${eventId}`)
+    assert.equal((await ref.get()).get('status'), 'IN_FLIGHT')
+    await ref.update({ nextAttemptAt: new Date(0).toISOString(), leaseExpiresAt: new Date(0).toISOString() })
+    const next = worker()
+    const [exit] = await once(next.child, 'close')
+    assert.equal(exit, 0, next.output())
+    assert.equal((await ref.get()).get('status'), 'DELIVERED')
+    assert.equal(ai.countOf(eventId), 2)
+    assert.equal([...ai.accepted].filter(id => id === eventId).length, 1)
+    const tasks = await call(app, `/cases/${caseId}/tasks`)
+    assert.ok(tasks.body.data.length > 0, 'Case作成イベントから初期Taskが自動生成される')
+  })
+
+  it('滞留と失敗の件数・最古の経過時間を取得できる', async t => {
+    const ai = await startFakeAiServer()
+    t.after(() => ai.close())
+    const { tenantId } = await setup({ agreeExternalAi: false })
+    const docs = await outboxDocs(tenantId, 'case.created')
+    await docs[0]!.ref.update({ createdAt: new Date(Date.now() - 20 * 60_000).toISOString() })
+    const report = await dispatcherFor(ai.url, tenantId).backlog(tenantId)
+    assert.ok(report.pending > 0)
+    assert.equal(report.failed, 0)
+    assert.ok(report.oldestAgeMs >= 20 * 60_000)
+  })
+
   it('受け付けたイベントを配送し、認証情報を付ける', async (t) => {
     const ai = await startFakeAiServer({ expectedToken: SERVICE_TOKEN })
     t.after(() => ai.close())
@@ -440,7 +514,7 @@ describeFirestore('Outbox の配送', () => {
 
     const docs = await outboxDocs(tenantId, 'agent.case_planning')
     assert.equal(docs[0]?.get('status'), 'PENDING')
-    assert.ok(Date.parse(docs[0]?.get('nextAttemptAt')) > Date.now())
+    assert.ok(docs[0]?.get('nextAttemptAt').toMillis() > Date.now())
   })
 
   it('受理できない応答は再送しない', async (t) => {

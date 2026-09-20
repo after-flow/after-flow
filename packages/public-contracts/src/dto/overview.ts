@@ -35,8 +35,10 @@ export interface DecisionSummaryResource {
 
 export interface CaseOverviewResource {
   case: CaseResource
-  /** 集計した時刻。結果がいつ時点のものかを示す。 */
+  /** 集約全体が共有するDB読取時点。 */
   aggregatedAt: ISODateTime
+  consistency: 'SNAPSHOT'
+  /** Caseの業務版。Task/Run/Approval等を含む集約全体の版ではない。 */
   caseVersion: number
   taskCounts: Partial<Record<TaskStatusResource, number>>
   totalTasks: number

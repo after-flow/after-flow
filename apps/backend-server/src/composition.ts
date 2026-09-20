@@ -17,6 +17,8 @@ import { CaseOverviewService } from './application/overview/overview-service.js'
 import { AgentResultIntake } from './application/chat/result-intake.js'
 import { ProposalService } from './application/proposal/proposal-service.js'
 import { taskProposalApplier } from './application/proposal/task-applier.js'
+import { entityProposalAppliers } from './application/proposal/entity-appliers.js'
+import { taskActionProposalAppliers } from './application/proposal/task-action-appliers.js'
 import { TaskService } from './application/task/task-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
 import { HttpAgentJobClient, readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
@@ -103,7 +105,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     // すべての操作を有効にしない。
     agentRunService,
     // 種類ごとの反映は担当 Issue が登録する。未登録の種類は反映できない。
-    proposalService: new ProposalService(access, database.read, database.uow, [taskProposalApplier]),
+    proposalService: new ProposalService(access, database.read, database.uow, [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers]),
     decisionService: new InheritanceDecisionService(access, database.read, database.uow),
     messageService: new MessageService(access, database.read, database.uow, agentRunService),
     overviewService: new CaseOverviewService(

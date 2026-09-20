@@ -43,6 +43,7 @@ const taskBlockedReasonSchema = z.enum([
   'EVIDENCE_REQUIRED',
   'INHERITANCE_DECISION_REQUIRED',
   'INSUFFICIENT_ROLE',
+  'DEPENDENCY_NOT_COMPLETED',
 ])
 
 export const evidenceKindSchema = z.enum(['RECEIPT', 'NOTICE', 'PAYMENT', 'REGISTRATION', 'OTHER'])
@@ -77,6 +78,12 @@ export const taskResourceSchema = z.object({
   stage: flowStageSchema,
   category: z.string(),
   submitTo: z.string().nullable(),
+  assigneeId: z.string().nullable(),
+  dependencyTaskIds: z.array(z.string()),
+  escalation: z.object({ proposalId: z.string(), reason: z.string(),
+    documents: z.array(z.object({ id: z.string(), version: z.number().int().positive() })),
+    contacted: z.literal(false),
+  }).nullable(),
   source: z.enum(['MANUAL', 'AI', 'RULE_ENGINE']),
   evidenceRequired: z.boolean(),
   assetDisposal: z.boolean(),
@@ -109,6 +116,14 @@ export const taskResourceSchema = z.object({
 
 export const taskIdParamsSchema = z.object({ caseId: idSchema, taskId: idSchema })
 
+const taskReferences = {
+  assigneeId: idSchema.nullish(),
+  dependencyTaskIds: z.array(idSchema).max(50).optional(),
+  requiredDocuments: z.array(z.object({
+    id: idSchema, label: z.string().trim().min(1).max(120), documentId: idSchema.nullable(),
+  }).strict()).max(50).optional(),
+}
+
 export const createTaskBodySchema = z
   .object({
     title: z.string().trim().min(1).max(120),
@@ -118,6 +133,7 @@ export const createTaskBodySchema = z
     submitTo: z.string().trim().max(120).nullish(),
     evidenceRequired: z.boolean().default(false),
     assetDisposal: z.boolean().default(false),
+    ...taskReferences,
   })
   .strict()
 
@@ -125,6 +141,7 @@ export const createTaskBodySchema = z
 export const updateTaskBodySchema = z
   .object({
     expectedVersion: expectedVersionSchema,
+    ...taskReferences,
     title: z.string().trim().min(1).max(120).optional(),
     summary: z.string().trim().max(2000).optional(),
     submitTo: z.string().trim().max(120).nullish(),

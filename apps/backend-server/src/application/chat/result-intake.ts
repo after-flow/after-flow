@@ -86,6 +86,11 @@ export class AgentResultIntake {
     // 別 Case の runId へ差し替えても、パスが違うため見つからない。
     if (!run) throw errors.notFound()
 
+    this.assertRun(run, envelope, operation)
+    return run
+  }
+
+  private assertRun(run: AgentRunEntity, envelope: ResultEnvelope, operation: AgentOperation): void {
     if (run.operation !== operation) {
       throw errors.preconditionFailed({
         message: 'この実行の種類では受け付けられない結果です。',
@@ -105,7 +110,6 @@ export class AgentResultIntake {
         details: { reason: 'STALE_ATTEMPT' },
       })
     }
-    return run
   }
 
   async submitGuidanceResult(
@@ -123,6 +127,7 @@ export class AgentResultIntake {
     const access = new AgentAccess(tenantId, caseId, run.id)
 
     return this.uow.run(access.toWorkContext(null), async (tx) => {
+      const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, run.id))
       const current = await tx.get<GuidanceEntity>(guidanceLocation(caseId, taskId))
       if (!current) {
         throw errors.preconditionFailed({
@@ -130,14 +135,15 @@ export class AgentResultIntake {
           details: { reason: 'GUIDANCE_NOT_REQUESTED' },
         })
       }
-      if (current.resultId === input.resultId) {
+      if (current.agentRunId !== run.id) {
+        throw errors.conflict({ details: { reason: 'GUIDANCE_SUPERSEDED' } })
+      }
+      if (current.resultId === input.resultId && current.attemptId === input.attemptId) {
         // 同じ結果の再送。二重に反映しない。
         return { applied: false, reason: 'DUPLICATE_RESULT' }
       }
-      if (current.attemptId !== null && current.attemptId !== input.attemptId) {
-        // 新しい試行の結果が既に入っている。遅着の結果で上書きしない。
-        return { applied: false, reason: 'LATE_RESULT' }
-      }
+      // 必ず保存と同じ Transaction で再検証する。取消・retryとの競合時にも有効。
+      this.assertRun(runEntity, input, 'task_guidance')
 
       tx.update<GuidanceEntity>(guidanceLocation(caseId, taskId), current.version, {
         status: input.status,
@@ -157,7 +163,6 @@ export class AgentResultIntake {
         attemptId: input.attemptId,
       })
 
-      const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, run.id))
       tx.update<AgentRunEntity>(runLocation(caseId, run.id), runEntity.version, {
         status: runStatusFor(input.status),
         finishedAt: input.status === 'WAITING' ? null : new Date().toISOString(),
@@ -188,7 +193,8 @@ export class AgentResultIntake {
       tenantId,
       guidanceLocation(caseId, run.targetId),
     )
-    return guidance?.resultId === input.resultId ? guidance : null
+    return guidance?.agentRunId === run.id && guidance.resultId === input.resultId
+      && guidance.attemptId === input.attemptId ? guidance : null
   }
 
   async submitChatReply(
@@ -201,14 +207,16 @@ export class AgentResultIntake {
     // 重複の判定を先に行う。配送は少なくとも 1 回を前提にしており、
     // 同じ結果の再送はエラーではなく「適用済み」として扱う。
     const duplicate = await this.read.get<MessageEntity>(tenantId, messageLocation(caseId, replyId))
-    if (duplicate) return { applied: false, reason: 'DUPLICATE_RESULT' }
+    if (duplicate) return this.chatDuplicate(duplicate, input)
 
     const run = await this.verifyRun(tenantId, caseId, input, 'chat_reply')
     const access = new AgentAccess(tenantId, caseId, run.id)
 
     return this.uow.run(access.toWorkContext(null), async (tx) => {
       const existing = await tx.get<MessageEntity>(messageLocation(caseId, replyId))
-      if (existing) return { applied: false, reason: 'DUPLICATE_RESULT' }
+      if (existing) return this.chatDuplicate(existing, input)
+      const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, run.id))
+      this.assertRun(runEntity, input, 'chat_reply')
 
       tx.create<MessageEntity>(messageLocation(caseId, replyId), {
         id: replyId,
@@ -220,9 +228,9 @@ export class AgentResultIntake {
         // 回答は説明であり、提案を作らない。正式な変更は提案の経路を使う。
         escalationProposalId: null,
         resultId: input.resultId,
+        attemptId: input.attemptId,
       })
 
-      const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, run.id))
       tx.update<AgentRunEntity>(runLocation(caseId, run.id), runEntity.version, {
         status: 'SUCCEEDED',
         finishedAt: new Date().toISOString(),
@@ -237,5 +245,12 @@ export class AgentResultIntake {
 
       return { applied: true, reason: null }
     })
+  }
+
+  private chatDuplicate(message: MessageEntity, input: ChatReplyResultInput) {
+    if (message.agentRunId !== input.runId || (message.attemptId && message.attemptId !== input.attemptId)) {
+      throw errors.conflict({ details: { reason: 'RESULT_ID_CONFLICT' } })
+    }
+    return { applied: false, reason: 'DUPLICATE_RESULT' }
   }
 }

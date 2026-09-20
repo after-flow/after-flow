@@ -20,4 +20,6 @@ export interface MessageEntity extends EntityBase {
   escalationProposalId: string | null
   /** 結果の重複排除に使う。同じ結果 ID の再送で二重に増やさない。 */
   resultId: string | null
+  /** 旧保存データとの互換のため省略可能。新しいAI回答では必ず保存する。 */
+  attemptId?: string
 }

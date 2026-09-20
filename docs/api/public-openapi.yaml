@@ -8491,6 +8491,47 @@ paths:
                         submitTo:
                           nullable: true
                           type: string
+                        assigneeId:
+                          nullable: true
+                          type: string
+                        dependencyTaskIds:
+                          type: array
+                          items:
+                            type: string
+                        escalation:
+                          nullable: true
+                          type: object
+                          properties:
+                            proposalId:
+                              type: string
+                            reason:
+                              type: string
+                            documents:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: string
+                                  version:
+                                    type: integer
+                                    minimum: 0
+                                    exclusiveMinimum: true
+                                    maximum: 9007199254740991
+                                required:
+                                  - id
+                                  - version
+                                additionalProperties: false
+                            contacted:
+                              type: boolean
+                              enum:
+                                - false
+                          required:
+                            - proposalId
+                            - reason
+                            - documents
+                            - contacted
+                          additionalProperties: false
                         source:
                           type: string
                           enum:
@@ -8684,6 +8725,7 @@ paths:
                                   - EVIDENCE_REQUIRED
                                   - INHERITANCE_DECISION_REQUIRED
                                   - INSUFFICIENT_ROLE
+                                  - DEPENDENCY_NOT_COMPLETED
                             required:
                               - action
                               - reason
@@ -8709,6 +8751,9 @@ paths:
                         - stage
                         - category
                         - submitTo
+                        - assigneeId
+                        - dependencyTaskIds
+                        - escalation
                         - source
                         - evidenceRequired
                         - assetDisposal
@@ -8841,6 +8886,46 @@ paths:
                 assetDisposal:
                   default: false
                   type: boolean
+                assigneeId:
+                  nullable: true
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                dependencyTaskIds:
+                  maxItems: 50
+                  type: array
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                requiredDocuments:
+                  maxItems: 50
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      label:
+                        type: string
+                        minLength: 1
+                        maxLength: 120
+                      documentId:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                    required:
+                      - id
+                      - label
+                      - documentId
+                    additionalProperties: false
               required:
                 - title
                 - stage
@@ -8895,6 +8980,47 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      assigneeId:
+                        nullable: true
+                        type: string
+                      dependencyTaskIds:
+                        type: array
+                        items:
+                          type: string
+                      escalation:
+                        nullable: true
+                        type: object
+                        properties:
+                          proposalId:
+                            type: string
+                          reason:
+                            type: string
+                          documents:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                version:
+                                  type: integer
+                                  minimum: 0
+                                  exclusiveMinimum: true
+                                  maximum: 9007199254740991
+                              required:
+                                - id
+                                - version
+                              additionalProperties: false
+                          contacted:
+                            type: boolean
+                            enum:
+                              - false
+                        required:
+                          - proposalId
+                          - reason
+                          - documents
+                          - contacted
+                        additionalProperties: false
                       source:
                         type: string
                         enum:
@@ -9088,6 +9214,7 @@ paths:
                                 - EVIDENCE_REQUIRED
                                 - INHERITANCE_DECISION_REQUIRED
                                 - INSUFFICIENT_ROLE
+                                - DEPENDENCY_NOT_COMPLETED
                           required:
                             - action
                             - reason
@@ -9113,6 +9240,9 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - assigneeId
+                      - dependencyTaskIds
+                      - escalation
                       - source
                       - evidenceRequired
                       - assetDisposal
@@ -9166,7 +9296,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
         "409":
-          description: "error.code: IDEMPOTENCY_KEY_REUSED"
+          description: "error.code: IDEMPOTENCY_KEY_REUSED / PRECONDITION_FAILED"
           content:
             application/json:
               schema:
@@ -9187,7 +9317,7 @@ paths:
     post:
       operationId: initializeTasks
       summary: 初期手続きを生成する
-      description: 同じ定義から二度作らない。Outboxによる自動起動が入るまでの明示的な入口で、#10 の配送が接続された後もこのAPIは冪等に動く。
+      description: 同じ定義から二度作らない。独立Outbox workerによる自動生成と、この明示的APIのどちらから呼んでも冪等に動く。
       tags:
         - tasks
       security:
@@ -9367,6 +9497,47 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      assigneeId:
+                        nullable: true
+                        type: string
+                      dependencyTaskIds:
+                        type: array
+                        items:
+                          type: string
+                      escalation:
+                        nullable: true
+                        type: object
+                        properties:
+                          proposalId:
+                            type: string
+                          reason:
+                            type: string
+                          documents:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                version:
+                                  type: integer
+                                  minimum: 0
+                                  exclusiveMinimum: true
+                                  maximum: 9007199254740991
+                              required:
+                                - id
+                                - version
+                              additionalProperties: false
+                          contacted:
+                            type: boolean
+                            enum:
+                              - false
+                        required:
+                          - proposalId
+                          - reason
+                          - documents
+                          - contacted
+                        additionalProperties: false
                       source:
                         type: string
                         enum:
@@ -9560,6 +9731,7 @@ paths:
                                 - EVIDENCE_REQUIRED
                                 - INHERITANCE_DECISION_REQUIRED
                                 - INSUFFICIENT_ROLE
+                                - DEPENDENCY_NOT_COMPLETED
                           required:
                             - action
                             - reason
@@ -9585,6 +9757,9 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - assigneeId
+                      - dependencyTaskIds
+                      - escalation
                       - source
                       - evidenceRequired
                       - assetDisposal
@@ -9645,8 +9820,8 @@ paths:
                 $ref: "#/components/schemas/ApiFailure"
     patch:
       operationId: updateTask
-      summary: 手続きの説明を訂正する
-      description: statusは変更できない。状態を変えるには commands を使う。
+      summary: 手続きの説明・担当者・必要書類・依存関係を訂正する
+      description: statusは変更できない。担当者は同じCaseの関係者。循環する依存関係を拒否する。状態を変えるには commands を使う。
       tags:
         - tasks
       security:
@@ -9695,6 +9870,46 @@ paths:
                   type: integer
                   minimum: 0
                   maximum: 9007199254740991
+                assigneeId:
+                  nullable: true
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                dependencyTaskIds:
+                  maxItems: 50
+                  type: array
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                requiredDocuments:
+                  maxItems: 50
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      label:
+                        type: string
+                        minLength: 1
+                        maxLength: 120
+                      documentId:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                    required:
+                      - id
+                      - label
+                      - documentId
+                    additionalProperties: false
                 title:
                   type: string
                   minLength: 1
@@ -9758,6 +9973,47 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      assigneeId:
+                        nullable: true
+                        type: string
+                      dependencyTaskIds:
+                        type: array
+                        items:
+                          type: string
+                      escalation:
+                        nullable: true
+                        type: object
+                        properties:
+                          proposalId:
+                            type: string
+                          reason:
+                            type: string
+                          documents:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                version:
+                                  type: integer
+                                  minimum: 0
+                                  exclusiveMinimum: true
+                                  maximum: 9007199254740991
+                              required:
+                                - id
+                                - version
+                              additionalProperties: false
+                          contacted:
+                            type: boolean
+                            enum:
+                              - false
+                        required:
+                          - proposalId
+                          - reason
+                          - documents
+                          - contacted
+                        additionalProperties: false
                       source:
                         type: string
                         enum:
@@ -9951,6 +10207,7 @@ paths:
                                 - EVIDENCE_REQUIRED
                                 - INHERITANCE_DECISION_REQUIRED
                                 - INSUFFICIENT_ROLE
+                                - DEPENDENCY_NOT_COMPLETED
                           required:
                             - action
                             - reason
@@ -9976,6 +10233,9 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - assigneeId
+                      - dependencyTaskIds
+                      - escalation
                       - source
                       - evidenceRequired
                       - assetDisposal
@@ -10029,7 +10289,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
         "409":
-          description: "error.code: CONFLICT"
+          description: "error.code: CONFLICT / PRECONDITION_FAILED"
           content:
             application/json:
               schema:
@@ -10168,6 +10428,47 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      assigneeId:
+                        nullable: true
+                        type: string
+                      dependencyTaskIds:
+                        type: array
+                        items:
+                          type: string
+                      escalation:
+                        nullable: true
+                        type: object
+                        properties:
+                          proposalId:
+                            type: string
+                          reason:
+                            type: string
+                          documents:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                version:
+                                  type: integer
+                                  minimum: 0
+                                  exclusiveMinimum: true
+                                  maximum: 9007199254740991
+                              required:
+                                - id
+                                - version
+                              additionalProperties: false
+                          contacted:
+                            type: boolean
+                            enum:
+                              - false
+                        required:
+                          - proposalId
+                          - reason
+                          - documents
+                          - contacted
+                        additionalProperties: false
                       source:
                         type: string
                         enum:
@@ -10361,6 +10662,7 @@ paths:
                                 - EVIDENCE_REQUIRED
                                 - INHERITANCE_DECISION_REQUIRED
                                 - INSUFFICIENT_ROLE
+                                - DEPENDENCY_NOT_COMPLETED
                           required:
                             - action
                             - reason
@@ -10386,6 +10688,9 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - assigneeId
+                      - dependencyTaskIds
+                      - escalation
                       - source
                       - evidenceRequired
                       - assetDisposal
@@ -10579,6 +10884,47 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      assigneeId:
+                        nullable: true
+                        type: string
+                      dependencyTaskIds:
+                        type: array
+                        items:
+                          type: string
+                      escalation:
+                        nullable: true
+                        type: object
+                        properties:
+                          proposalId:
+                            type: string
+                          reason:
+                            type: string
+                          documents:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                version:
+                                  type: integer
+                                  minimum: 0
+                                  exclusiveMinimum: true
+                                  maximum: 9007199254740991
+                              required:
+                                - id
+                                - version
+                              additionalProperties: false
+                          contacted:
+                            type: boolean
+                            enum:
+                              - false
+                        required:
+                          - proposalId
+                          - reason
+                          - documents
+                          - contacted
+                        additionalProperties: false
                       source:
                         type: string
                         enum:
@@ -10772,6 +11118,7 @@ paths:
                                 - EVIDENCE_REQUIRED
                                 - INHERITANCE_DECISION_REQUIRED
                                 - INSUFFICIENT_ROLE
+                                - DEPENDENCY_NOT_COMPLETED
                           required:
                             - action
                             - reason
@@ -10797,6 +11144,9 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - assigneeId
+                      - dependencyTaskIds
+                      - escalation
                       - source
                       - evidenceRequired
                       - assetDisposal
@@ -10845,6 +11195,12 @@ paths:
                 $ref: "#/components/schemas/ApiFailure"
         "404":
           description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: PRECONDITION_FAILED"
           content:
             application/json:
               schema:
@@ -12238,6 +12594,7 @@ paths:
                     - ASSET_PROPOSAL
                     - LIABILITY_PROPOSAL
                     - CONTRACT_PROPOSAL
+                    - PERSON_PROPOSAL
                     - DOCUMENT_REQUEST
                     - ESCALATION_PROPOSAL
                     - EVIDENCE_PROPOSAL
@@ -12312,6 +12669,7 @@ paths:
                           - ASSET_PROPOSAL
                           - LIABILITY_PROPOSAL
                           - CONTRACT_PROPOSAL
+                          - PERSON_PROPOSAL
                           - DOCUMENT_REQUEST
                           - ESCALATION_PROPOSAL
                           - EVIDENCE_PROPOSAL
@@ -12539,6 +12897,7 @@ paths:
                             - ASSET_PROPOSAL
                             - LIABILITY_PROPOSAL
                             - CONTRACT_PROPOSAL
+                            - PERSON_PROPOSAL
                             - DOCUMENT_REQUEST
                             - ESCALATION_PROPOSAL
                             - EVIDENCE_PROPOSAL
@@ -12745,6 +13104,7 @@ paths:
                           - ASSET_PROPOSAL
                           - LIABILITY_PROPOSAL
                           - CONTRACT_PROPOSAL
+                          - PERSON_PROPOSAL
                           - DOCUMENT_REQUEST
                           - ESCALATION_PROPOSAL
                           - EVIDENCE_PROPOSAL
@@ -12977,6 +13337,7 @@ paths:
                           - ASSET_PROPOSAL
                           - LIABILITY_PROPOSAL
                           - CONTRACT_PROPOSAL
+                          - PERSON_PROPOSAL
                           - DOCUMENT_REQUEST
                           - ESCALATION_PROPOSAL
                           - EVIDENCE_PROPOSAL
@@ -15402,6 +15763,10 @@ paths:
                         type: string
                         format: date-time
                         pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      consistency:
+                        type: string
+                        enum:
+                          - SNAPSHOT
                       caseVersion:
                         type: integer
                         minimum: -9007199254740991
@@ -15703,6 +16068,7 @@ paths:
                     required:
                       - case
                       - aggregatedAt
+                      - consistency
                       - caseVersion
                       - taskCounts
                       - totalTasks

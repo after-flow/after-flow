@@ -3,6 +3,8 @@ import type { AgentOperation, AgentRunEntity, AgentRunStatus } from '../../domai
 import { canCancel, canRetry, isRunTerminal, isRunWaiting } from '../../domain/agent/agent-run.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import { collections } from '../../domain/shared/collections.js'
+import type { GuidanceEntity } from '../../domain/task/guidance.js'
+import type { TaskEntity } from '../../domain/task/task.js'
 import { errors } from '../../shared/app-error.js'
 import type { AccessService } from '../authorization/case-access.js'
 import type { CommandMeta } from '../case/case-service.js'
@@ -133,6 +135,24 @@ export class AgentRunService {
         finishedAt: null,
         cancelRequestedBy: null,
       })
+
+      if (input.operation === 'task_guidance') {
+        if (input.targetType !== 'TASK') throw errors.validationFailed()
+        await tx.require<TaskEntity>({ collection: collections.tasks, caseId, id: input.targetId })
+        const location = { collection: collections.guidance, caseId, id: input.targetId }
+        const current = await tx.get<GuidanceEntity>(location)
+        const guidance = {
+          taskId: input.targetId, status: 'RESEARCHING' as const, agentRunId: runId,
+          researchedBy: 'AI' as const, failureReason: null, resultId: null, attemptId: null,
+          target: null, where: null, bring: [], steps: [], formExampleUrl: null,
+          formExampleLabel: null, note: null, sources: [], missing: [],
+        }
+        if (current) tx.update<GuidanceEntity>(location, current.version, guidance)
+        else tx.create<GuidanceEntity>(location, { id: input.targetId, ...guidance })
+        tx.audit({ caseId, type: 'guidance.requested',
+          target: { collection: collections.guidance.name, id: input.targetId, version: (current?.version ?? 0) + 1 },
+          detail: { runId } })
+      }
 
       tx.audit({
         caseId,

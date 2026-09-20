@@ -1,4 +1,4 @@
-import type { Firestore, Query } from '@google-cloud/firestore'
+import type { Firestore, Query, Transaction } from '@google-cloud/firestore'
 import { FieldPath } from '@google-cloud/firestore'
 import type {
   DocLocation,
@@ -6,6 +6,7 @@ import type {
   ListOptions,
   Page,
   ReadRepository,
+  SnapshotReader,
 } from '../../application/ports/persistence.js'
 import type { CollectionDescriptor } from '../../domain/shared/collections.js'
 import type { EntityBase } from '../../domain/shared/entity.js'
@@ -28,12 +29,23 @@ const DEFAULT_ORDER = { field: 'updatedAt', direction: 'desc' } as const
  * 一覧はカーソルページングだけを提供する。全件取得の入口を作ると、
  * 集約や画面が 1 ページ目を全件として扱う実装を誘発する。
  */
-export class FirestoreReadRepository implements ReadRepository {
-  constructor(private readonly firestore: Firestore) {}
+export class FirestoreReadRepository implements SnapshotReader {
+  constructor(private readonly firestore: Firestore, private readonly transaction?: Transaction) {}
+
+  async snapshot<T>(tenantId: string, anchor: DocLocation,
+    fn: (read: ReadRepository, readAt: string) => Promise<T>): Promise<T> {
+    assertValidId(tenantId, 'tenantId')
+    const initial = await this.firestore.doc(documentPath(tenantId, anchor)).get()
+    return this.firestore.runTransaction(
+      tx => fn(new FirestoreReadRepository(this.firestore, tx), initial.readTime.toDate().toISOString()),
+      { readOnly: true, readTime: initial.readTime },
+    )
+  }
 
   async get<T extends EntityBase>(tenantId: string, location: DocLocation): Promise<T | null> {
     assertValidId(tenantId, 'tenantId')
-    const snapshot = await this.firestore.doc(documentPath(tenantId, location)).get()
+    const ref = this.firestore.doc(documentPath(tenantId, location))
+    const snapshot = this.transaction ? await this.transaction.get(ref) : await ref.get()
     if (!snapshot.exists) return null
     const data = fromFirestoreDocument<T>(snapshot.data() as Record<string, unknown>)
     assertPathMatchesDocument(location, tenantId, data)
@@ -72,7 +84,8 @@ export class FirestoreReadRepository implements ReadRepository {
     }
 
     // 1 件多く読んで、続きがあるかを件数ではなく実在で判定する。
-    const snapshot = await query.limit(options.limit + 1).get()
+    const limited = query.limit(options.limit + 1)
+    const snapshot = this.transaction ? await this.transaction.get(limited) : await limited.get()
     const docs = snapshot.docs.slice(0, options.limit)
     const items = docs.map((doc) => {
       const data = fromFirestoreDocument<T>(doc.data() as Record<string, unknown>)
@@ -128,7 +141,8 @@ export class FirestoreReadRepository implements ReadRepository {
       query = query.startAfter(...cursor.values.map(decodeCursorValue))
     }
 
-    const snapshot = await query.limit(options.limit + 1).get()
+    const limited = query.limit(options.limit + 1)
+    const snapshot = this.transaction ? await this.transaction.get(limited) : await limited.get()
     const docs = snapshot.docs.slice(0, options.limit)
     const items = docs.map((doc) => fromFirestoreDocument<T>(doc.data() as Record<string, unknown>))
 
@@ -161,7 +175,8 @@ export class FirestoreReadRepository implements ReadRepository {
       query = query.where(clause.field, clause.op, clause.value)
     }
     // 集計クエリを使う。件数のためだけに全文書を読み出さない。
-    const snapshot = await query.count().get()
+    const aggregate = query.count()
+    const snapshot = this.transaction ? await this.transaction.get(aggregate) : await aggregate.get()
     return snapshot.data().count
   }
 }

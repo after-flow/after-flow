@@ -7,6 +7,8 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
+    "worker": "tsx src/worker-main.ts",
+    "worker:once": "tsx src/worker-main.ts --once",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "openapi:generate": "tsx src/tools/generate-openapi.ts",
