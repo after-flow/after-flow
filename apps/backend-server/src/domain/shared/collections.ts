@@ -46,6 +46,8 @@ export const collections = {
   runArtifacts: caseCollection('runArtifacts'),
   /** 内部要求の本文hashと結果。異なる内容の再送を拒否する。 */
   internalReceipts: caseCollection('internalReceipts'),
+  waitRequests: caseCollection('waitRequests'),
+  runInbox: caseCollection('runInbox'),
   /** Case ごとの書き込み権。固定 ID の 1 文書だけを使う。 */
   caseLeases: caseCollection('coordination'),
   proposals: caseCollection('proposals'),

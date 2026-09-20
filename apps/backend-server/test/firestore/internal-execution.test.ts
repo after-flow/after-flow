@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
+import { spawn } from 'node:child_process'
 import type { AddressInfo } from 'node:net'
 import { it } from 'node:test'
 import type { TestContext } from 'node:test'
@@ -9,6 +10,8 @@ import { SignJWT } from 'jose'
 import { artifactEnvelopeSchema, dispatchSchema, INTERNAL_LIMITS } from '@aftercare/internal-contracts'
 import type { ContextArtifact, ExecutionClaims } from '@aftercare/internal-contracts'
 import { InternalExecutionService } from '../../src/application/agent/internal-execution-service.js'
+import { RunReconciler } from '../../src/application/agent/run-reconciler.js'
+import type { OutboxEvent } from '../../src/domain/shared/outbox.js'
 import { ContextVersionUnitOfWork } from '../../src/application/case/context-version-unit-of-work.js'
 import { AccessService } from '../../src/application/authorization/case-access.js'
 import { ConsentService } from '../../src/application/consent/consent-service.js'
@@ -83,7 +86,15 @@ async function setup(t: TestContext) {
     assert.equal(result.status, 200, JSON.stringify(result.body))
     return artifactEnvelopeSchema.parse(result.body.data)
   }
-  return { tenantId, userId, caseId, app, service, authorization, ai, client, accept, request, context, baseUrl }
+  const reconciler = () => new RunReconciler(readRepository(), new ContextVersionUnitOfWork(unitOfWork()), service, client)
+  async function ingest() {
+    const events = await firestore().collection(`tenants/${tenantId}/outbox`).get()
+    for (const doc of events.docs) {
+      const event = doc.data() as OutboxEvent
+      if (reconciler().types.has(event.type)) assert.equal((await reconciler().deliverLocal(event)).status, 'ACCEPTED')
+    }
+  }
+  return { tenantId, userId, caseId, app, service, authorization, ai, client, accept, request, context, baseUrl, reconciler, ingest }
 }
 
 describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
@@ -364,5 +375,146 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
       expectedVersion: 1, proposalVersion: submitted.proposalVersion, payloadHash: submitted.payloadHash,
     }, { requestId: randomUUID(), idempotency: null }), { code: 'FORBIDDEN' })
     assert.equal((await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/assets`).get()).size, 0)
+  })
+
+  it('先行承認をInboxに保持しSnapshot保存後に一度だけ再開、fresh contextと同一Actionで再適用を防ぐ', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec), input = proposal(context)
+    const submitted = (await h.request(exec, 'proposals', input)).body.data
+    assert.ok(submitted.waitRequestId)
+    assert.equal((await approve(h, submitted)).status, 200)
+    await h.ingest(); await h.ingest()
+    await h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)
+    const runRef = firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`)
+    assert.equal((await runRef.get()).get('status'), 'RUNNING', 'Snapshot保存前は再開しない')
+    h.ai.snapshots.set(exec.run.id, { runId: exec.run.id, jobId: exec.claims.jobId, executionAttempt: exec.claims.executionAttempt,
+      waitRequestId: submitted.waitRequestId, snapshotId: 'durable-snapshot', state: 'WAITING' })
+    await Promise.all([h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id), h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)])
+    const queued = (await runRef.get()).data() as AgentRunEntity
+    assert.equal(queued.status, 'QUEUED'); assert.equal(queued.attempt, 2)
+    const outbox = await firestore().collection(`tenants/${h.tenantId}/outbox`).where('type', '==', 'agent.resume').get()
+    assert.equal(outbox.size, 1)
+    const job = { ...exec.job, eventId: queued.currentJobId!, type: 'agent.resume' }
+    assert.equal((await h.client.deliver(job)).status, 'ACCEPTED')
+    assert.equal((await h.client.deliver(job)).status, 'ACCEPTED')
+    assert.equal(h.ai.accepted.has(job.eventId), true)
+    const dispatch = h.ai.dispatches.at(-1)!, claims = await h.authorization.verify(dispatch.executionAuthorization)
+    const resumed = { ...exec, dispatch, claims }
+    const fresh = await h.context(resumed)
+    assert.ok(fresh.caseVersion > context.caseVersion); assert.ok(fresh.fencingToken > context.fencingToken)
+    assert.equal((fresh.content.resume as any).snapshotId, 'durable-snapshot')
+    assert.equal((fresh.content.actions as any[])[0].status, 'APPLIED')
+    const repeated = await h.request(resumed, 'proposals', { ...input, ...proof(fresh) })
+    assert.equal(repeated.status, 200, JSON.stringify(repeated.body))
+    assert.equal(repeated.body.data.applicationStatus, 'APPLIED')
+    assert.equal((await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/assets`).get()).size, 1)
+    assert.equal((await h.request(exec, 'result', { ...proof(context), kind: 'case_planning', status: 'SUCCEEDED', resultId: randomUUID() })).status, 409)
+    const result = { ...proof(fresh), kind: 'case_planning', status: 'SUCCEEDED', resultId: randomUUID() }
+    assert.equal((await h.request(resumed, 'result', result)).status, 200)
+    const count = h.ai.countOf(job.eventId)
+    assert.equal((await h.client.deliver(job)).status, 'ACCEPTED', '結果が配送ACKより先でも再実行しない')
+    assert.equal(h.ai.countOf(job.eventId), count)
+  })
+
+  it('先行承認でleaseが変わった後も待機イベントを保存し、未完のWaitがある最終結果は拒否する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = (await h.request(exec, 'proposals', proposal(context))).body.data
+    assert.equal((await h.request(exec, 'result', { ...proof(context), kind: 'case_planning', status: 'SUCCEEDED', resultId: randomUUID() })).status, 409)
+    assert.equal((await approve(h, submitted)).status, 200)
+    const event = { type: 'WAITING', eventId: randomUUID(), waitRequestId: submitted.waitRequestId, snapshotId: 'snapshot' }
+    assert.equal((await h.request(exec, 'events', event)).status, 200)
+    assert.equal((await h.request(exec, 'events', event)).status, 200)
+    assert.equal((await h.request(exec, 'events', { ...event, snapshotId: 'other' })).status, 409)
+    const ref = firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/coordination/writer`)
+    assert.equal((await ref.get()).get('holderRunId'), null)
+  })
+
+  it('待機中の同意撤回はSnapshot HTTPが不通でも取消し、再開配送も拒否する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = (await h.request(exec, 'proposals', proposal(context))).body.data
+    await h.request(exec, 'events', { type: 'WAITING', eventId: randomUUID(), waitRequestId: submitted.waitRequestId, snapshotId: 'snapshot' })
+    assert.equal((await call(h.app, '/consents/revocations', jsonRequest('POST', { kind: 'CROSS_BORDER_AI' }))).status, 200)
+    const broken = new RunReconciler(readRepository(), new ContextVersionUnitOfWork(unitOfWork()), h.service,
+      { status: async () => { throw new Error('must not query revoked execution') } })
+    await broken.reconcile(h.tenantId, h.caseId, exec.run.id)
+    assert.equal((await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).get('status'), 'CANCELLED')
+    assert.equal((await h.request(exec, 'events', { type: 'WAITING', eventId: randomUUID(), waitRequestId: submitted.waitRequestId, snapshotId: 'snapshot' })).status, 403)
+  })
+
+  it('期限切れRUNNINGはcheckpoint復旧と同一Run再試行を分け、旧attemptを拒否する', async t => {
+    for (const checkpoint of [false, true]) {
+      const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+      await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/coordination/writer`).update({ expiresAt: new Date(0).toISOString() })
+      if (checkpoint) h.ai.snapshots.set(exec.run.id, { runId: exec.run.id, jobId: exec.claims.jobId, executionAttempt: exec.claims.executionAttempt,
+        waitRequestId: null, snapshotId: 'checkpoint', state: 'RUNNING_CHECKPOINT' })
+      await h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)
+      const run = (await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).data() as AgentRunEntity
+      assert.equal(run.pendingResume?.kind, checkpoint ? 'CHECKPOINT' : 'RETRY')
+      assert.equal(run.id, exec.run.id); assert.equal(run.attempt, 2)
+      assert.equal((await h.request(exec, 'result', { ...proof(context), kind: 'case_planning', status: 'SUCCEEDED', resultId: randomUUID() })).status, 409)
+    }
+  })
+
+  it('待機保存後にBackend workerを別プロセスで再起動してもresume intentを回復する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = (await h.request(exec, 'proposals', proposal(context))).body.data
+    await h.request(exec, 'events', { type: 'WAITING', eventId: randomUUID(), waitRequestId: submitted.waitRequestId, snapshotId: 'persistent' })
+    h.ai.snapshots.set(exec.run.id, { runId: exec.run.id, jobId: exec.claims.jobId, executionAttempt: exec.claims.executionAttempt,
+      waitRequestId: submitted.waitRequestId, snapshotId: 'persistent', state: 'WAITING' })
+    assert.equal((await approve(h, submitted)).status, 200)
+    const worker = async () => {
+      const child = spawn(process.execPath, ['--import', 'tsx', 'src/worker-main.ts', '--once'], {
+        env: { ...process.env, NODE_ENV: 'test', OUTBOX_TENANT_IDS: h.tenantId, AI_SERVER_URL: h.ai.url,
+          BACKEND_EXECUTION_SIGNING_KEY: signingKey, AI_SERVICE_TOKEN: outgoing, AI_SERVICE_TIMEOUT_MS: '1000' }, stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let output = ''; child.stdout.on('data', c => { output += c }); child.stderr.on('data', c => { output += c })
+      const [code] = await once(child, 'exit'); assert.equal(code, 0, output)
+    }
+    await worker(); await worker()
+    const jobs = await firestore().collection(`tenants/${h.tenantId}/outbox`).where('type', '==', 'agent.resume').get()
+    assert.equal(jobs.size, 1); assert.equal(jobs.docs[0]!.get('status'), 'DELIVERED')
+    assert.equal(h.ai.accepted.has(jobs.docs[0]!.id), true)
+  })
+
+  it('Snapshot保存失敗は要確認になり、手動retryで同一Actionの不変な新提案版を作る', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec), input = proposal(context)
+    const submitted = (await h.request(exec, 'proposals', input)).body.data
+    await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/waitRequests/${submitted.waitRequestId}`).update({ updatedAt: new Date(0).toISOString() })
+    await h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)
+    const path = `/cases/${h.caseId}/agent-runs/${exec.run.id}`
+    const run = (await call(h.app, path)).body.data
+    assert.equal(run.status, 'NEEDS_ATTENTION')
+    assert.equal((await call(h.app, `${path}/retry`, jsonRequest('POST', { expectedVersion: run.version }))).status, 202)
+    const stored = (await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).data() as AgentRunEntity
+    assert.equal(stored.activeWaitRequestId, null)
+    assert.equal((await h.client.deliver({ ...exec.job, eventId: stored.currentJobId! })).status, 'ACCEPTED')
+    const dispatch = h.ai.dispatches.at(-1)!, claims = await h.authorization.verify(dispatch.executionAuthorization)
+    const retried = { ...exec, dispatch, claims }, fresh = await h.context(retried)
+    const revised = await h.request(retried, 'proposals', { ...input, ...proof(fresh) })
+    assert.equal(revised.status, 200, JSON.stringify(revised.body)); assert.equal(revised.body.data.proposalVersion, 2)
+    assert.equal(revised.body.data.proposalId, submitted.proposalId)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/approvals/${submitted.approvalId}`)).body.data.status, 'EXPIRED')
+    assert.equal((await call(h.app, `/cases/${h.caseId}/proposals/${submitted.proposalId}/versions/1`)).status, 200)
+  })
+
+  it('誤ったSnapshot対応を拒否し、書類待ちは実検査接続前に再開しない', async t => {
+    const h = await setup(t)
+    const taskResponse = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '書類待ち', category: '手動', stage: 'immediate',
+      requiredDocuments: [{ id: 'required-slot', label: '合成書類', documentId: null }] }))
+    assert.equal(taskResponse.status, 201, JSON.stringify(taskResponse.body))
+    const task = taskResponse.body.data
+    const exec = await h.accept('task_guidance', task.id, 'TASK'), context = await h.context(exec)
+    const input = { ...proof(context), waitRequestId: 'document-wait', condition: { kind: 'DOCUMENTS', taskId: task.id, requiredDocumentIds: ['required-slot'] } }
+    const response = await h.request(exec, 'wait-requests', input)
+    assert.equal(response.status, 200, JSON.stringify(response.body))
+    assert.equal((await h.request(exec, 'wait-requests', input)).status, 200)
+    assert.equal((await h.request(exec, 'wait-requests', { ...input, waitRequestId: 'other', condition: { ...input.condition, taskId: 'other-task' } })).status, 404)
+    const waitRequestId = response.body.data.waitRequestId
+    h.ai.snapshots.set(exec.run.id, { runId: 'other-run', jobId: exec.claims.jobId, executionAttempt: exec.claims.executionAttempt,
+      waitRequestId, snapshotId: 'snapshot', state: 'WAITING' })
+    await assert.rejects(h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id), { code: 'CONFLICT' })
+    h.ai.snapshots.set(exec.run.id, { ...h.ai.snapshots.get(exec.run.id)!, runId: exec.run.id })
+    await h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)
+    assert.equal((await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).get('status'), 'WAITING_DOCUMENT')
+    assert.equal((await firestore().collection(`tenants/${h.tenantId}/outbox`).where('type', '==', 'agent.resume').get()).size, 0)
   })
 })

@@ -1,4 +1,5 @@
-import { dispatchAckSchema, dispatchSchema, INTERNAL_LIMITS, internalId } from '@aftercare/internal-contracts'
+import { dispatchAckSchema, dispatchSchema, INTERNAL_LIMITS, internalId, snapshotStatusSchema } from '@aftercare/internal-contracts'
+import type { ExecutionSnapshots } from '../../application/ports/execution-snapshots.js'
 import type { InternalExecutionService } from '../../application/agent/internal-execution-service.js'
 import type { AgentDeliveryOutcome, AgentJob, AgentJobClient } from '../../application/ports/agent-client.js'
 import type { ExecutionAuthorization } from '../../application/ports/execution-authorization.js'
@@ -6,7 +7,7 @@ import { AppError } from '../../shared/app-error.js'
 import type { AgentClientConfig } from './http-agent-client.js'
 
 /** 新内部契約だけを送信する。旧jobs endpointへのfallbackは禁止。 */
-export class ScopedHttpAgentJobClient implements AgentJobClient {
+export class ScopedHttpAgentJobClient implements AgentJobClient, ExecutionSnapshots {
   constructor(private readonly config: AgentClientConfig, private readonly service: InternalExecutionService,
     private readonly authorization: ExecutionAuthorization) {
     if (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0 || config.timeoutMs > INTERNAL_LIMITS.timeoutMs) throw new Error('Invalid internal HTTP timeout')
@@ -18,12 +19,14 @@ export class ScopedHttpAgentJobClient implements AgentJobClient {
       return { status: 'RETRYABLE', reason: 'CONTROL_DELIVERY_NOT_CONNECTED' }
     }
     try {
+      if (await this.service.deliverySettled(job.tenantId, job.caseId, job.payload.runId as string, job.eventId)) return { status: 'ACCEPTED' }
       const claims = await this.service.dispatchClaims(job.tenantId, job.caseId, job.payload.runId as string, job.eventId)
       const issuedAt = Math.floor(Date.now() / 1000)
       const body = dispatchSchema.parse({ jobId: claims.jobId, runId: claims.runId, executionAttempt: claims.executionAttempt,
         operation: claims.operation, issuedAt, expiresAt: issuedAt + INTERNAL_LIMITS.requestSeconds,
         executionAuthorization: await this.authorization.issue(claims) })
-      const response = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}/internal/v1/runs/${claims.runId}/dispatch`, {
+      const endpoint = job.type === 'agent.resume' || job.type === 'agent.recover' ? 'resume' : 'dispatch'
+      const response = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}/internal/v1/runs/${claims.runId}/${endpoint}`, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(this.config.timeoutMs),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.config.serviceToken}`,
           'X-Audience': this.config.audience, 'X-Request-Id': job.eventId, 'Idempotency-Key': job.eventId }, body: JSON.stringify(body),
@@ -42,6 +45,18 @@ export class ScopedHttpAgentJobClient implements AgentJobClient {
       if (cause instanceof AppError) return { status: 'RETRYABLE', reason: cause.code }
       return { status: 'RETRYABLE', reason: 'INTERNAL_TRANSPORT_ERROR' }
     }
+  }
+
+  async status(input: Parameters<ExecutionSnapshots['status']>[0]) {
+    for (const id of [input.runId, input.jobId, input.executionAttempt, ...(input.waitRequestId ? [input.waitRequestId] : [])]) internalId.parse(id)
+    const query = new URLSearchParams({ jobId: input.jobId, executionAttempt: input.executionAttempt,
+      ...(input.waitRequestId ? { waitRequestId: input.waitRequestId } : {}) })
+    const response = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}/internal/v1/runs/${input.runId}/snapshot-status?${query}`, {
+      redirect: 'error', signal: AbortSignal.timeout(this.config.timeoutMs),
+      headers: { Authorization: `Bearer ${this.config.serviceToken}`, 'X-Audience': this.config.audience },
+    })
+    if (response.status !== 200) throw new Error('Snapshot status unavailable')
+    return snapshotStatusSchema.parse(await readAck(response))
   }
 }
 

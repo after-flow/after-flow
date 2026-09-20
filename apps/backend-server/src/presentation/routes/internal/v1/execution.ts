@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { INTERNAL_LIMITS, aiProposalSchema, eventSchema, heartbeatSchema, internalId, internalResultSchema, internalRoutes, requestMetadataSchema } from '@aftercare/internal-contracts'
+import { INTERNAL_LIMITS, aiProposalSchema, eventSchema, heartbeatSchema, internalId, internalResultSchema, internalRoutes, requestMetadataSchema, waitRequestSchema } from '@aftercare/internal-contracts'
 import type { InternalScope } from '@aftercare/internal-contracts'
 import type { InternalCall, InternalExecutionService } from '../../../../application/agent/internal-execution-service.js'
 import type { ExecutionAuthorization } from '../../../../application/ports/execution-authorization.js'
@@ -69,6 +69,10 @@ export function createExecutionApp(options: {
   app.post(internalRoutes.proposals.path, async c => {
     const body = await readBody(c, aiProposalSchema)
     return respond(c, 'proposals', await options.service.proposal(await authorize(c, 'proposals', body.raw), body.parsed))
+  })
+  app.post(internalRoutes['wait-requests'].path, async c => {
+    const body = await readBody(c, waitRequestSchema)
+    return respond(c, 'wait-requests', await options.service.wait(await authorize(c, 'wait-requests', body.raw), body.parsed))
   })
   return app
 }

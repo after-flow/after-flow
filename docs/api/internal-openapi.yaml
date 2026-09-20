@@ -8,9 +8,9 @@ info:
 servers:
   - url: /internal/v1
 paths:
-  /runs/{runId}/proposals:
+  /runs/{runId}/wait-requests:
     post:
-      operationId: internal_proposals
+      operationId: internal_wait-requests
       security:
         - serviceIdentity: []
           executionAuthorization: []
@@ -50,6 +50,181 @@ paths:
           required: true
           schema:
             type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $schema: https://json-schema.org/draft/2020-12/schema
+              type: object
+              properties:
+                caseVersion:
+                  type: integer
+                  exclusiveMinimum: 0
+                  maximum: 9007199254740991
+                contextSnapshotId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                fencingToken:
+                  type: integer
+                  exclusiveMinimum: 0
+                  maximum: 9007199254740991
+                artifactVersion:
+                  type: integer
+                  exclusiveMinimum: 0
+                  maximum: 9007199254740991
+                contentHash:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{43}$
+                waitRequestId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                condition:
+                  oneOf:
+                    - type: object
+                      properties:
+                        kind:
+                          type: string
+                          const: APPROVAL
+                        approvalId:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                          pattern: ^[A-Za-z0-9_-]+$
+                      required:
+                        - kind
+                        - approvalId
+                      additionalProperties: false
+                    - type: object
+                      properties:
+                        kind:
+                          type: string
+                          const: DOCUMENTS
+                        taskId:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                          pattern: ^[A-Za-z0-9_-]+$
+                        requiredDocumentIds:
+                          minItems: 1
+                          maxItems: 20
+                          type: array
+                          items:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                      required:
+                        - kind
+                        - taskId
+                        - requiredDocumentIds
+                      additionalProperties: false
+              required:
+                - caseVersion
+                - contextSnapshotId
+                - fencingToken
+                - artifactVersion
+                - contentHash
+                - waitRequestId
+                - condition
+              additionalProperties: false
+      responses:
+        "200":
+          description: Run scoped response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $schema: https://json-schema.org/draft/2020-12/schema
+                    type: object
+                    properties:
+                      waitRequestId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      state:
+                        type: string
+                        const: PENDING_SNAPSHOT
+                    required:
+                      - waitRequestId
+                      - state
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    required:
+                      - requestId
+                    properties:
+                      requestId:
+                        type: string
+        "400":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "401":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "403":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "404":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "409":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "500":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "503":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+  /runs/{runId}/proposals:
+    post:
+      operationId: internal_proposals
+      security:
+        - serviceIdentity: []
+          executionAuthorization: []
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+        - *a1
+        - *a2
+        - *a3
+        - *a4
+        - *a5
       requestBody:
         required: true
         content:
@@ -183,11 +358,25 @@ paths:
                         maximum: 9007199254740991
                       payloadHash:
                         type: string
+                      waitRequestId:
+                        anyOf:
+                          - type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          - type: "null"
+                      applicationStatus:
+                        type: string
+                        enum:
+                          - NOT_APPLIED
+                          - APPLIED
                     required:
                       - proposalId
                       - approvalId
                       - proposalVersion
                       - payloadHash
+                      - waitRequestId
+                      - applicationStatus
                     additionalProperties: false
                   meta:
                     type: object
@@ -704,29 +893,56 @@ paths:
           application/json:
             schema:
               $schema: https://json-schema.org/draft/2020-12/schema
-              type: object
-              properties:
-                eventId:
-                  type: string
-                  minLength: 1
-                  maxLength: 128
-                  pattern: ^[A-Za-z0-9_-]+$
-                sequence:
-                  type: integer
-                  minimum: 0
-                  maximum: 9007199254740991
-                phase:
-                  type: string
-                  enum:
-                    - CONTEXT_FETCHED
-                    - PLANNING
-                    - GENERATING
-                    - VALIDATING
-              required:
-                - eventId
-                - sequence
-                - phase
-              additionalProperties: false
+              anyOf:
+                - type: object
+                  properties:
+                    eventId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    sequence:
+                      type: integer
+                      minimum: 0
+                      maximum: 9007199254740991
+                    phase:
+                      type: string
+                      enum:
+                        - CONTEXT_FETCHED
+                        - PLANNING
+                        - GENERATING
+                        - VALIDATING
+                  required:
+                    - eventId
+                    - sequence
+                    - phase
+                  additionalProperties: false
+                - type: object
+                  properties:
+                    eventId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    type:
+                      type: string
+                      const: WAITING
+                    waitRequestId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    snapshotId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                  required:
+                    - eventId
+                    - type
+                    - waitRequestId
+                    - snapshotId
+                  additionalProperties: false
       responses:
         "200":
           description: Run scoped response
@@ -1199,11 +1415,11 @@ paths:
     post:
       operationId: ai_dispatch
       description: AI Server provider契約。Backendはこの契約で送信する。AI実装/ readiness完了の宣言ではない。
-      servers:
+      servers: &a6
         - url: https://ai-server.internal/internal/v1
-      security:
+      security: &a7
         - serviceIdentity: []
-      parameters:
+      parameters: &a8
         - name: runId
           in: path
           required: true
@@ -1225,7 +1441,7 @@ paths:
           required: true
           schema:
             type: string
-      requestBody:
+      requestBody: &a9
         required: true
         content:
           application/json:
@@ -1276,7 +1492,7 @@ paths:
                 - expiresAt
                 - executionAuthorization
               additionalProperties: false
-      responses:
+      responses: &a10
         "200":
           description: Accepted
           content:
@@ -1360,6 +1576,103 @@ paths:
                   - jobId
                   - runId
                   - status
+                additionalProperties: false
+  /runs/{runId}/resume:
+    post:
+      operationId: ai_resume
+      description: 同一Jobの重複排除とfresh context取得後に再開する。Snapshot参照はcontext.resumeで取得。実AI接続は別途検証。
+      servers: *a6
+      security: *a7
+      parameters: *a8
+      requestBody: *a9
+      responses: *a10
+  /runs/{runId}/snapshot-status:
+    get:
+      operationId: ai_snapshot_status
+      servers:
+        - url: https://ai-server.internal/internal/v1
+      security:
+        - serviceIdentity: []
+      description: runtime保存済みメタデータのみ。Snapshot本文は返さない。
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: jobId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: executionAttempt
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: waitRequestId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: X-Audience
+          in: header
+          required: true
+          schema:
+            type: string
+            const: ai-server
+      responses:
+        "200":
+          description: Saved runtime status
+          content:
+            application/json:
+              schema:
+                $schema: https://json-schema.org/draft/2020-12/schema
+                type: object
+                properties:
+                  runId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  jobId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  executionAttempt:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  waitRequestId:
+                    anyOf:
+                      - type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      - type: "null"
+                  state:
+                    type: string
+                    enum:
+                      - MISSING
+                      - WAITING
+                      - RUNNING_CHECKPOINT
+                      - COMPLETED
+                  snapshotId:
+                    anyOf:
+                      - type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      - type: "null"
+                required:
+                  - runId
+                  - jobId
+                  - executionAttempt
+                  - waitRequestId
+                  - state
+                  - snapshotId
                 additionalProperties: false
 components:
   securitySchemes:

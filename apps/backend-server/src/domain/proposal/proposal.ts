@@ -42,6 +42,8 @@ export interface ProposalBasis {
 }
 
 export interface ProposalEntity extends EntityBase {
+  /** Run内でattemptを跨いで不変のAI Action ID。 */
+  actionId?: string
   /** 内部APIが保存済みRunとleaseから付与する。公開入力では受け取らない。 */
   execution?: { attemptId: string; jobId: string; fencingToken: number; contextSnapshotId: string }
   kind: ProposalKind
