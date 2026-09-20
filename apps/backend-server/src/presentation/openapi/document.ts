@@ -1,7 +1,7 @@
 import type { ApiErrorCode } from '@aftercare/public-contracts'
 import { z } from 'zod'
 import { ERROR_STATUS } from '../../shared/app-error.js'
-import type { RegisteredRoute, RouteResponseSpec, RouteSpec } from '../http/route.js'
+import type { RouteResponseSpec, RouteSpec } from '../http/route.js'
 import { REQUEST_ID_HEADER } from '../http/request-id.js'
 import { apiFailureSchema } from '../schemas/common.js'
 
@@ -76,12 +76,14 @@ function parametersOf(spec: RouteSpec) {
 }
 
 function successResponse(response: RouteResponseSpec) {
+  const mediaType = response.mediaType ?? 'application/json'
+  // 実体をそのまま返す route は封筒に包まない。schema も持たない。
+  const schema = response.schema
+    ? jsonSchemaOf(response.schema, 'output')
+    : { type: 'string', format: 'binary' }
   return [
     String(response.status),
-    {
-      description: response.description,
-      content: { 'application/json': { schema: jsonSchemaOf(response.schema, 'output') } },
-    },
+    { description: response.description, content: { [mediaType]: { schema } } },
   ] as const
 }
 
@@ -128,6 +130,29 @@ function operationOf(spec: RouteSpec) {
           },
         }
       : {}),
+    ...(request.multipart
+      ? {
+          requestBody: {
+            required: true,
+            content: {
+              'multipart/form-data': {
+                schema: {
+                  type: 'object',
+                  properties: Object.fromEntries(
+                    Object.entries(request.multipart.fields).map(([name, description]) => [
+                      name,
+                      name === 'file'
+                        ? { type: 'string', format: 'binary', description }
+                        : { type: 'string', description },
+                    ]),
+                  ),
+                  required: Object.keys(request.multipart.fields),
+                },
+              },
+            },
+          },
+        }
+      : {}),
     responses: Object.fromEntries([
       successResponse(spec.success),
       ...(spec.alternateSuccess ?? []).map(successResponse),
@@ -147,10 +172,10 @@ export interface OpenApiOptions {
  * 手書きの定義ファイルを別に持つと、実装と契約が静かにずれる。
  * 生成物は CI で再生成して差分が無いことを検証する。
  */
-export function buildOpenApiDocument(routes: RegisteredRoute[], options: OpenApiOptions) {
+export function buildOpenApiDocument(specs: RouteSpec[], options: OpenApiOptions) {
   const paths: Record<string, Record<string, unknown>> = {}
 
-  for (const { spec } of routes) {
+  for (const spec of specs) {
     const path = toOpenApiPath(spec.path)
     paths[path] ??= {}
     if (paths[path][spec.method]) {
