@@ -5,7 +5,7 @@ import { collections } from '../../domain/shared/collections.js'
 import type { GuidanceEntity, GuidanceSource, GuidanceStatus } from '../../domain/task/guidance.js'
 import { errors } from '../../shared/app-error.js'
 import { AgentAccess } from '../authorization/case-access.js'
-import type { DocLocation, ReadRepository, UnitOfWork } from '../ports/persistence.js'
+import type { DocLocation, ReadRepository, Tx, UnitOfWork } from '../ports/persistence.js'
 
 /**
  * AI からの結果を受け取る（仕様書 6.3）。
@@ -123,62 +123,65 @@ export class AgentResultIntake {
     if (duplicate) return { applied: false, reason: 'DUPLICATE_RESULT' }
 
     const run = await this.verifyRun(tenantId, caseId, input, 'task_guidance')
-    const taskId = run.targetId
     const access = new AgentAccess(tenantId, caseId, run.id)
 
-    return this.uow.run(access.toWorkContext(null), async (tx) => {
-      const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, run.id))
-      const current = await tx.get<GuidanceEntity>(guidanceLocation(caseId, taskId))
-      if (!current) {
-        throw errors.preconditionFailed({
-          message: '対象の案内が見つかりません。',
-          details: { reason: 'GUIDANCE_NOT_REQUESTED' },
-        })
-      }
-      if (current.agentRunId !== run.id) {
-        throw errors.conflict({ details: { reason: 'GUIDANCE_SUPERSEDED' } })
-      }
-      if (current.resultId === input.resultId && current.attemptId === input.attemptId) {
-        // 同じ結果の再送。二重に反映しない。
-        return { applied: false, reason: 'DUPLICATE_RESULT' }
-      }
-      // 必ず保存と同じ Transaction で再検証する。取消・retryとの競合時にも有効。
-      this.assertRun(runEntity, input, 'task_guidance')
+    return this.uow.run(access.toWorkContext(null), tx => this.applyGuidanceResult(tx, caseId, input))
+  }
 
-      tx.update<GuidanceEntity>(guidanceLocation(caseId, taskId), current.version, {
-        status: input.status,
-        target: input.target ?? current.target,
-        where: input.where ?? null,
-        bring: input.bring ?? [],
-        steps: input.steps ?? [],
-        formExampleUrl: input.formExampleUrl ?? null,
-        formExampleLabel: input.formExampleLabel ?? null,
-        note: input.note ?? null,
-        sources: input.sources ?? [],
-        // 調べきれなかった項目を落とさない。
-        missing: input.missing ?? [],
-        failureReason: input.failureReason ?? null,
-        researchedBy: 'AI',
-        resultId: input.resultId,
-        attemptId: input.attemptId,
+  /** 内部APIの認可・Receiptと同じTransactionで適用する。 */
+  async applyGuidanceResult(tx: Tx, caseId: string, input: GuidanceResultInput) {
+    const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, input.runId))
+    const taskId = runEntity.targetId
+    const current = await tx.get<GuidanceEntity>(guidanceLocation(caseId, taskId))
+    if (!current) {
+      throw errors.preconditionFailed({
+        message: '対象の案内が見つかりません。',
+        details: { reason: 'GUIDANCE_NOT_REQUESTED' },
       })
+    }
+    if (current.agentRunId !== runEntity.id) {
+      throw errors.conflict({ details: { reason: 'GUIDANCE_SUPERSEDED' } })
+    }
+    if (current.resultId === input.resultId && current.attemptId === input.attemptId) {
+      // 同じ結果の再送。二重に反映しない。
+      return { applied: false, reason: 'DUPLICATE_RESULT' }
+    }
+    // 必ず保存と同じ Transaction で再検証する。取消・retryとの競合時にも有効。
+    this.assertRun(runEntity, input, 'task_guidance')
 
-      tx.update<AgentRunEntity>(runLocation(caseId, run.id), runEntity.version, {
-        status: runStatusFor(input.status),
-        finishedAt: input.status === 'WAITING' ? null : new Date().toISOString(),
-        waitingFor: input.status === 'WAITING' ? '書類の登録' : null,
-        failureReason: input.failureReason ?? null,
-      })
-
-      tx.audit({
-        caseId,
-        type: 'guidance.result_received',
-        target: { collection: collections.guidance.name, id: taskId, version: current.version + 1 },
-        detail: { status: input.status, sourceCount: (input.sources ?? []).length },
-      })
-
-      return { applied: true, reason: null }
+    tx.update<GuidanceEntity>(guidanceLocation(caseId, taskId), current.version, {
+      status: input.status,
+      target: input.target ?? current.target,
+      where: input.where ?? null,
+      bring: input.bring ?? [],
+      steps: input.steps ?? [],
+      formExampleUrl: input.formExampleUrl ?? null,
+      formExampleLabel: input.formExampleLabel ?? null,
+      note: input.note ?? null,
+      sources: input.sources ?? [],
+      // 調べきれなかった項目を落とさない。
+      missing: input.missing ?? [],
+      failureReason: input.failureReason ?? null,
+      researchedBy: 'AI',
+      resultId: input.resultId,
+      attemptId: input.attemptId,
     })
+
+    tx.update<AgentRunEntity>(runLocation(caseId, runEntity.id), runEntity.version, {
+      status: runStatusFor(input.status),
+      finishedAt: input.status === 'WAITING' ? null : new Date().toISOString(),
+      waitingFor: input.status === 'WAITING' ? '書類の登録' : null,
+      failureReason: input.failureReason ?? null,
+    })
+
+    tx.audit({
+      caseId,
+      type: 'guidance.result_received',
+      target: { collection: collections.guidance.name, id: taskId, version: current.version + 1 },
+      detail: { status: input.status, sourceCount: (input.sources ?? []).length },
+    })
+
+    return { applied: true, reason: null }
   }
 
   /** 案内の結果が既に反映済みかを調べる。 */
@@ -212,39 +215,42 @@ export class AgentResultIntake {
     const run = await this.verifyRun(tenantId, caseId, input, 'chat_reply')
     const access = new AgentAccess(tenantId, caseId, run.id)
 
-    return this.uow.run(access.toWorkContext(null), async (tx) => {
-      const existing = await tx.get<MessageEntity>(messageLocation(caseId, replyId))
-      if (existing) return this.chatDuplicate(existing, input)
-      const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, run.id))
-      this.assertRun(runEntity, input, 'chat_reply')
+    return this.uow.run(access.toWorkContext(null), tx => this.applyChatReply(tx, caseId, input))
+  }
 
-      tx.create<MessageEntity>(messageLocation(caseId, replyId), {
-        id: replyId,
-        role: 'assistant',
-        body: input.body,
-        agentRunId: run.id,
-        replyRunId: null,
-        professionalNotice: input.professionalNotice ?? false,
-        // 回答は説明であり、提案を作らない。正式な変更は提案の経路を使う。
-        escalationProposalId: null,
-        resultId: input.resultId,
-        attemptId: input.attemptId,
-      })
+  async applyChatReply(tx: Tx, caseId: string, input: ChatReplyResultInput) {
+    const replyId = `reply-${input.resultId}`
+    const existing = await tx.get<MessageEntity>(messageLocation(caseId, replyId))
+    if (existing) return this.chatDuplicate(existing, input)
+    const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, input.runId))
+    this.assertRun(runEntity, input, 'chat_reply')
 
-      tx.update<AgentRunEntity>(runLocation(caseId, run.id), runEntity.version, {
-        status: 'SUCCEEDED',
-        finishedAt: new Date().toISOString(),
-      })
-
-      tx.audit({
-        caseId,
-        type: 'message.reply_received',
-        target: { collection: collections.messages.name, id: replyId, version: 1 },
-        detail: { runId: run.id },
-      })
-
-      return { applied: true, reason: null }
+    tx.create<MessageEntity>(messageLocation(caseId, replyId), {
+      id: replyId,
+      role: 'assistant',
+      body: input.body,
+      agentRunId: runEntity.id,
+      replyRunId: null,
+      professionalNotice: input.professionalNotice ?? false,
+      // 回答は説明であり、提案を作らない。正式な変更は提案の経路を使う。
+      escalationProposalId: null,
+      resultId: input.resultId,
+      attemptId: input.attemptId,
     })
+
+    tx.update<AgentRunEntity>(runLocation(caseId, runEntity.id), runEntity.version, {
+      status: 'SUCCEEDED',
+      finishedAt: new Date().toISOString(),
+    })
+
+    tx.audit({
+      caseId,
+      type: 'message.reply_received',
+      target: { collection: collections.messages.name, id: replyId, version: 1 },
+      detail: { runId: runEntity.id },
+    })
+
+    return { applied: true, reason: null }
   }
 
   private chatDuplicate(message: MessageEntity, input: ChatReplyResultInput) {

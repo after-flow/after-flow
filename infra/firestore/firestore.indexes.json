@@ -2,6 +2,10 @@
   "comment": "実際に発行する Query に対応する複合 index だけを登録する。将来のコレクション用に先回りして作らない。",
   "indexes": [
     {
+      "collectionGroup": "documents", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "inspection.status", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }]
+    },
+    {
       "collectionGroup": "outbox", "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }]
     },

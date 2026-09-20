@@ -11,7 +11,7 @@ import { errors } from '../../shared/app-error.js'
 import type { AccessService } from '../authorization/case-access.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
 import type { CommandMeta } from '../case/case-service.js'
-import type { DocLocation, ReadRepository, UnitOfWork } from '../ports/persistence.js'
+import type { DocLocation, ReadRepository, Tx, UnitOfWork } from '../ports/persistence.js'
 import { SERVER_TIME } from '../ports/persistence.js'
 
 export interface ConsentDocumentView extends ConsentDocumentDefinition {
@@ -70,21 +70,22 @@ export class ConsentService {
     return found
   }
 
-  private async records(user: AuthenticatedUser): Promise<Map<ConsentKind, ConsentRecord | null>> {
+  private async records(user: AuthenticatedUser, tx?: Tx): Promise<Map<ConsentKind, ConsentRecord | null>> {
     const entries = await Promise.all(
       this.catalog.documents.map(
         async (document) =>
           [
             document.kind,
-            await this.read.get<ConsentRecord>(user.tenantId, recordLocation(user.userId, document.kind)),
+            await (tx ? tx.get<ConsentRecord>(recordLocation(user.userId, document.kind))
+              : this.read.get<ConsentRecord>(user.tenantId, recordLocation(user.userId, document.kind))),
           ] as const,
       ),
     )
     return new Map(entries)
   }
 
-  async status(user: AuthenticatedUser): Promise<ConsentStatusView> {
-    const records = await this.records(user)
+  async status(user: AuthenticatedUser, tx?: Tx): Promise<ConsentStatusView> {
+    const records = await this.records(user, tx)
     const documents = this.catalog.documents.map((definition) => {
       const record = records.get(definition.kind) ?? null
       return {
@@ -215,8 +216,8 @@ export class ConsentService {
    * 任意の外部 AI 同意が無くても、必須同意があれば手動管理は使える。
    * 機能全体を止めない。
    */
-  async policy(user: AuthenticatedUser): Promise<ConsentPolicyDecision> {
-    const status = await this.status(user)
+  async policy(user: AuthenticatedUser, tx?: Tx): Promise<ConsentPolicyDecision> {
+    const status = await this.status(user, tx)
     const missingRequired = status.documents
       .filter((document) => document.required && !document.satisfied)
       .map((document) => document.kind)
@@ -250,8 +251,8 @@ export class ConsentService {
    *
    * 拒否のときも、その状態で使える機能を理由に添える。
    */
-  async assertExternalAiAllowed(user: AuthenticatedUser): Promise<void> {
-    const decision = await this.policy(user)
+  async assertExternalAiAllowed(user: AuthenticatedUser, tx?: Tx): Promise<void> {
+    const decision = await this.policy(user, tx)
     if (decision.externalAi) return
     throw errors.consentRequired({
       message: '外部AIを利用する処理には追加の同意が必要です。手動での管理は引き続き利用できます。',

@@ -44,7 +44,13 @@ export class ContextVersionUnitOfWork implements UnitOfWork {
         },
         update: (location, expectedVersion, patch) => {
           assertMutable(location)
-          track(location)
+          const keys = Object.keys(patch)
+          const runtimeOnly = keys.length > 0 && (
+            (location.collection === collections.messages && keys.every(key => key === 'replyRunId'))
+            || (location.collection === collections.documents && keys.every(key => key === 'analysisState' || key === 'agentRunId'))
+          )
+          // 実行へのリンクや解析進捗だけで、受付済みRun自身をstaleにしない。
+          if (!runtimeOnly) track(location)
           if (location.collection === collections.cases) {
             if (caseUpdates.has(location.id)) throw errors.internal({ internal: { reason: 'multiple Case updates in one command' } })
             changed.add(location.id)

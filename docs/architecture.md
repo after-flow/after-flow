@@ -443,7 +443,7 @@ Proposal状態は`submitted → validated → awaiting_approval → applied`。�
 
 Approvalは対象Proposal版/Action hash、approver権限、作成/失効時刻、決定時刻を持つ。承認後に送信先や資料が変わった場合は旧承認を流用せず再承認とする。却下した同一Proposalをそのまま再承認させない。
 
-AIの抽出候補（財産・契約・気づき）は正式な資産・債務・契約・給付・事実・法的判断へ自動昇格しない。候補の正式化は承認済みProposalの適用に限る。現在接続されている適用AdapterはTaskのみ。公開APIの手動登録と、未接続の財産・契約AI適用を混同しない。
+AIの抽出候補（財産・契約・気づき）は正式な資産・債務・契約・給付・事実・法的判断へ自動昇格しない。候補の正式化は承認済みProposalの適用に限る。Task、財産、債務、契約、関係者、書類要求、根拠、専門家引継ぎの適用Adapterを実装済み（[入力契約](api/proposal-payloads.md)）。AI由来Proposalの内部提出・lease連携は #41。公開APIの手動登録・Applier実装と、実AIへの接続完了を混同しない。
 
 MVPでは説明付きTask候補の作成など限定した低影響の変更だけ自動適用可。本人意思確定、重要な抽出事実の正式登録、準備資料の確定には人の確認を入れる。外部送信・解約・送金はMVP対象外。
 

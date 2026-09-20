@@ -6,6 +6,7 @@ import { CaseService } from './application/case/case-service.js'
 import { ConsentService } from './application/consent/consent-service.js'
 import { DocumentService } from './application/document/document-service.js'
 import { AgentRunService } from './application/agent/agent-run-service.js'
+import { InternalExecutionService } from './application/agent/internal-execution-service.js'
 import { OutboxDispatcher } from './application/agent/outbox-dispatcher.js'
 import type { AgentOperation } from './domain/agent/agent-run.js'
 import {
@@ -21,7 +22,9 @@ import { entityProposalAppliers } from './application/proposal/entity-appliers.j
 import { taskActionProposalAppliers } from './application/proposal/task-action-appliers.js'
 import { TaskService } from './application/task/task-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
-import { HttpAgentJobClient, readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
+import { readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
+import { ScopedHttpAgentJobClient } from './infrastructure/agent/scoped-http-agent-client.js'
+import { readExecutionAuthorization } from './infrastructure/identity/execution-authorization.js'
 import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
 import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
@@ -32,7 +35,7 @@ import { createTokenVerifier, readAuthConfig } from './infrastructure/identity/c
 import { authentication } from './presentation/http/authentication.js'
 import type { AppEnv } from './presentation/http/context.js'
 import { logger } from './presentation/http/logger.js'
-import { createInternalApp } from './presentation/routes/internal/v1/results.js'
+import { createExecutionApp } from './presentation/routes/internal/v1/execution.js'
 import { createPublicV1Routes } from './presentation/routes/public/v1/index.js'
 
 /**
@@ -122,12 +125,16 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     if (user) await consentService.assertBasicConsent(user)
   }
 
-  // 内部 API はサービストークンが設定されている場合だけ公開する。
-  const internalApp = env.AI_SERVICE_TOKEN
-    ? createInternalApp({
-        intake: new AgentResultIntake(database.read, database.uow),
-        serviceToken: env.AI_SERVICE_TOKEN,
-        audience: env.BACKEND_SERVICE_AUDIENCE ?? 'backend-server',
+  const executionAuthorization = readExecutionAuthorization(env)
+  if (env.BACKEND_INTERNAL_SERVICE_TOKEN && env.BACKEND_INTERNAL_SERVICE_TOKEN === env.AI_SERVICE_TOKEN) {
+    throw new Error('Inbound and outbound service credentials must differ')
+  }
+  // 共有サービス資格情報だけの旧results endpointは本番にmountしない。
+  const internalApp = executionAuthorization && env.BACKEND_INTERNAL_SERVICE_TOKEN
+    ? createExecutionApp({
+        service: new InternalExecutionService(database.read, database.uow, consentService, new AgentResultIntake(database.read, database.uow)),
+        authorization: executionAuthorization,
+        serviceCredential: env.BACKEND_INTERNAL_SERVICE_TOKEN,
       })
     : undefined
 
@@ -159,17 +166,22 @@ export function createOutboxDispatcher(
   dependencies: { firestore: import('@google-cloud/firestore').Firestore; consent: ConsentService },
 ): OutboxDispatcher | null {
   const config = readAgentClientConfig(env)
-  if (!config) return null
-  return new OutboxDispatcher(dependencies.firestore, new HttpAgentJobClient(config), dependencies.consent)
+  const authorization = readExecutionAuthorization(env)
+  if (!config || !authorization) return null
+  const read = new FirestoreReadRepository(dependencies.firestore)
+  const uow = new ContextVersionUnitOfWork(new FirestoreUnitOfWork(dependencies.firestore))
+  const execution = new InternalExecutionService(read, uow, dependencies.consent, new AgentResultIntake(read, uow))
+  return new OutboxDispatcher(dependencies.firestore, new ScopedHttpAgentJobClient(config, execution, authorization), dependencies.consent)
 }
 
 /** 設定で有効にした業務操作だけを受け付ける。 */
 function connectedOperations(env: NodeJS.ProcessEnv): ReadonlySet<AgentOperation> {
+  if (!env.BACKEND_EXECUTION_SIGNING_KEY || !env.BACKEND_INTERNAL_SERVICE_TOKEN || !readAgentClientConfig(env)) return new Set()
   const configured = (env.AI_CONNECTED_OPERATIONS ?? '')
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean)
-  const supported: AgentOperation[] = ['document_analysis', 'case_planning', 'task_guidance', 'chat_reply']
+  const supported: AgentOperation[] = ['case_planning', 'task_guidance', 'chat_reply']
   return new Set(supported.filter((operation) => configured.includes(operation)))
 }
 

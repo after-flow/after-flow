@@ -112,6 +112,7 @@ export class AgentRunService {
     await this.consent.assertExternalAiAllowed(user)
 
     const runId = randomUUID()
+    const jobId = randomUUID()
     const storedId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const caseEntity = await tx.require<CaseEntity>({
         collection: collections.cases,
@@ -129,6 +130,8 @@ export class AgentRunService {
         caseVersionAtAccept: caseEntity.caseVersion,
         attempt: 1,
         currentAttemptId: randomUUID(),
+        initiatedByUserId: user.userId,
+        currentJobId: jobId,
         failureReason: null,
         waitingFor: null,
         startedAt: null,
@@ -163,6 +166,7 @@ export class AgentRunService {
 
       // 配送は Outbox が行う。HTTP 応答の後処理にぶら下げない。
       tx.outbox({
+        id: jobId,
         type: `agent.${input.operation}`,
         caseId,
         payload: {
@@ -265,10 +269,16 @@ export class AgentRunService {
           details: { status: current.status },
         })
       }
+      const caseEntity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
+      const jobId = randomUUID()
       tx.update<AgentRunEntity>(runLocation(caseId, runId), expectedVersion, {
         status: 'QUEUED',
         attempt: current.attempt + 1,
         currentAttemptId: randomUUID(),
+        currentJobId: jobId,
+        initiatedByUserId: user.userId,
+        caseVersionAtAccept: caseEntity.caseVersion,
+        progressSequence: -1,
         failureReason: null,
         waitingFor: null,
         finishedAt: null,
@@ -280,6 +290,7 @@ export class AgentRunService {
         detail: { attempt: current.attempt + 1 },
       })
       tx.outbox({
+        id: jobId,
         type: `agent.${current.operation}`,
         caseId,
         payload: {

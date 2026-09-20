@@ -12,7 +12,7 @@
     "dev": "pnpm --parallel --filter \"./apps/*\" dev",
     "dev:web": "pnpm --filter @aftercare/web dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter @aftercare/internal-contracts build && pnpm -r typecheck",
     "lint": "oxlint apps packages scripts && pnpm check:boundaries",
     "check:boundaries": "node scripts/verify-boundaries.mjs",
     "test": "pnpm -r --if-present test",
