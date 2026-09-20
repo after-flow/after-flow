@@ -35,7 +35,7 @@ CI runの`event=push`、`head_branch=main`、workflow path、repositoryとhead_r
 | Firestore integration | Emulator上の永続化・業務API・認可・版競合 | `pnpm test:firestore` |
 | Workflow lint | actionlintとrunner内ShellCheckでActions/shell検証 | `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7`、`"$(go env GOPATH)/bin/actionlint"` |
 | Dependency audit | lockfile全依存のhigh/critical脆弱性 | `pnpm audit --audit-level high` |
-| Docker smoke | 開発3サービス・MSW配信・公開/内部HTTP・Firestore/Storage Emulator・AI分離 | `make up && node scripts/smoke-compose.mjs`、`make up-data && make data-check` |
+| Docker smoke | 開発3サービス・MSW配信・公開/内部HTTP・Firestore/Storage Emulator・AI分離 | `make up && node scripts/smoke-compose.mjs && make data-check` |
 | Production containers | 本番3イメージ・SPA deep link・static assets・API proxy・AI分離 | `make production-check` |
 
 `pnpm install --frozen-lockfile`で準備します。Docker内で型・Lint・テスト・buildをまとめて実行する場合は`make check`です。
