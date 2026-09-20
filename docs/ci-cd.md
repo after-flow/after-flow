@@ -44,7 +44,7 @@ CI runの`event=push`、`head_branch=main`、workflow path、repositoryとhead_r
 
 rootの`pnpm test`はCI補助コードのテスト後に、`test`スクリプトを持つ全workspaceを実行します。
 Web/AIのtest runnerは`src`以下の`.test.ts/.test.tsx/.test.mjs`を再帰的に探し、0件の場合は失敗します。
-Backendは既存の`test/**/*.test.ts`を実行します。Emulator依存のテストはこのジョブではskipし、別の必須Firestore integrationジョブで実行します。
+AIは加えて`test/**/*.test.ts`の基盤テストも実行します。Backendは既存の`test/**/*.test.ts`を実行します。Emulator依存のテストはこのジョブではskipし、別の必須Firestore integrationジョブで実行します。
 `public-contracts`は現在型のみで、型検査・ビルドを実行します。`internal-contracts`もBackendより先にbuildします。
 本番buildではBackendは`src`のみ、AIはテスト・test-supportを除外し、型検査ではテストも含めます。
 
