@@ -1,7 +1,7 @@
 import { createBudgetProcessors } from '../budget-processors.js'
 import type { AgentBudget } from '../budget-processors.js'
 import { Agent } from '@mastra/core/agent'
-import type { DelegationConfig, ToolsInput } from '@mastra/core/agent'
+import type { DelegationConfig, ToolsInput, ModelWithRetries } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { getPlaybook } from '../../../orchestration/playbooks/registry.js'
 import { delegationSelectionSchema, researchBriefSchema, researchFindingsSchema, researchEvidenceSchema, validateFindings } from '../../../orchestration/research/contracts.js'
@@ -13,7 +13,7 @@ export const RESEARCH_AGENT_ID = 'research-agent'
 
 export interface GuidanceAgentDependencies {
   budget?: AgentBudget
-  models: { core: MastraModelConfig; research: MastraModelConfig }
+  models: { core: MastraModelConfig | ModelWithRetries[]; research: MastraModelConfig | ModelWithRetries[] }
   /** Application-approved briefs only. Never pass raw Backend artifacts here. */
   briefs: readonly ResearchBrief[]
   researchTools: { searchOfficialSources: ToolsInput[string]; readOfficialSource: ToolsInput[string] }
