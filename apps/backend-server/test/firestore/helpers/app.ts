@@ -11,6 +11,12 @@ import { DocumentService } from '../../../src/application/document/document-serv
 import type { InheritanceDecisionReader } from '../../../src/application/task/task-service.js'
 import { AgentRunService } from '../../../src/application/agent/agent-run-service.js'
 import type { AgentOperation } from '../../../src/domain/agent/agent-run.js'
+import {
+  InheritanceDecisionService,
+  StoredInheritanceDecisionReader,
+} from '../../../src/application/decision/decision-service.js'
+import { ProposalService } from '../../../src/application/proposal/proposal-service.js'
+import { taskProposalApplier } from '../../../src/application/proposal/task-applier.js'
 import { TaskService } from '../../../src/application/task/task-service.js'
 import { PLACEHOLDER_RULE_CATALOG } from '../../../src/domain/task/rule-catalog.js'
 import type { RuleCatalog } from '../../../src/domain/task/rule-engine.js'
@@ -75,7 +81,7 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       access,
       readRepository(),
       unitOfWork(),
-      ...(options.decisions ? [options.decisions] : []),
+      options.decisions ?? new StoredInheritanceDecisionReader(readRepository()),
     ),
     agentRunService: new AgentRunService(
       access,
@@ -84,6 +90,8 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       consentService,
       new Set(options.connectedOperations ?? []),
     ),
+    proposalService: new ProposalService(access, readRepository(), unitOfWork(), [taskProposalApplier]),
+    decisionService: new InheritanceDecisionService(access, readRepository(), unitOfWork()),
   })
 
   const stubAuthentication = createMiddleware<AppEnv>(async (c, next) => {

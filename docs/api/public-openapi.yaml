@@ -6231,3 +6231,2412 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/proposals:
+    post:
+      operationId: submitProposal
+      summary: 提案を提出する
+      description: 誰が出した提案でも同じ経路を通る。根拠が同じ案件に属し、参照した版のままであることを検証する。
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - TASK_PROPOSAL
+                    - ASSET_PROPOSAL
+                    - LIABILITY_PROPOSAL
+                    - CONTRACT_PROPOSAL
+                    - DOCUMENT_REQUEST
+                    - ESCALATION_PROPOSAL
+                    - EVIDENCE_PROPOSAL
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                summary:
+                  default: ""
+                  type: string
+                  maxLength: 2000
+                payload:
+                  type: object
+                  additionalProperties: {}
+                basis:
+                  default: []
+                  maxItems: 20
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum:
+                          - DOCUMENT
+                          - TASK
+                          - MESSAGE
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      version:
+                        type: integer
+                        minimum: 1
+                        maximum: 9007199254740991
+                      label:
+                        type: string
+                        maxLength: 120
+                    required:
+                      - type
+                      - id
+                      - version
+                      - label
+                assetDisposal:
+                  default: false
+                  type: boolean
+              required:
+                - kind
+                - title
+                - payload
+              additionalProperties: false
+      responses:
+        "201":
+          description: 提出した提案
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      caseId:
+                        type: string
+                      kind:
+                        type: string
+                        enum:
+                          - TASK_PROPOSAL
+                          - ASSET_PROPOSAL
+                          - LIABILITY_PROPOSAL
+                          - CONTRACT_PROPOSAL
+                          - DOCUMENT_REQUEST
+                          - ESCALATION_PROPOSAL
+                          - EVIDENCE_PROPOSAL
+                      status:
+                        type: string
+                        enum:
+                          - SUBMITTED
+                          - VALIDATED
+                          - AWAITING_APPROVAL
+                          - APPLIED
+                          - REJECTED
+                          - STALE
+                          - EXPIRED
+                      source:
+                        type: string
+                        enum:
+                          - USER
+                          - SYSTEM
+                          - AI
+                      agentRunId:
+                        nullable: true
+                        type: string
+                      title:
+                        type: string
+                      summary:
+                        type: string
+                      proposalVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      payload:
+                        type: object
+                        additionalProperties: {}
+                      payloadHash:
+                        type: string
+                      basis:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            type:
+                              type: string
+                              enum:
+                                - DOCUMENT
+                                - TASK
+                                - MESSAGE
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^[A-Za-z0-9_-]+$
+                            version:
+                              type: integer
+                              minimum: 1
+                              maximum: 9007199254740991
+                            label:
+                              type: string
+                              maxLength: 120
+                          required:
+                            - type
+                            - id
+                            - version
+                            - label
+                          additionalProperties: false
+                      caseVersionAtProposal:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      assetDisposal:
+                        type: boolean
+                      supersedesProposalVersion:
+                        nullable: true
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      createdAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - id
+                      - caseId
+                      - kind
+                      - status
+                      - source
+                      - agentRunId
+                      - title
+                      - summary
+                      - proposalVersion
+                      - payload
+                      - payloadHash
+                      - basis
+                      - caseVersionAtProposal
+                      - assetDisposal
+                      - supersedesProposalVersion
+                      - version
+                      - createdAt
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: CONFLICT / PRECONDITION_FAILED / IDEMPOTENCY_KEY_REUSED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+    get:
+      operationId: listProposals
+      summary: 提案の一覧
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: limit
+          in: query
+          required: false
+          schema:
+            default: 50
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: ^[A-Za-z0-9_-]+={0,2}$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 提案の一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        caseId:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - TASK_PROPOSAL
+                            - ASSET_PROPOSAL
+                            - LIABILITY_PROPOSAL
+                            - CONTRACT_PROPOSAL
+                            - DOCUMENT_REQUEST
+                            - ESCALATION_PROPOSAL
+                            - EVIDENCE_PROPOSAL
+                        status:
+                          type: string
+                          enum:
+                            - SUBMITTED
+                            - VALIDATED
+                            - AWAITING_APPROVAL
+                            - APPLIED
+                            - REJECTED
+                            - STALE
+                            - EXPIRED
+                        source:
+                          type: string
+                          enum:
+                            - USER
+                            - SYSTEM
+                            - AI
+                        agentRunId:
+                          nullable: true
+                          type: string
+                        title:
+                          type: string
+                        summary:
+                          type: string
+                        proposalVersion:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                        payload:
+                          type: object
+                          additionalProperties: {}
+                        payloadHash:
+                          type: string
+                        basis:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              type:
+                                type: string
+                                enum:
+                                  - DOCUMENT
+                                  - TASK
+                                  - MESSAGE
+                              id:
+                                type: string
+                                minLength: 1
+                                maxLength: 128
+                                pattern: ^[A-Za-z0-9_-]+$
+                              version:
+                                type: integer
+                                minimum: 1
+                                maximum: 9007199254740991
+                              label:
+                                type: string
+                                maxLength: 120
+                            required:
+                              - type
+                              - id
+                              - version
+                              - label
+                            additionalProperties: false
+                        caseVersionAtProposal:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                        assetDisposal:
+                          type: boolean
+                        supersedesProposalVersion:
+                          nullable: true
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                        version:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                        createdAt:
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      required:
+                        - id
+                        - caseId
+                        - kind
+                        - status
+                        - source
+                        - agentRunId
+                        - title
+                        - summary
+                        - proposalVersion
+                        - payload
+                        - payloadHash
+                        - basis
+                        - caseVersionAtProposal
+                        - assetDisposal
+                        - supersedesProposalVersion
+                        - version
+                        - createdAt
+                        - updatedAt
+                      additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/proposals/{proposalId}:
+    get:
+      operationId: getProposal
+      summary: 提案の詳細
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: proposalId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 提案
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      caseId:
+                        type: string
+                      kind:
+                        type: string
+                        enum:
+                          - TASK_PROPOSAL
+                          - ASSET_PROPOSAL
+                          - LIABILITY_PROPOSAL
+                          - CONTRACT_PROPOSAL
+                          - DOCUMENT_REQUEST
+                          - ESCALATION_PROPOSAL
+                          - EVIDENCE_PROPOSAL
+                      status:
+                        type: string
+                        enum:
+                          - SUBMITTED
+                          - VALIDATED
+                          - AWAITING_APPROVAL
+                          - APPLIED
+                          - REJECTED
+                          - STALE
+                          - EXPIRED
+                      source:
+                        type: string
+                        enum:
+                          - USER
+                          - SYSTEM
+                          - AI
+                      agentRunId:
+                        nullable: true
+                        type: string
+                      title:
+                        type: string
+                      summary:
+                        type: string
+                      proposalVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      payload:
+                        type: object
+                        additionalProperties: {}
+                      payloadHash:
+                        type: string
+                      basis:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            type:
+                              type: string
+                              enum:
+                                - DOCUMENT
+                                - TASK
+                                - MESSAGE
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^[A-Za-z0-9_-]+$
+                            version:
+                              type: integer
+                              minimum: 1
+                              maximum: 9007199254740991
+                            label:
+                              type: string
+                              maxLength: 120
+                          required:
+                            - type
+                            - id
+                            - version
+                            - label
+                          additionalProperties: false
+                      caseVersionAtProposal:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      assetDisposal:
+                        type: boolean
+                      supersedesProposalVersion:
+                        nullable: true
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      createdAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - id
+                      - caseId
+                      - kind
+                      - status
+                      - source
+                      - agentRunId
+                      - title
+                      - summary
+                      - proposalVersion
+                      - payload
+                      - payloadHash
+                      - basis
+                      - caseVersionAtProposal
+                      - assetDisposal
+                      - supersedesProposalVersion
+                      - version
+                      - createdAt
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+    patch:
+      operationId: reviseProposal
+      summary: 提案の内容を訂正する
+      description: 既存の版の内容は書き換えない。新しい版とhashを作り、対象を失った承認は期限切れになる。人は新しい版を承認する。
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: proposalId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedVersion:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+                payload:
+                  type: object
+                  additionalProperties: {}
+              required:
+                - expectedVersion
+                - payload
+              additionalProperties: false
+      responses:
+        "200":
+          description: 訂正後の提案
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      caseId:
+                        type: string
+                      kind:
+                        type: string
+                        enum:
+                          - TASK_PROPOSAL
+                          - ASSET_PROPOSAL
+                          - LIABILITY_PROPOSAL
+                          - CONTRACT_PROPOSAL
+                          - DOCUMENT_REQUEST
+                          - ESCALATION_PROPOSAL
+                          - EVIDENCE_PROPOSAL
+                      status:
+                        type: string
+                        enum:
+                          - SUBMITTED
+                          - VALIDATED
+                          - AWAITING_APPROVAL
+                          - APPLIED
+                          - REJECTED
+                          - STALE
+                          - EXPIRED
+                      source:
+                        type: string
+                        enum:
+                          - USER
+                          - SYSTEM
+                          - AI
+                      agentRunId:
+                        nullable: true
+                        type: string
+                      title:
+                        type: string
+                      summary:
+                        type: string
+                      proposalVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      payload:
+                        type: object
+                        additionalProperties: {}
+                      payloadHash:
+                        type: string
+                      basis:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            type:
+                              type: string
+                              enum:
+                                - DOCUMENT
+                                - TASK
+                                - MESSAGE
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^[A-Za-z0-9_-]+$
+                            version:
+                              type: integer
+                              minimum: 1
+                              maximum: 9007199254740991
+                            label:
+                              type: string
+                              maxLength: 120
+                          required:
+                            - type
+                            - id
+                            - version
+                            - label
+                          additionalProperties: false
+                      caseVersionAtProposal:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      assetDisposal:
+                        type: boolean
+                      supersedesProposalVersion:
+                        nullable: true
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      createdAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - id
+                      - caseId
+                      - kind
+                      - status
+                      - source
+                      - agentRunId
+                      - title
+                      - summary
+                      - proposalVersion
+                      - payload
+                      - payloadHash
+                      - basis
+                      - caseVersionAtProposal
+                      - assetDisposal
+                      - supersedesProposalVersion
+                      - version
+                      - createdAt
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: CONFLICT / PRECONDITION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/proposals/{proposalId}/approval-requests:
+    post:
+      operationId: requestApproval
+      summary: 提案の承認を依頼する
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: proposalId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedVersion:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+              required:
+                - expectedVersion
+              additionalProperties: false
+      responses:
+        "201":
+          description: 作成した承認
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      caseId:
+                        type: string
+                      proposalId:
+                        type: string
+                      proposalVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      payloadHash:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - PENDING
+                          - APPROVED
+                          - REJECTED
+                          - EXPIRED
+                      applicationStatus:
+                        type: string
+                        enum:
+                          - NOT_APPLIED
+                          - APPLIED
+                          - FAILED
+                      applicationFailureReason:
+                        nullable: true
+                        type: string
+                      decidedByUserId:
+                        nullable: true
+                        type: string
+                      decidedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      decisionNote:
+                        nullable: true
+                        type: string
+                      expiresAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      assetDisposal:
+                        type: boolean
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      createdAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - id
+                      - caseId
+                      - proposalId
+                      - proposalVersion
+                      - payloadHash
+                      - status
+                      - applicationStatus
+                      - applicationFailureReason
+                      - decidedByUserId
+                      - decidedAt
+                      - decisionNote
+                      - expiresAt
+                      - assetDisposal
+                      - version
+                      - createdAt
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: CONFLICT / PRECONDITION_FAILED / IDEMPOTENCY_KEY_REUSED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/approvals:
+    get:
+      operationId: listApprovals
+      summary: 承認の一覧
+      description: 承認の受付状況と、業務状態への反映状況を別に返す。
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: limit
+          in: query
+          required: false
+          schema:
+            default: 50
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: ^[A-Za-z0-9_-]+={0,2}$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 承認の一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        caseId:
+                          type: string
+                        proposalId:
+                          type: string
+                        proposalVersion:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                        payloadHash:
+                          type: string
+                        status:
+                          type: string
+                          enum:
+                            - PENDING
+                            - APPROVED
+                            - REJECTED
+                            - EXPIRED
+                        applicationStatus:
+                          type: string
+                          enum:
+                            - NOT_APPLIED
+                            - APPLIED
+                            - FAILED
+                        applicationFailureReason:
+                          nullable: true
+                          type: string
+                        decidedByUserId:
+                          nullable: true
+                          type: string
+                        decidedAt:
+                          nullable: true
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        decisionNote:
+                          nullable: true
+                          type: string
+                        expiresAt:
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        assetDisposal:
+                          type: boolean
+                        version:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                        createdAt:
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      required:
+                        - id
+                        - caseId
+                        - proposalId
+                        - proposalVersion
+                        - payloadHash
+                        - status
+                        - applicationStatus
+                        - applicationFailureReason
+                        - decidedByUserId
+                        - decidedAt
+                        - decisionNote
+                        - expiresAt
+                        - assetDisposal
+                        - version
+                        - createdAt
+                        - updatedAt
+                      additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/approvals/{approvalId}:
+    get:
+      operationId: getApproval
+      summary: 承認の詳細
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: approvalId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 承認
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      caseId:
+                        type: string
+                      proposalId:
+                        type: string
+                      proposalVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      payloadHash:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - PENDING
+                          - APPROVED
+                          - REJECTED
+                          - EXPIRED
+                      applicationStatus:
+                        type: string
+                        enum:
+                          - NOT_APPLIED
+                          - APPLIED
+                          - FAILED
+                      applicationFailureReason:
+                        nullable: true
+                        type: string
+                      decidedByUserId:
+                        nullable: true
+                        type: string
+                      decidedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      decisionNote:
+                        nullable: true
+                        type: string
+                      expiresAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      assetDisposal:
+                        type: boolean
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      createdAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - id
+                      - caseId
+                      - proposalId
+                      - proposalVersion
+                      - payloadHash
+                      - status
+                      - applicationStatus
+                      - applicationFailureReason
+                      - decidedByUserId
+                      - decidedAt
+                      - decisionNote
+                      - expiresAt
+                      - assetDisposal
+                      - version
+                      - createdAt
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/approvals/{approvalId}/approve:
+    post:
+      operationId: approveProposal
+      summary: 承認して反映する
+      description: 見た内容の版とhashを指定する。承認後に最新の状態と根拠を再検証し、同じTransactionで反映する。承認の受付だけで反映済みとは返さない。
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: approvalId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedVersion:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+                proposalVersion:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                payloadHash:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                note:
+                  nullable: true
+                  type: string
+                  maxLength: 500
+              required:
+                - expectedVersion
+                - proposalVersion
+                - payloadHash
+              additionalProperties: false
+      responses:
+        "200":
+          description: 承認と反映の結果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      caseId:
+                        type: string
+                      proposalId:
+                        type: string
+                      proposalVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      payloadHash:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - PENDING
+                          - APPROVED
+                          - REJECTED
+                          - EXPIRED
+                      applicationStatus:
+                        type: string
+                        enum:
+                          - NOT_APPLIED
+                          - APPLIED
+                          - FAILED
+                      applicationFailureReason:
+                        nullable: true
+                        type: string
+                      decidedByUserId:
+                        nullable: true
+                        type: string
+                      decidedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      decisionNote:
+                        nullable: true
+                        type: string
+                      expiresAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      assetDisposal:
+                        type: boolean
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      createdAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - id
+                      - caseId
+                      - proposalId
+                      - proposalVersion
+                      - payloadHash
+                      - status
+                      - applicationStatus
+                      - applicationFailureReason
+                      - decidedByUserId
+                      - decidedAt
+                      - decisionNote
+                      - expiresAt
+                      - assetDisposal
+                      - version
+                      - createdAt
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: CONFLICT / PRECONDITION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "501":
+          description: "error.code: FEATURE_NOT_CONNECTED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/approvals/{approvalId}/reject:
+    post:
+      operationId: rejectProposal
+      summary: 承認を却下する
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: approvalId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedVersion:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+                note:
+                  nullable: true
+                  type: string
+                  maxLength: 500
+              required:
+                - expectedVersion
+              additionalProperties: false
+      responses:
+        "200":
+          description: 却下後の承認
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      caseId:
+                        type: string
+                      proposalId:
+                        type: string
+                      proposalVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      payloadHash:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - PENDING
+                          - APPROVED
+                          - REJECTED
+                          - EXPIRED
+                      applicationStatus:
+                        type: string
+                        enum:
+                          - NOT_APPLIED
+                          - APPLIED
+                          - FAILED
+                      applicationFailureReason:
+                        nullable: true
+                        type: string
+                      decidedByUserId:
+                        nullable: true
+                        type: string
+                      decidedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      decisionNote:
+                        nullable: true
+                        type: string
+                      expiresAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      assetDisposal:
+                        type: boolean
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      createdAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - id
+                      - caseId
+                      - proposalId
+                      - proposalVersion
+                      - payloadHash
+                      - status
+                      - applicationStatus
+                      - applicationFailureReason
+                      - decidedByUserId
+                      - decidedAt
+                      - decisionNote
+                      - expiresAt
+                      - assetDisposal
+                      - version
+                      - createdAt
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: CONFLICT / PRECONDITION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/inheritance-decisions:
+    get:
+      operationId: listInheritanceDecisions
+      summary: 相続方法の確定状況
+      description: 下書き・本人以外による報告・本人による確定を区別して返す。
+      tags:
+        - decisions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 確定状況
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        personId:
+                          type: string
+                        method:
+                          nullable: true
+                          type: string
+                          enum:
+                            - SIMPLE_ACCEPTANCE
+                            - LIMITED_ACCEPTANCE
+                            - RENUNCIATION
+                        state:
+                          type: string
+                          enum:
+                            - DRAFT
+                            - REPORTED
+                            - CONFIRMED
+                        confirmed:
+                          type: boolean
+                        reportedByUserId:
+                          nullable: true
+                          type: string
+                        confirmedByUserId:
+                          nullable: true
+                          type: string
+                        confirmedAt:
+                          nullable: true
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        note:
+                          nullable: true
+                          type: string
+                        version:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      required:
+                        - personId
+                        - method
+                        - state
+                        - confirmed
+                        - reportedByUserId
+                        - confirmedByUserId
+                        - confirmedAt
+                        - note
+                        - version
+                        - updatedAt
+                      additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/inheritance-decisions/{personId}:
+    post:
+      operationId: recordInheritanceDecision
+      summary: 相続方法の下書きまたは報告を記録する
+      description: 本人の確定ではない。確定は本人だけが行える。
+      tags:
+        - decisions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: personId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method:
+                  nullable: true
+                  type: string
+                  enum:
+                    - SIMPLE_ACCEPTANCE
+                    - LIMITED_ACCEPTANCE
+                    - RENUNCIATION
+                state:
+                  type: string
+                  enum:
+                    - DRAFT
+                    - REPORTED
+                note:
+                  nullable: true
+                  type: string
+                  maxLength: 500
+              required:
+                - method
+                - state
+              additionalProperties: false
+      responses:
+        "200":
+          description: 記録後の状況
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      personId:
+                        type: string
+                      method:
+                        nullable: true
+                        type: string
+                        enum:
+                          - SIMPLE_ACCEPTANCE
+                          - LIMITED_ACCEPTANCE
+                          - RENUNCIATION
+                      state:
+                        type: string
+                        enum:
+                          - DRAFT
+                          - REPORTED
+                          - CONFIRMED
+                      confirmed:
+                        type: boolean
+                      reportedByUserId:
+                        nullable: true
+                        type: string
+                      confirmedByUserId:
+                        nullable: true
+                        type: string
+                      confirmedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      note:
+                        nullable: true
+                        type: string
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - personId
+                      - method
+                      - state
+                      - confirmed
+                      - reportedByUserId
+                      - confirmedByUserId
+                      - confirmedAt
+                      - note
+                      - version
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: CONFLICT / PRECONDITION_FAILED / IDEMPOTENCY_KEY_REUSED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/inheritance-decisions/{personId}/confirm:
+    post:
+      operationId: confirmInheritanceDecision
+      summary: 相続方法を本人として確定する
+      description: 本人と紐付くmembershipだけが行える。案件の所有者でも、他の家族の意思を本人として確定できない。
+      tags:
+        - decisions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: personId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedVersion:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+                method:
+                  type: string
+                  enum:
+                    - SIMPLE_ACCEPTANCE
+                    - LIMITED_ACCEPTANCE
+                    - RENUNCIATION
+                note:
+                  nullable: true
+                  type: string
+                  maxLength: 500
+              required:
+                - expectedVersion
+                - method
+              additionalProperties: false
+      responses:
+        "200":
+          description: 確定後の状況
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      personId:
+                        type: string
+                      method:
+                        nullable: true
+                        type: string
+                        enum:
+                          - SIMPLE_ACCEPTANCE
+                          - LIMITED_ACCEPTANCE
+                          - RENUNCIATION
+                      state:
+                        type: string
+                        enum:
+                          - DRAFT
+                          - REPORTED
+                          - CONFIRMED
+                      confirmed:
+                        type: boolean
+                      reportedByUserId:
+                        nullable: true
+                        type: string
+                      confirmedByUserId:
+                        nullable: true
+                        type: string
+                      confirmedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      note:
+                        nullable: true
+                        type: string
+                      version:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - personId
+                      - method
+                      - state
+                      - confirmed
+                      - reportedByUserId
+                      - confirmedByUserId
+                      - confirmedAt
+                      - note
+                      - version
+                      - updatedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: CONFLICT"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"

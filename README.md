@@ -93,10 +93,14 @@ apps/
     src/domain/document/       書類Entity・実体による形式判定・検査状態
     src/domain/task/           Task・状態遷移表・期限のRule Engine
     src/domain/agent/          AgentRunの状態とCase lease
+    src/domain/proposal/       提案・承認の版とhash
+    src/domain/decision/       相続方法についての本人の意思
     src/application/consent/   同意の記録・撤回・利用可否Policy
     src/application/document/  書類の登録・取得・除外・回収
     src/application/task/      手続きのCommandと期限の算定
     src/application/agent/     AI実行の受付・Outbox配送・書き込み権
+    src/application/proposal/  提案から確定までの共通経路
+    src/application/decision/  本人の意思の記録と確定
     src/infrastructure/storage/ 原本の保存（開発・CI用のローカル実装）
     src/application/case/      Case のCommand・Query
     src/presentation/routes/public/v1/ health・cases
@@ -131,8 +135,11 @@ Makefile                    起動・停止・検証
 
 Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
 
-現在の公開APIは生存確認、同意、案件（作成・一覧・詳細・訂正）、書類（登録・一覧・詳細・原本取得・除外）、手続きと期限、AI実行の受付と参照です。案件の一覧は自分が参加しているものだけを返します。
+現在の公開APIは生存確認、同意、案件（作成・一覧・詳細・訂正）、書類（登録・一覧・詳細・原本取得・除外）、手続きと期限、AI実行の受付と参照、提案・承認・本人の意思です。案件の一覧は自分が参加しているものだけを返します。
 業務データベースが未設定の状態では、業務APIは `FEATURE_NOT_CONNECTED` を理由付きで返します。空配列や固定の成功では返しません。
+
+承認は、その人が見た提案の版と内容のhashに結び付きます。内容を訂正すると新しい版になり、対象を失った承認は期限切れになります。承認の受付と業務状態への反映は別に返します。受け付けただけで反映済みとは表示させません。
+相続方法は、下書き・本人以外による報告・本人による確定を区別します。確定できるのは本人と紐付いた利用者だけです。放棄前ロックは確定だけを根拠に外します。
 
 AI実行は202で受け付けます。受け付けただけで完了ではなく、結果は別途取得します。待機・失敗・取消を区別して返し、待機を失敗として表示させません。
 接続されていない業務操作と、外部AI同意が無い要求は理由を添えて拒否します。配送はOutboxから行い、配送の直前にも同意を確認します。AI Serverが未設定の間、イベントは未配送のまま残ります。

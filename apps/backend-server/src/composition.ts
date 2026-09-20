@@ -7,6 +7,12 @@ import { DocumentService } from './application/document/document-service.js'
 import { AgentRunService } from './application/agent/agent-run-service.js'
 import { OutboxDispatcher } from './application/agent/outbox-dispatcher.js'
 import type { AgentOperation } from './domain/agent/agent-run.js'
+import {
+  InheritanceDecisionService,
+  StoredInheritanceDecisionReader,
+} from './application/decision/decision-service.js'
+import { ProposalService } from './application/proposal/proposal-service.js'
+import { taskProposalApplier } from './application/proposal/task-applier.js'
 import { TaskService } from './application/task/task-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
 import { HttpAgentJobClient, readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
@@ -70,7 +76,14 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       // AI は未接続。解析は受け付けない。
       false,
     ),
-    taskService: new TaskService(readRuleCatalog(env), access, database.read, database.uow),
+    // 放棄前ロックは保存済みの確定状況で判定する。未記録は未確定のまま。
+    taskService: new TaskService(
+      readRuleCatalog(env),
+      access,
+      database.read,
+      database.uow,
+      new StoredInheritanceDecisionReader(database.read),
+    ),
     // 接続済みの業務操作は設定で管理する。AI Server が未設定なら空集合で、
     // どの操作も FEATURE_NOT_CONNECTED になる。UI にボタンがあるだけで
     // すべての操作を有効にしない。
@@ -81,6 +94,9 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       consentService,
       connectedOperations(env),
     ),
+    // 種類ごとの反映は担当 Issue が登録する。未登録の種類は反映できない。
+    proposalService: new ProposalService(access, database.read, database.uow, [taskProposalApplier]),
+    decisionService: new InheritanceDecisionService(access, database.read, database.uow),
   })
 
   // 認証済み利用者にだけ同意を要求する。未認証は先に 401 で止まる。

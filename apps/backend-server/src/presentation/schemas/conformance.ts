@@ -5,6 +5,9 @@ import type {
   CaseResource,
   ConsentStatusResource,
   AgentRunResource,
+  ApprovalResource,
+  InheritanceDecisionResource,
+  ProposalResource,
   DeadlineResource,
   DocumentResource,
   ResponseMeta,
@@ -16,6 +19,11 @@ import { caseResourceSchema } from './case.js'
 import { consentStatusResourceSchema } from './consent.js'
 import { documentResourceSchema } from './document.js'
 import { agentRunResourceSchema } from './agent.js'
+import {
+  approvalResourceSchema,
+  inheritanceDecisionResourceSchema,
+  proposalResourceSchema,
+} from './proposal.js'
 import { deadlineResourceSchema, taskResourceSchema } from './task.js'
 
 /**
@@ -45,4 +53,13 @@ export type DeadlineResourceMatches = Assert<
 >
 export type AgentRunResourceMatches = Assert<
   Equals<z.infer<typeof agentRunResourceSchema>, AgentRunResource>
+>
+export type ProposalResourceMatches = Assert<
+  Equals<z.infer<typeof proposalResourceSchema>, ProposalResource>
+>
+export type ApprovalResourceMatches = Assert<
+  Equals<z.infer<typeof approvalResourceSchema>, ApprovalResource>
+>
+export type InheritanceDecisionMatches = Assert<
+  Equals<z.infer<typeof inheritanceDecisionResourceSchema>, InheritanceDecisionResource>
 >
