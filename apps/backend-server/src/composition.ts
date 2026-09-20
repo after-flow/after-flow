@@ -27,6 +27,7 @@ import { LocalObjectStorage } from './infrastructure/storage/local-object-storag
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
 import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
+import { ContextVersionUnitOfWork } from './application/case/context-version-unit-of-work.js'
 import { createTokenVerifier, readAuthConfig } from './infrastructure/identity/config.js'
 import { authentication } from './presentation/http/authentication.js'
 import type { AppEnv } from './presentation/http/context.js'
@@ -177,6 +178,6 @@ function createDatabase(env: NodeJS.ProcessEnv) {
   const firestore = createFirestore(readFirestoreConfig(env))
   return {
     read: new FirestoreReadRepository(firestore),
-    uow: new FirestoreUnitOfWork(firestore),
+    uow: new ContextVersionUnitOfWork(new FirestoreUnitOfWork(firestore)),
   }
 }

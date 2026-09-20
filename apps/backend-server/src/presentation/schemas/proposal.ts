@@ -79,6 +79,10 @@ export const inheritanceDecisionResourceSchema = z.object({
 })
 
 export const proposalIdParamsSchema = z.object({ caseId: idSchema, proposalId: idSchema })
+export const proposalVersionParamsSchema = proposalIdParamsSchema.extend({ proposalVersion: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER) })
+export const proposalVersionResourceSchema = proposalResourceSchema.omit({
+  id: true, status: true, version: true, createdAt: true, updatedAt: true,
+}).extend({ proposalId: idSchema, recordedAt: isoDateTimeSchema })
 export const approvalIdParamsSchema = z.object({ caseId: idSchema, approvalId: idSchema })
 export const personIdParamsSchema = z.object({ caseId: idSchema, personId: idSchema })
 

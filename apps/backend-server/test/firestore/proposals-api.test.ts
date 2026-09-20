@@ -83,6 +83,50 @@ async function requestApproval(
   return response.body.data
 }
 
+describeFirestore('Proposalの不変履歴と案件版', () => {
+  it('訂正前後のpayloadとhashを保持し、承認依頼で自己をstaleにしない', async () => {
+    const { app, caseId } = await setup()
+    const proposal = await submitTaskProposal(app, caseId)
+    const original = await call(app, `/cases/${caseId}/proposals/${proposal.id}/versions/1`)
+    assert.equal(original.status, 200)
+    assert.deepEqual(original.body.data.payload, taskPayload)
+    assert.equal(original.body.data.payloadHash, proposal.payloadHash)
+    const approval = await requestApproval(app, caseId, proposal)
+    const waiting = (await call(app, `/cases/${caseId}/proposals/${proposal.id}`)).body.data
+    const revised = await call(app, `/cases/${caseId}/proposals/${proposal.id}`, jsonRequest('PATCH', {
+      expectedVersion: waiting.version, payload: { ...taskPayload, title: '訂正版' },
+    }))
+    assert.equal(revised.status, 200, JSON.stringify(revised.body))
+    const old = (await call(app, `/cases/${caseId}/proposals/${proposal.id}/versions/1`)).body.data
+    assert.deepEqual(old, original.body.data)
+    const next = await call(app, `/cases/${caseId}/proposals/${proposal.id}/versions/2`)
+    assert.equal(next.body.data.payload.title, '訂正版')
+    assert.equal(next.body.data.supersedesProposalVersion, 1)
+    assert.equal((await call(app, `/cases/${caseId}/approvals/${approval.id}`)).body.data.status, 'EXPIRED')
+    assert.equal((await call(app, `/cases/${caseId}`)).body.data.caseVersion, 1)
+    const nextApproval = await requestApproval(app, caseId, revised.body.data)
+    const applied = await call(app, `/cases/${caseId}/approvals/${nextApproval.id}/approve`, jsonRequest('POST', {
+      expectedVersion: nextApproval.version, proposalVersion: 2, payloadHash: nextApproval.payloadHash,
+    }))
+    assert.equal(applied.status, 200, JSON.stringify(applied.body))
+    assert.equal((await call(app, `/cases/${caseId}`)).body.data.caseVersion, 2, '正式Taskの作成でのみ進む')
+    assert.deepEqual((await call(app, `/cases/${caseId}/proposals/${proposal.id}/versions/2`)).body.data, next.body.data)
+  })
+  it('案件配下の業務情報が変わった提案は反映されない', async () => {
+    const { app, caseId } = await setup()
+    const proposal = await submitTaskProposal(app, caseId)
+    const approval = await requestApproval(app, caseId, proposal)
+    const changed = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { ...taskPayload, title: '別の業務変更' }))
+    assert.equal(changed.status, 201, JSON.stringify(changed.body))
+    const result = await call(app, `/cases/${caseId}/approvals/${approval.id}/approve`, jsonRequest('POST', {
+      expectedVersion: approval.version, proposalVersion: approval.proposalVersion, payloadHash: approval.payloadHash,
+    }))
+    assert.equal(result.status, 409)
+    assert.equal(result.body.error.details.reason, 'STALE_PROPOSAL')
+    assert.equal((await call(app, `/cases/${caseId}/tasks`)).body.data.length, 1)
+  })
+})
+
 describeFirestore('Entity別Proposal適用', () => {
   const cases = [
     { kind: 'ASSET_PROPOSAL', collection: 'assets', fields: {
@@ -184,8 +228,10 @@ describeFirestore('Entity別Proposal適用', () => {
     for (const fixture of cases.slice(0, 2)) {
       const proposal = await submit(app, caseId, fixture.kind, { operation: 'CREATE', fields: fixture.fields })
       // 内部API接続の成功を模す試験ではない。Applierへの保存済み入力fixture。
-      await firestore().doc(`tenants/${tenantId}/cases/${caseId}/proposals/${proposal.id}`)
-        .update({ source: 'AI', agentRunId: 'fixture-run' })
+      const proposalRef = firestore().doc(`tenants/${tenantId}/cases/${caseId}/proposals/${proposal.id}`)
+      const storedProposal = (await proposalRef.get()).data()!
+      proposal.id = `fixture-${proposal.id}`
+      await proposalRef.parent.doc(proposal.id).create({ ...storedProposal, id: proposal.id, source: 'AI', agentRunId: 'fixture-run' })
       assert.equal((await approve(app, caseId, await requestApproval(app, caseId, proposal))).status, 200)
       const stored = (await firestore().collection(`tenants/${tenantId}/cases/${caseId}/${fixture.collection}`).get()).docs[0]!
       assert.equal(stored.get('provenance.source'), 'AI')

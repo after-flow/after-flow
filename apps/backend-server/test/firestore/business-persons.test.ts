@@ -116,7 +116,8 @@ describeFirestore('persons API', () => {
     assert.equal(edit.status, 400)
 
     const audit = await h.auditActions()
-    assert.deepEqual(audit, ['person.created', 'person.excluded'])
+    assert.deepEqual(audit.filter(type => type !== 'case.context_changed'), ['person.created', 'person.excluded'])
+    assert.equal(audit.filter(type => type === 'case.context_changed').length, 2)
   })
 
   it('refuses exclusion while inheritance decisions reference the person', async () => {

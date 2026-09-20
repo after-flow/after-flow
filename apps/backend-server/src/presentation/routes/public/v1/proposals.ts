@@ -18,6 +18,8 @@ import {
   personIdParamsSchema,
   proposalIdParamsSchema,
   proposalResourceSchema,
+  proposalVersionParamsSchema,
+  proposalVersionResourceSchema,
   recordDecisionBodySchema,
   rejectBodySchema,
   requestApprovalBodySchema,
@@ -41,6 +43,15 @@ const COMMON_FAILURES = [
 ] as const
 
 export const proposalSpecs = {
+  getProposalVersion: {
+    operationId: 'getProposalVersion', method: 'get',
+    path: '/cases/:caseId/proposals/:proposalId/versions/:proposalVersion',
+    summary: '承認対象になった提案の不変の内容を取得する',
+    description: '状態遷移とは独立した内容の履歴。履歴保存の導入前に失われた旧版は404を返す。',
+    tags: ['proposals'], auth: 'user', request: { params: proposalVersionParamsSchema },
+    success: { status: 200, description: '提案の指定版', schema: successEnvelope(proposalVersionResourceSchema) },
+    failures: [...COMMON_FAILURES],
+  },
   submitProposal: {
     operationId: 'submitProposal',
     method: 'post',
@@ -218,6 +229,9 @@ export function createProposalRoutes(
   decisions: InheritanceDecisionService,
 ): RegisteredRoute[] {
   return [
+    defineRoute(proposalSpecs.getProposalVersion, async (c, input) =>
+      ok(c, await proposals.getVersion(requireUser(c), input.params.caseId, input.params.proposalId, input.params.proposalVersion)),
+    ),
     defineRoute(proposalSpecs.submitProposal, async (c, input) =>
       ok(
         c,

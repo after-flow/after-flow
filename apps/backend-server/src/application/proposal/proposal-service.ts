@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { ProposalVersionResource } from '@aftercare/public-contracts'
 import type { CaseEntity } from '../../domain/case/case.js'
 import type {
   ApplicationStatus,
@@ -14,6 +15,7 @@ import type {
   ProposalStatus,
 } from '../../domain/proposal/proposal.js'
 import { canApply, canRequestApproval, isProposalFinal } from '../../domain/proposal/proposal.js'
+import type { ProposalVersionEntity } from '../../domain/proposal/proposal-version.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { EntityBase } from '../../domain/shared/entity.js'
 import { errors } from '../../shared/app-error.js'
@@ -109,6 +111,37 @@ export function hashPayload(payload: Record<string, unknown>): string {
   return fingerprintOf(payload)
 }
 
+function versionLocation(caseId: string, proposalId: string, version: number): DocLocation {
+  return { collection: collections.proposalVersions, caseId,
+    id: fingerprintOf({ proposalId, version }) }
+}
+
+function proposalContent(proposal: ProposalEntity): ProposalVersionEntity['content'] {
+  return {
+    kind: proposal.kind, source: proposal.source, agentRunId: proposal.agentRunId,
+    title: proposal.title, summary: proposal.summary, proposalVersion: proposal.proposalVersion,
+    payload: proposal.payload, payloadHash: proposal.payloadHash, basis: proposal.basis,
+    caseVersionAtProposal: proposal.caseVersionAtProposal, assetDisposal: proposal.assetDisposal,
+    supersedesProposalVersion: proposal.supersedesProposalVersion,
+  }
+}
+
+/** 既存提案は次の変更の前に現存版を保存する。過去に失われた版は捏造しない。 */
+async function preserveVersion(tx: Tx, caseId: string, proposalId: string, content: ProposalVersionEntity['content']) {
+  if (content.payloadHash !== hashPayload(content.payload)) {
+    throw errors.internal({ internal: { reason: 'proposal payload does not match its hash' } })
+  }
+  const location = versionLocation(caseId, proposalId, content.proposalVersion)
+  const existing = await tx.get<ProposalVersionEntity>(location)
+  if (existing) {
+    if (fingerprintOf(existing.content) !== fingerprintOf(content)) {
+      throw errors.internal({ internal: { reason: 'immutable proposal version mismatch' } })
+    }
+    return
+  }
+  tx.create<ProposalVersionEntity>(location, { id: location.id, proposalId, content })
+}
+
 function toProposalView(entity: ProposalEntity): ProposalView {
   return {
     id: entity.id,
@@ -172,7 +205,7 @@ export class ProposalService {
     this.appliers = new Map(appliers.map((applier) => [applier.kind, applier]))
   }
 
-  /** 提案の提出。AI 由来でもこの経路を通る。 */
+  /** 公開APIからの利用者提案。AI は認可済み内部APIを使う。 */
   async submit(
     user: AuthenticatedUser,
     caseId: string,
@@ -195,11 +228,8 @@ export class ProposalService {
       })
       await this.assertBasisBelongsToCase(tx, caseId, input.basis ?? [])
 
-      tx.create<ProposalEntity>(proposalLocation(caseId, proposalId), {
-        id: proposalId,
+      const content: ProposalVersionEntity['content'] = {
         kind: input.kind,
-        // 検証を通ってから承認を作る。提出だけで承認待ちにしない。
-        status: 'VALIDATED',
         source: input.source ?? 'USER',
         agentRunId: input.agentRunId ?? null,
         title: input.title,
@@ -211,6 +241,10 @@ export class ProposalService {
         caseVersionAtProposal: caseEntity.caseVersion,
         assetDisposal: input.assetDisposal ?? false,
         supersedesProposalVersion: null,
+      }
+      await preserveVersion(tx, caseId, proposalId, content)
+      tx.create<ProposalEntity>(proposalLocation(caseId, proposalId), {
+        id: proposalId, status: 'VALIDATED', ...content,
       })
       tx.audit({
         caseId,
@@ -248,6 +282,8 @@ export class ProposalService {
           details: { status: proposal.status },
         })
       }
+
+      await preserveVersion(tx, caseId, proposalId, proposalContent(proposal))
 
       tx.create<ApprovalEntity>(approvalLocation(caseId, approvalId), {
         id: approvalId,
@@ -306,6 +342,11 @@ export class ProposalService {
 
       const nextVersion = proposal.proposalVersion + 1
       this.appliers.get(proposal.kind)?.validate?.(payload)
+      await preserveVersion(tx, caseId, proposalId, proposalContent(proposal))
+      await preserveVersion(tx, caseId, proposalId, {
+        ...proposalContent(proposal), proposalVersion: nextVersion, payload,
+        payloadHash: hashPayload(payload), supersedesProposalVersion: proposal.proposalVersion,
+      })
       tx.update<ProposalEntity>(proposalLocation(caseId, proposalId), expectedVersion, {
         proposalVersion: nextVersion,
         payload,
@@ -334,29 +375,34 @@ export class ProposalService {
     meta: CommandMeta,
   ): Promise<void> {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
-    const page = await this.read.list<ApprovalEntity>(user.tenantId, collections.approvals, caseId, {
-      limit: 50,
-      where: [{ field: 'proposalId', op: '==', value: proposalId }],
-      orderBy: { field: 'createdAt', direction: 'desc' },
-    })
-
-    for (const approval of page.items) {
-      if (approval.status !== 'PENDING') continue
-      await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
-        const current = await tx.require<ApprovalEntity>(approvalLocation(caseId, approval.id))
-        const proposal = await tx.require<ProposalEntity>(proposalLocation(caseId, proposalId))
-        if (matchesProposal(current, proposal.proposalVersion, proposal.payloadHash)) return
-        tx.update<ApprovalEntity>(approvalLocation(caseId, approval.id), current.version, {
-          status: 'EXPIRED',
-        })
-        tx.audit({
-          caseId,
-          type: 'approval.expired',
-          target: { collection: collections.approvals.name, id: approval.id, version: current.version + 1 },
-          detail: { reason: 'proposal revised' },
-        })
+    let cursor: string | undefined
+    do {
+      const page = await this.read.list<ApprovalEntity>(user.tenantId, collections.approvals, caseId, {
+        limit: 100, cursor,
+        where: [{ field: 'proposalId', op: '==', value: proposalId }],
+        orderBy: { field: 'createdAt', direction: 'desc' },
       })
-    }
+
+      for (const approval of page.items) {
+        if (approval.status !== 'PENDING') continue
+        await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
+          const current = await tx.require<ApprovalEntity>(approvalLocation(caseId, approval.id))
+          if (current.status !== 'PENDING') return
+          const proposal = await tx.require<ProposalEntity>(proposalLocation(caseId, proposalId))
+          if (matchesProposal(current, proposal.proposalVersion, proposal.payloadHash)) return
+          tx.update<ApprovalEntity>(approvalLocation(caseId, approval.id), current.version, {
+            status: 'EXPIRED',
+          })
+          tx.audit({
+            caseId,
+            type: 'approval.expired',
+            target: { collection: collections.approvals.name, id: approval.id, version: current.version + 1 },
+            detail: { reason: 'proposal revised' },
+          })
+        })
+      }
+      cursor = page.nextCursor
+    } while (cursor)
   }
 
   /**
@@ -487,6 +533,7 @@ export class ProposalService {
         })
       }
       await this.assertBasisBelongsToCase(tx, caseId, proposal.basis)
+      await preserveVersion(tx, caseId, proposal.id, proposalContent(proposal))
 
       const applier = this.appliers.get(proposal.kind)
       if (!applier) {
@@ -546,6 +593,12 @@ export class ProposalService {
       }
       const proposal = await tx.require<ProposalEntity>(proposalLocation(caseId, approval.proposalId))
 
+      // 古い承認への却下で、訂正後の新しい版を却下しない。
+      if (!matchesProposal(approval, proposal.proposalVersion, proposal.payloadHash)) {
+        throw errors.conflict({ details: { reason: 'PROPOSAL_REVISED' } })
+      }
+      if (isProposalFinal(proposal.status)) throw errors.preconditionFailed()
+
       tx.update<ApprovalEntity>(approvalLocation(caseId, approvalId), input.expectedVersion, {
         status: 'REJECTED',
         decidedByUserId: user.userId,
@@ -596,6 +649,13 @@ export class ProposalService {
   async getProposal(user: AuthenticatedUser, caseId: string, proposalId: string): Promise<ProposalView> {
     await this.access.authorizeCase(user, caseId, 'case.read')
     return toProposalView(await this.requireProposal(user.tenantId, caseId, proposalId))
+  }
+
+  async getVersion(user: AuthenticatedUser, caseId: string, proposalId: string, version: number): Promise<ProposalVersionResource> {
+    await this.access.authorizeCase(user, caseId, 'case.read')
+    const snapshot = await this.read.get<ProposalVersionEntity>(user.tenantId, versionLocation(caseId, proposalId, version))
+    if (!snapshot) throw errors.notFound()
+    return { proposalId, caseId, ...snapshot.content, recordedAt: snapshot.createdAt }
   }
 
   /**
