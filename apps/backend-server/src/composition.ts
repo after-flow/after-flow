@@ -2,6 +2,8 @@ import type { Hono } from 'hono'
 import { createApp } from './app.js'
 import { AccessService } from './application/authorization/case-access.js'
 import { CaseService } from './application/case/case-service.js'
+import { ConsentService } from './application/consent/consent-service.js'
+import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
 import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
@@ -31,9 +33,22 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   }
 
   const access = new AccessService(database.read)
+  const consentService = new ConsentService(
+    readConsentCatalog(env),
+    access,
+    database.read,
+    database.uow,
+  )
   const routes = createPublicV1Routes({
     caseService: new CaseService(access, database.read, database.uow),
+    consentService,
   })
+
+  // 認証済み利用者にだけ同意を要求する。未認証は先に 401 で止まる。
+  const consentGate = async (c: import('./presentation/http/context.js').AppContext) => {
+    const user = c.get('user')
+    if (user) await consentService.assertBasicConsent(user)
+  }
 
   if (!env.AUTH_ISSUER) {
     // 設定が無いこと自体をはっきり残す。無効のまま本番へ出さないため。
@@ -41,11 +56,12 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       effect: 'routes that require a user reject every request with 401',
       required: ['AUTH_ISSUER', 'AUTH_AUDIENCE', 'AUTH_JWKS_URI'],
     })
-    return createApp({ routes })
+    return createApp({ routes, consentGate })
   }
 
   return createApp({
     routes,
+    consentGate,
     authentication: authentication(createTokenVerifier(readAuthConfig(env)), access),
   })
 }

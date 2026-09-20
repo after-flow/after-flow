@@ -2,42 +2,29 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { createMiddleware } from 'hono/factory'
 import { createApp } from '../../src/app.js'
-import { AccessService } from '../../src/application/authorization/case-access.js'
-import type { TenantMember } from '../../src/application/authorization/case-access.js'
-import { CaseService } from '../../src/application/case/case-service.js'
 import { collections, INFRASTRUCTURE_COLLECTIONS } from '../../src/domain/shared/collections.js'
 import type { AppEnv } from '../../src/presentation/http/context.js'
 import { createPublicV1Routes } from '../../src/presentation/routes/public/v1/index.js'
 import {
+  agreeRequiredConsents,
+  buildApp,
+  call,
+  seedTenantMember,
+} from './helpers/app.js'
+import type { Json } from './helpers/app.js'
+import {
   describeFirestore,
   firestore,
   newTenantId,
-  readRepository,
   unitOfWork,
   workContext,
 } from './helpers/emulator.js'
 
-function appFor(tenantId: string, userId: string) {
-  const access = new AccessService(readRepository())
-  const routes = createPublicV1Routes({
-    caseService: new CaseService(access, readRepository(), unitOfWork()),
-  })
-  // トークン検証そのものは authentication.test.ts が実 Adapter で行う。
-  // ここでは認可より後ろの経路を見る。
-  const stub = createMiddleware<AppEnv>(async (c, next) => {
-    c.set('user', { userId, tenantId })
-    await next()
-  })
-  return createApp({ routes, authentication: stub })
-}
-
-async function seedTenantMember(tenantId: string, userId: string): Promise<void> {
-  await unitOfWork().run(workContext(tenantId), async (tx) => {
-    tx.create<TenantMember>(
-      { collection: collections.members, caseId: null, id: userId },
-      { id: userId, userId, active: true },
-    )
-  })
+/** 必須同意まで済ませた利用者のアプリ。業務 API の前提を揃える。 */
+async function appFor(tenantId: string, userId: string) {
+  const app = buildApp(tenantId, userId)
+  await agreeRequiredConsents(app)
+  return app
 }
 
 const validBody = {
@@ -49,18 +36,6 @@ const validBody = {
   ownerName: '架空 花子',
   relationshipToDeceased: '配偶者',
   municipality: '架空市',
-}
-
-type Json = Record<string, any>
-
-async function call(
-  app: ReturnType<typeof createApp>,
-  path: string,
-  init: RequestInit = {},
-): Promise<{ status: number; body: Json }> {
-  const response = await app.request(`http://localhost/api/v1${path}`, init)
-  const text = await response.text()
-  return { status: response.status, body: text ? (JSON.parse(text) as Json) : {} }
 }
 
 function post(body: unknown, idempotencyKey: string): RequestInit {
@@ -83,7 +58,7 @@ async function setup() {
   const tenantId = newTenantId()
   const userId = 'user-owner'
   await seedTenantMember(tenantId, userId)
-  return { tenantId, userId, app: appFor(tenantId, userId) }
+  return { tenantId, userId, app: await appFor(tenantId, userId) }
 }
 
 describeFirestore('案件の作成', () => {
@@ -197,7 +172,7 @@ describeFirestore('案件の取得と一覧', () => {
     const created = await call(owner.app, '/cases', post(validBody, 'idem-get-0002'))
 
     await seedTenantMember(owner.tenantId, 'user-outsider')
-    const outsider = appFor(owner.tenantId, 'user-outsider')
+    const outsider = await appFor(owner.tenantId, 'user-outsider')
     const fetched = await call(outsider, `/cases/${created.body.data.id}`)
 
     // FORBIDDEN だと ID の総当たりで実在を確認できる。
@@ -211,7 +186,7 @@ describeFirestore('案件の取得と一覧', () => {
     await call(owner.app, '/cases', post(validBody, 'idem-list-0002'))
 
     await seedTenantMember(owner.tenantId, 'user-outsider')
-    const outsider = appFor(owner.tenantId, 'user-outsider')
+    const outsider = await appFor(owner.tenantId, 'user-outsider')
 
     const mine = await call(owner.app, '/cases')
     assert.equal(mine.status, 200)
@@ -340,7 +315,7 @@ describeFirestore('案件の訂正', () => {
       }, { id: 'user-viewer', userId: 'user-viewer', role: 'VIEWER', active: true, personId: null } as never)
     })
 
-    const viewer = appFor(owner.tenantId, 'user-viewer')
+    const viewer = await appFor(owner.tenantId, 'user-viewer')
     assert.equal((await call(viewer, `/cases/${caseId}`)).status, 200)
 
     const rejected = await call(viewer, `/cases/${caseId}`, patch({ expectedVersion: 1, ownerName: 'x' }))
@@ -362,7 +337,7 @@ describeFirestore('案件の訂正', () => {
       }, { id: 'user-viewer2', userId: 'user-viewer2', role: 'VIEWER', active: true, personId: null } as never)
     })
 
-    const viewer = appFor(owner.tenantId, 'user-viewer2')
+    const viewer = await appFor(owner.tenantId, 'user-viewer2')
     const fetched = await call(viewer, `/cases/${caseId}`)
     assert.deepEqual(fetched.body.data.allowedActions, [])
   })

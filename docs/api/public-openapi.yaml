@@ -125,6 +125,521 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
+  /consents:
+    get:
+      operationId: getConsents
+      summary: 同意状態と利用できる範囲を取得する
+      description: 必須同意の不足と、任意の外部AI同意の不足を区別して返す。フロントは同意の有無から機能可否を推測しない。
+      tags:
+        - consents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 同意状態
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      documents:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                            version:
+                              type: string
+                            title:
+                              type: string
+                            summary:
+                              type: array
+                              items:
+                                type: string
+                            url:
+                              type: string
+                            required:
+                              type: boolean
+                            agreedVersion:
+                              nullable: true
+                              type: string
+                            agreedAt:
+                              nullable: true
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            satisfied:
+                              type: boolean
+                          required:
+                            - kind
+                            - version
+                            - title
+                            - summary
+                            - url
+                            - required
+                            - agreedVersion
+                            - agreedAt
+                            - satisfied
+                          additionalProperties: false
+                      outstanding:
+                        type: boolean
+                      availability:
+                        type: object
+                        properties:
+                          manualManagement:
+                            type: boolean
+                          externalAi:
+                            type: boolean
+                          missingRequired:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                          missingOptional:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                        required:
+                          - manualManagement
+                          - externalAi
+                          - missingRequired
+                          - missingOptional
+                        additionalProperties: false
+                    required:
+                      - documents
+                      - outstanding
+                      - availability
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+    post:
+      operationId: agreeConsents
+      summary: 同意を記録する
+      description: 表示した版を指定する。版が更新されていれば 409 になる。
+      tags:
+        - consents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agreements:
+                  minItems: 1
+                  maxItems: 10
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      kind:
+                        type: string
+                        enum:
+                          - TERMS
+                          - PRIVACY
+                          - CROSS_BORDER_AI
+                      version:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                    required:
+                      - kind
+                      - version
+                    additionalProperties: false
+              required:
+                - agreements
+              additionalProperties: false
+      responses:
+        "200":
+          description: 記録後の同意状態
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      documents:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                            version:
+                              type: string
+                            title:
+                              type: string
+                            summary:
+                              type: array
+                              items:
+                                type: string
+                            url:
+                              type: string
+                            required:
+                              type: boolean
+                            agreedVersion:
+                              nullable: true
+                              type: string
+                            agreedAt:
+                              nullable: true
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            satisfied:
+                              type: boolean
+                          required:
+                            - kind
+                            - version
+                            - title
+                            - summary
+                            - url
+                            - required
+                            - agreedVersion
+                            - agreedAt
+                            - satisfied
+                          additionalProperties: false
+                      outstanding:
+                        type: boolean
+                      availability:
+                        type: object
+                        properties:
+                          manualManagement:
+                            type: boolean
+                          externalAi:
+                            type: boolean
+                          missingRequired:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                          missingOptional:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                        required:
+                          - manualManagement
+                          - externalAi
+                          - missingRequired
+                          - missingOptional
+                        additionalProperties: false
+                    required:
+                      - documents
+                      - outstanding
+                      - availability
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: CONFLICT"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+  /consents/revocations:
+    post:
+      operationId: revokeConsent
+      summary: 同意を撤回する
+      description: 以後の提供を止める操作。すでに送信済みのデータを回収できたことは意味しない。必須同意を撤回すると業務APIは利用できなくなる。
+      tags:
+        - consents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - TERMS
+                    - PRIVACY
+                    - CROSS_BORDER_AI
+              required:
+                - kind
+              additionalProperties: false
+      responses:
+        "200":
+          description: 撤回後の同意状態
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      documents:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                            version:
+                              type: string
+                            title:
+                              type: string
+                            summary:
+                              type: array
+                              items:
+                                type: string
+                            url:
+                              type: string
+                            required:
+                              type: boolean
+                            agreedVersion:
+                              nullable: true
+                              type: string
+                            agreedAt:
+                              nullable: true
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            satisfied:
+                              type: boolean
+                          required:
+                            - kind
+                            - version
+                            - title
+                            - summary
+                            - url
+                            - required
+                            - agreedVersion
+                            - agreedAt
+                            - satisfied
+                          additionalProperties: false
+                      outstanding:
+                        type: boolean
+                      availability:
+                        type: object
+                        properties:
+                          manualManagement:
+                            type: boolean
+                          externalAi:
+                            type: boolean
+                          missingRequired:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                          missingOptional:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - TERMS
+                                - PRIVACY
+                                - CROSS_BORDER_AI
+                        required:
+                          - manualManagement
+                          - externalAi
+                          - missingRequired
+                          - missingOptional
+                        additionalProperties: false
+                    required:
+                      - documents
+                      - outstanding
+                      - availability
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "428":
+          description: "error.code: PRECONDITION_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
   /cases:
     post:
       operationId: createCase

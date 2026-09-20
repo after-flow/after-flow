@@ -4,6 +4,7 @@ import { bodyLimit } from 'hono/body-limit'
 import type { AppEnv } from './presentation/http/context.js'
 import { handleError, handleNotFound } from './presentation/http/error-handler.js'
 import { requestId } from './presentation/http/request-id.js'
+import type { AppContext } from './presentation/http/context.js'
 import type { RegisteredRoute } from './presentation/http/route.js'
 import { registerRoutes } from './presentation/http/route.js'
 import { healthRoute } from './presentation/routes/public/v1/health.js'
@@ -24,6 +25,13 @@ export interface CreateAppOptions {
    * 「誰でも通る API」ではなく「誰も通れない API」になるようにしてある。
    */
   authentication?: MiddlewareHandler<AppEnv>
+  /**
+   * 必須同意の検査。
+   *
+   * 同意機能が接続されている場合だけ渡す。未接続の環境で検査を
+   * 通ったことにしないため、既定では検査しない。
+   */
+  consentGate?: (c: AppContext) => Promise<void>
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -47,7 +55,9 @@ export function createApp(options: CreateAppOptions = {}) {
 
   const v1 = new Hono<AppEnv>()
   if (options.authentication) v1.use('*', options.authentication)
-  registerRoutes(v1, options.routes ?? [healthRoute])
+  registerRoutes(v1, options.routes ?? [healthRoute], {
+    ...(options.consentGate ? { consentGate: options.consentGate } : {}),
+  })
   app.route('/api/v1', v1)
 
   return app

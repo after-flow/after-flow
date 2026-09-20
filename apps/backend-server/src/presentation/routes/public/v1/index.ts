@@ -1,8 +1,10 @@
 import type { CaseService } from '../../../../application/case/case-service.js'
+import type { ConsentService } from '../../../../application/consent/consent-service.js'
 import { errors } from '../../../../shared/app-error.js'
 import type { RegisteredRoute, RouteSpec } from '../../../http/route.js'
 import { defineRoute } from '../../../http/route.js'
 import { caseSpecs, createCaseRoutes } from './cases.js'
+import { consentSpecs, createConsentRoutes } from './consents.js'
 import { healthRoute, healthSpec } from './health.js'
 
 /**
@@ -13,6 +15,9 @@ import { healthRoute, healthSpec } from './health.js'
  */
 export const publicV1Specs: RouteSpec[] = [
   healthSpec,
+  consentSpecs.getConsents,
+  consentSpecs.agreeConsents,
+  consentSpecs.revokeConsent,
   caseSpecs.createCase,
   caseSpecs.listCases,
   caseSpecs.getCase,
@@ -21,6 +26,7 @@ export const publicV1Specs: RouteSpec[] = [
 
 export interface PublicRouteDependencies {
   caseService: CaseService
+  consentService: ConsentService
 }
 
 /**
@@ -42,9 +48,12 @@ function notConnected(specs: RouteSpec[]): RegisteredRoute[] {
 export function createPublicV1Routes(
   dependencies: PublicRouteDependencies | null,
 ): RegisteredRoute[] {
-  const businessSpecs = publicV1Specs.filter((spec) => spec !== healthSpec)
+  if (!dependencies) {
+    return [healthRoute, ...notConnected(publicV1Specs.filter((spec) => spec !== healthSpec))]
+  }
   return [
     healthRoute,
-    ...(dependencies ? createCaseRoutes(dependencies.caseService) : notConnected(businessSpecs)),
+    ...createConsentRoutes(dependencies.consentService),
+    ...createCaseRoutes(dependencies.caseService),
   ]
 }

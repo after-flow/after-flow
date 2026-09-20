@@ -89,6 +89,8 @@ apps/
     src/presentation/schemas/ 共通入力スキーマと公開契約との一致検証
     src/presentation/openapi/ route定義からのOpenAPI生成
     src/domain/case/           Case Entityと版の規則
+    src/domain/consent/        同意文書の定義と判定
+    src/application/consent/   同意の記録・撤回・利用可否Policy
     src/application/case/      Case のCommand・Query
     src/presentation/routes/public/v1/ health・cases
     test/                    契約テスト（node:test）
@@ -108,6 +110,7 @@ docs/
   api/public-openapi.yaml   route定義から生成する公開API仕様
 infra/
   firestore/                Security Rules・index・Emulatorの説明
+  consent/                  同意文書カタログの雛形
 Dockerfile                  固定Node/pnpmと依存インストール
 compose.yaml                Web / Backend / AIの独立コンテナ
 Makefile                    起動・停止・検証
@@ -120,8 +123,11 @@ Makefile                    起動・停止・検証
 
 Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
 
-現在の公開APIは生存確認と案件（作成・一覧・詳細・訂正）です。案件の一覧は自分が参加しているものだけを返します。
+現在の公開APIは生存確認、同意、案件（作成・一覧・詳細・訂正）です。案件の一覧は自分が参加しているものだけを返します。
 業務データベースが未設定の状態では、業務APIは `FEATURE_NOT_CONNECTED` を理由付きで返します。空配列や固定の成功では返しません。
+
+必須同意（利用規約・個人情報の取扱い）が揃うまで業務APIは `CONSENT_REQUIRED` を返します。同意を取得するためのAPIは塞ぎません。
+任意の外部AI同意が無くても、手動での案件・書類・手続きの管理は利用できます。同意文書の文面と提供先は業務側の承認後に確定するため、未設定時は仮文面と分かるカタログを使い、本番では拒否します。
 
 公開APIは認証済みユーザーとCase membershipに限定します。採用する認証Providerは未確定で、実接続の着手条件は [ADR 0001](docs/adr/0001-authentication-provider.md) に記録しています。
 認証の設定が無いまま起動した場合、認証が必要なAPIはすべて401を返します。検証を省略して通す既定値はありません。

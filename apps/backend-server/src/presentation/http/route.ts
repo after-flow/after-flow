@@ -47,6 +47,13 @@ export interface RouteSpec<Req extends RouteRequestSpec = RouteRequestSpec> {
   expectedVersion?: 'required'
   /** 一覧応答。meta.nextCursor を返しうることを示す。 */
   list?: boolean
+  /**
+   * 必須同意の検査を適用するか。
+   *
+   * 既定は適用する。同意を取得するための API まで塞ぐと利用者が
+   * 復旧できないため、それらだけ `exempt` にする。
+   */
+  consent?: 'exempt'
 }
 
 type InferOr<S, Fallback> = S extends z.ZodType ? z.infer<S> : Fallback
@@ -174,12 +181,32 @@ function assertExpectedVersion(body: unknown, requirement: RouteSpec['expectedVe
   }
 }
 
-export function registerRoutes(app: Hono<AppEnv>, routes: RegisteredRoute[]) {
+export interface RegisterOptions {
+  /**
+   * 必須同意の検査。
+   *
+   * 未指定なら検査しない。同意機能が接続されていない環境で、
+   * 検査を通ったことにしないよう、接続状況は組み立て側が判断する。
+   */
+  consentGate?: (c: AppContext) => Promise<void>
+}
+
+export function registerRoutes(
+  app: Hono<AppEnv>,
+  routes: RegisteredRoute[],
+  options: RegisterOptions = {},
+) {
   for (const { spec, handler } of routes) {
     app.on(spec.method.toUpperCase(), spec.path, async (c) => {
       // 認証が必要な route は、認証 middleware の有無に関係なくここで止める。
       // middleware の付け忘れが「誰でも通る API」にならないようにする。
       if (spec.auth === 'user' && !c.get('user')) throw errors.unauthenticated()
+
+      // 必須同意の検査は入力検証より前に行う。未同意の利用者へ
+      // 入力の不備を先に返しても、直しようがない。
+      if (spec.consent !== 'exempt' && spec.auth === 'user' && options.consentGate) {
+        await options.consentGate(c)
+      }
 
       const request = spec.request ?? {}
 
