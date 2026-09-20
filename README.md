@@ -132,4 +132,25 @@ pnpm build
 依存境界の検証は、WebからBackend／AI／内部契約への参照、サービス間の直接importを拒否します。
 既存UIの説明とBackendへの要件は [Web README](apps/web/README.md) を参照してください。
 
+## CI
+
+[GitHub Actions](.github/workflows/ci.yml) は `main` 向けPR、`main` へのpush、手動実行で動きます。
+
+- **Quality**: 固定lockfileでインストールし、全workspaceの型・Lint・依存境界・本番ビルドを検証します。本番成果物にモックのService Workerが含まれないことも確認します。
+- **Docker smoke**: 3サービスのhealthyを待ち、Web配信、Backendの公開API、WebのAPIプロキシ、BackendからAIへの内部HTTP接続を確認します。AIのホストポート非公開とWebからのネットワーク分離も検証します。最後にログを表示し、コンテナを終了します。
+
+Nodeとpnpmのバージョンは `.node-version` と `package.json` を参照します。外部クラウドやLLMの資格情報は不要です。
+初期CIは型・ビルドと疎通の検証です。業務ロジック・契約の自動テストやブラウザーE2Eは、各機能の実装時に追加します。
+Lintの既存警告4件は現状どおり警告として扱います。
+
+Docker起動後、同じ疎通チェックをローカルでも実行できます。
+
+```sh
+make up
+node scripts/smoke-compose.mjs
+make down
+```
+
+ポートや `COMPOSE_PROJECT_NAME` を変更した場合は、起動とチェックで同じ環境変数を指定してください。
+
 導入時の公式資料: [Hono Node.js](https://hono.dev/docs/getting-started/nodejs)、[pnpm workspaces](https://pnpm.io/workspaces)、[Node.js releases](https://nodejs.org/en/about/previous-releases)。
