@@ -1,6 +1,8 @@
+import type { CommandContext } from './context.js'
+import type { CommandResult } from './idempotency.js'
 import type { ActorRef, CaseEntity, ISODateTime } from '../domain/shared/types.js'
 
-export type CaseRole = 'OWNER' | 'MEMBER' | 'PROFESSIONAL' | 'VIEWER'
+export type CaseRole = 'OWNER' | 'EDITOR' | 'VIEWER'
 
 export interface CaseMembership {
   tenantId: string
@@ -21,16 +23,9 @@ export interface IdGenerator {
   next(prefix: string): string
 }
 
-export interface IdempotencyRecord {
-  fingerprint: string
-  statusCode: number
-  body: unknown
-}
-
-/** 同じキーでの再送は初回結果を返す。キーは (tenant, actor, scope) 内で一意 */
+/** Entity・監査・冪等性の結果を同じ UnitOfWork で確定する。 */
 export interface IdempotencyStore {
-  get(scopeKey: string): Promise<IdempotencyRecord | null>
-  put(scopeKey: string, record: IdempotencyRecord): Promise<void>
+  run<T>(ctx: CommandContext, operation: string, input: unknown, execute: () => Promise<CommandResult<T>>): Promise<CommandResult<T>>
 }
 
 export interface AuditEntry {

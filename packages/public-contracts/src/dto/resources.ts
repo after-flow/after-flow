@@ -9,31 +9,6 @@ export type ISODateTime = string
 
 /* ---------- Envelope / Pagination (Backend Public API) ---------- */
 
-export interface ResponseMeta {
-  requestId: string
-  /** 次ページのカーソル。一覧レスポンスのみ。無い場合は null */
-  nextCursor?: string | null
-}
-
-export interface ApiSuccess<T> {
-  data: T
-  meta: ResponseMeta
-}
-
-export interface ApiErrorBody {
-  code: string
-  message: string
-  /** 同じ内容で再試行して成功する見込みがあるか（503/429 など） */
-  retryable: boolean
-  details?: unknown
-}
-
-export interface ApiFailure {
-  error: ApiErrorBody
-  meta: ResponseMeta
-}
-
-/** 更新系リクエストに載せる楽観ロック用バージョン */
 export interface ExpectedVersion {
   expectedVersion: number
 }
@@ -442,28 +417,91 @@ export interface ConfirmEstateItemRequest extends ExpectedVersion {
 export type ContractPolicy = 'UNDECIDED' | 'CONTINUE' | 'TRANSFER' | 'CANCEL'
 export type ContractProgress = 'NOT_STARTED' | 'CONTACTED' | 'COMPLETED'
 
+export type ContractKind = 'UTILITY' | 'TELECOM' | 'SUBSCRIPTION' | 'INSURANCE' | 'PENSION' | 'OTHER'
+export type BenefitKind = 'INSURANCE_PAYOUT' | 'PENSION' | 'LUMP_SUM' | 'OTHER'
+
+/** 方針は利用者が記録した意向であり、実際の解約・名義変更が行われたことを意味しない */
+export interface PolicyRecord {
+  decidedAt: ISODateTime | null
+  decidedBy: string | null
+  note?: string | null
+}
+
+/**
+ * 進捗の出自。USER_REPORTED は利用者の自己申告（COMPLETED でも外部確認ではない）。
+ * PREPARATION_COMPLETED / EXTERNALLY_CONFIRMED は将来の連携用で、公開APIからは USER_REPORTED のみ記録される。
+ */
+export type ProgressSource = 'USER_REPORTED' | 'PREPARATION_COMPLETED' | 'EXTERNALLY_CONFIRMED'
+
+export interface ProgressRecord {
+  reportedAt: ISODateTime | null
+  reportedBy: string | null
+  source: ProgressSource | null
+  note?: string | null
+}
+
 export interface Contract {
   id: string
   caseId: string
   name: string
-  kind: 'UTILITY' | 'TELECOM' | 'SUBSCRIPTION' | 'INSURANCE' | 'PENSION' | 'OTHER'
+  kind: ContractKind
   provider?: string
   policy: ContractPolicy
   progress: ContractProgress
-  source: 'AI' | 'MANUAL'
+  source: RecordSource
+  /** 案内文は AI 提案の承認（#11）で付与される。公開APIからは編集できない */
   guidance?: TaskGuidance
   note?: string
+  policyRecord?: PolicyRecord
+  progressRecord?: ProgressRecord
+  version: number
 }
 
 export interface Benefit {
   id: string
   caseId: string
   name: string
-  kind: 'INSURANCE_PAYOUT' | 'PENSION' | 'LUMP_SUM' | 'OTHER'
+  kind: BenefitKind
   provider?: string
   amount?: number
+  currency?: MoneyCurrency
   progress: ContractProgress
+  /** 期限は #9 の期限計算で付与される。公開APIからは受給資格や金額・期限を推定しない */
   deadline?: DeadlineSummary
+  note?: string
+  progressRecord?: ProgressRecord
+  version: number
+}
+
+/** policy / progress / source / guidance は Command またはサーバーが決めるため、登録・編集リクエストには含めない */
+export interface CreateContractRequest {
+  name: string
+  kind: ContractKind
+  provider?: string
+  note?: string
+}
+
+export type UpdateContractRequest = Partial<CreateContractRequest> & ExpectedVersion
+
+export interface CreateBenefitRequest {
+  name: string
+  kind: BenefitKind
+  provider?: string
+  amount?: number | null
+  note?: string
+}
+
+export type UpdateBenefitRequest = Partial<CreateBenefitRequest> & ExpectedVersion
+
+/** 方針の変更 Command。CANCEL は「解約予定」を記録するだけで、解約手続きそのものではない */
+export interface SetContractPolicyRequest extends ExpectedVersion {
+  policy: ContractPolicy
+  note?: string
+}
+
+/** 進捗の報告 Command。後退（COMPLETED→CONTACTED 等）は訂正として note が必須 */
+export interface ReportProgressRequest extends ExpectedVersion {
+  progress: ContractProgress
   note?: string
 }
 
@@ -541,7 +579,14 @@ export interface InsightEvidence {
   documentId?: string
   documentName?: string
   taskId?: string
+  /**
+   * 参照先の現在の状態。検出時点から変わった（STALE）／保管・除外された（UNAVAILABLE）根拠は
+   * 確定した事実として扱わない。省略時は CURRENT。
+   */
+  freshness?: EvidenceFreshness
 }
+
+export type EvidenceFreshness = 'CURRENT' | 'STALE' | 'UNAVAILABLE'
 
 export interface Insight {
   id: string
@@ -561,7 +606,20 @@ export interface Insight {
    * true のとき、フロントエンドは専門家への確認を促す注記を必ず表示する。
    */
   requiresProfessional: boolean
+  /** 閲覧者（actor）ごとの既読／非表示状態。内容は共有、状態は個人ごと */
   status: InsightStatus
+  statusUpdatedAt?: ISODateTime | null
+  /** 専門家確認に関する注記（AI本文とは区別する） */
+  professionalReviewNote?: string
+}
+
+/** 既読・非表示は閲覧者ごとの明示的な Command。NEW→ACKNOWLEDGED→DISMISSED の順で、DISMISSED から戻す操作は無い */
+export interface AcknowledgeInsightRequest {
+  note?: string
+}
+
+export interface DismissInsightRequest {
+  reason?: string
 }
 
 /* ---------- AI Activity / Chat ---------- */
