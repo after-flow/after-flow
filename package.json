@@ -18,7 +18,8 @@
     "test": "node --test scripts/*.test.mjs && pnpm -r --if-present test",
     "openapi:check": "pnpm --filter @aftercare/backend-server openapi:check",
     "openapi:generate": "pnpm --filter @aftercare/backend-server openapi:generate",
-    "test:firestore": "pnpm --filter @aftercare/backend-server test:firestore && pnpm --filter @aftercare/ai-server test:firestore"
+    "test:firestore": "pnpm --filter @aftercare/backend-server test:firestore && pnpm --filter @aftercare/ai-server test:firestore",
+    "eval:ai": "pnpm --filter @aftercare/ai-server eval:fixture"
   },
   "devDependencies": {
     "oxlint": "^1.81.0",

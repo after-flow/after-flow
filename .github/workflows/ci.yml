@@ -26,10 +26,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [typecheck, lint, test, openapi, build]
+        check: [typecheck, lint, test, openapi, build, ai-eval]
         include:
           - check: openapi
             command: openapi:check
+          - check: ai-eval
+            command: eval:ai
     env:
       VITE_USE_MOCK: 'false'
     steps:
