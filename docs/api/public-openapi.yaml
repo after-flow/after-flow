@@ -12546,6 +12546,203 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/proposals/{proposalId}/versions/{proposalVersion}:
+    get:
+      operationId: getProposalVersion
+      summary: 承認対象になった提案の不変の内容を取得する
+      description: 状態遷移とは独立した内容の履歴。履歴保存の導入前に失われた旧版は404を返す。
+      tags:
+        - proposals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: proposalId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: proposalVersion
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 提案の指定版
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      caseId:
+                        type: string
+                      kind:
+                        type: string
+                        enum:
+                          - TASK_PROPOSAL
+                          - ASSET_PROPOSAL
+                          - LIABILITY_PROPOSAL
+                          - CONTRACT_PROPOSAL
+                          - PERSON_PROPOSAL
+                          - DOCUMENT_REQUEST
+                          - ESCALATION_PROPOSAL
+                          - EVIDENCE_PROPOSAL
+                      source:
+                        type: string
+                        enum:
+                          - USER
+                          - SYSTEM
+                          - AI
+                      agentRunId:
+                        nullable: true
+                        type: string
+                      title:
+                        type: string
+                      summary:
+                        type: string
+                      proposalVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      payload:
+                        type: object
+                        additionalProperties: {}
+                      payloadHash:
+                        type: string
+                      basis:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            type:
+                              type: string
+                              enum:
+                                - DOCUMENT
+                                - TASK
+                                - MESSAGE
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^[A-Za-z0-9_-]+$
+                            version:
+                              type: integer
+                              minimum: 1
+                              maximum: 9007199254740991
+                            label:
+                              type: string
+                              maxLength: 120
+                          required:
+                            - type
+                            - id
+                            - version
+                            - label
+                          additionalProperties: false
+                      caseVersionAtProposal:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      assetDisposal:
+                        type: boolean
+                      supersedesProposalVersion:
+                        nullable: true
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      proposalId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      recordedAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - caseId
+                      - kind
+                      - source
+                      - agentRunId
+                      - title
+                      - summary
+                      - proposalVersion
+                      - payload
+                      - payloadHash
+                      - basis
+                      - caseVersionAtProposal
+                      - assetDisposal
+                      - supersedesProposalVersion
+                      - proposalId
+                      - recordedAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN / CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
   /cases/{caseId}/proposals:
     post:
       operationId: submitProposal

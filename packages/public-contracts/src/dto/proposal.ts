@@ -85,6 +85,13 @@ export interface ApprovalResource {
   updatedAt: ISODateTime
 }
 
+/** 状態とは独立した、提案の指定版の不変内容。 */
+export interface ProposalVersionResource extends Omit<ProposalResource,
+  'id' | 'status' | 'version' | 'createdAt' | 'updatedAt'> {
+  proposalId: string
+  recordedAt: ISODateTime
+}
+
 export type InheritanceMethodResource = 'SIMPLE_ACCEPTANCE' | 'LIMITED_ACCEPTANCE' | 'RENUNCIATION'
 
 /** 下書き、本人以外による報告、本人による確定を区別する。 */

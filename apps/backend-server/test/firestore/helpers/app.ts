@@ -36,7 +36,10 @@ import { LocalObjectStorage } from '../../../src/infrastructure/storage/local-ob
 import type { AppEnv } from '../../../src/presentation/http/context.js'
 import { createInternalApp } from '../../../src/presentation/routes/internal/v1/results.js'
 import { createPublicV1Routes } from '../../../src/presentation/routes/public/v1/index.js'
-import { readRepository, unitOfWork, workContext } from './emulator.js'
+import { readRepository, unitOfWork as storageUnitOfWork, workContext } from './emulator.js'
+import { ContextVersionUnitOfWork } from '../../../src/application/case/context-version-unit-of-work.js'
+
+const unitOfWork = () => new ContextVersionUnitOfWork(storageUnitOfWork())
 
 /**
  * 統合テスト用のアプリ。

@@ -45,6 +45,8 @@ export const collections = {
   /** Case ごとの書き込み権。固定 ID の 1 文書だけを使う。 */
   caseLeases: caseCollection('coordination'),
   proposals: caseCollection('proposals'),
+  /** 提案の内容の不変スナップショット。状態遷移とは別に追記のみ。 */
+  proposalVersions: caseCollection('proposalVersions'),
   approvals: caseCollection('approvals'),
   decisions: caseCollection('decisions'),
   messages: caseCollection('messages'),

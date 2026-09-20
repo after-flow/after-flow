@@ -8,6 +8,7 @@ import { StoredInheritanceDecisionReader } from './application/decision/decision
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
 import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
+import { ContextVersionUnitOfWork } from './application/case/context-version-unit-of-work.js'
 import { assertValidId } from './infrastructure/firestore/paths.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
 import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
@@ -28,7 +29,7 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   }
   const db = createFirestore(readFirestoreConfig(env))
   const read = new FirestoreReadRepository(db)
-  const uow = new FirestoreUnitOfWork(db)
+  const uow = new ContextVersionUnitOfWork(new FirestoreUnitOfWork(db))
   const access = new AccessService(read)
   const consent = new ConsentService(readConsentCatalog(env), access, read, uow)
   const tasks = new TaskService(readRuleCatalog(env), access, read, uow, new StoredInheritanceDecisionReader(read))

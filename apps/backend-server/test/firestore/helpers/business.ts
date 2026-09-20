@@ -9,6 +9,7 @@ import { createContractRoutes } from '../../../src/presentation/routes/public/v1
 import { createInsightRoutes } from '../../../src/presentation/routes/public/v1/insights.js'
 import type { AppEnv } from '../../../src/presentation/http/context.js'
 import { newTenantId, firestore, readRepository, unitOfWork } from './emulator.js'
+import { ContextVersionUnitOfWork } from '../../../src/application/case/context-version-unit-of-work.js'
 
 export const CASE_A = 'case_a'
 export const CASE_B = 'case_b'
@@ -20,14 +21,14 @@ export const OUTSIDER = 'user_outsider'
 /** 認証済み主体だけを stub にし、認可・業務保存・監査は本番と同じ Firestore を使う。 */
 export function createHarness() {
   const tenantId = newTenantId()
-  const services = createBusinessServices(new AccessService(readRepository()), readRepository(), unitOfWork())
+  const services = createBusinessServices(new AccessService(readRepository()), readRepository(), new ContextVersionUnitOfWork(unitOfWork()))
   async function seed(collection: string, caseId: string | null, id: string, data: Record<string, unknown>) {
     const path = caseId ? `tenants/${tenantId}/cases/${caseId}/${collection}/${id}` : `tenants/${tenantId}/${collection}/${id}`
     const now = new Date().toISOString()
     await firestore().doc(path).set({ id, tenantId, caseId, version: 1, schemaVersion: 1, createdAt: now, updatedAt: now, ...data })
   }
   const ready = (async () => {
-    await Promise.all([CASE_A, CASE_B].map(id => seed('cases', null, id, { deceasedName: 'テスト', status: 'ACTIVE' })))
+    await Promise.all([CASE_A, CASE_B].map(id => seed('cases', null, id, { deceasedName: 'テスト', status: 'ACTIVE', caseVersion: 1 })))
     await Promise.all([
       [CASE_A, OWNER, 'OWNER'], [CASE_A, MEMBER, 'EDITOR'], [CASE_A, VIEWER, 'VIEWER'], [CASE_B, OUTSIDER, 'OWNER'],
     ].map(([caseId, userId, role]) => seed('caseMembers', caseId!, userId!, { userId, role, active: true, personId: null })))

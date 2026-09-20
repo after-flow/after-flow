@@ -17,6 +17,10 @@
 
 内容を訂正するときは、既存の版のpayloadを書き換えません。新しい版と新しいhashを作り、対象を失った承認は期限切れにします。人は新しい版を改めて承認します。編集できる体験は保ったまま、承認した対象が後から変わらないようにしています。
 
+`proposalVersions` に版ごとの内容・根拠・hashを追記し、`proposals` は現在版と状態を保持します。
+`GET /cases/{caseId}/proposals/{proposalId}/versions/{proposalVersion}` で保存済みの旧版を参照できます。
+履歴導入前の提案は次の訂正・承認依頼・適用の前に現存版を保存します。既に失われた旧版は復元したふりをせず404を返します。
+
 ### 2. 承認の受付と業務状態への反映を分けて返す
 
 公開DTOは承認の状態（PENDING / APPROVED / REJECTED / EXPIRED）と、反映の状態（NOT_APPLIED / APPLIED / FAILED）を別に返します。承認を受け付けただけで「反映済み」と表示させません。
@@ -26,6 +30,10 @@
 承認の時点で、提案の版とhash、提案の状態、案件の版、根拠の所属と版を改めて検証します。提案を作ったときの案件の版と現在の版が違えば、その提案はSTALEにして適用しません。利用者の更新を、古い前提の提案で上書きしないためです。
 
 STALEの記録は、中断した適用のTransactionとは別に書き込みます。中断したTransactionの中で書いても巻き戻り、同じ提案が承認待ちのまま残ります。
+
+ContextVersionUnitOfWork がHTTPとworkerの業務変更を束ね、Case基本情報、membership、人物・関係、書類、手続き・期限・根拠、財産・債務・契約・給付、意思決定、メッセージの変更では案件版も同じTransactionで進めます。
+複数Entityの変更でも1 Transaction / Caseで1回です。Proposal・Approval・実行進捗・leaseの記録だけでは進めません。
+承認と同時に正式な業務Entityを変更した場合のみ進むため、自分の承認依頼で提案がstaleになる循環を作りません。
 
 ### 4. 反映は承認と同じTransactionで確定する
 
