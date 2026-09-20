@@ -8,3 +8,7 @@
 **/*.log
 .DS_Store
 .claude
+gha-creds-*.json
+reports
+images
+*.bundle

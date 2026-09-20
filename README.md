@@ -6,7 +6,8 @@
 ## 現在の実装範囲
 
 既存のReact + Viteフロントエンドを機能別に移し、画面、URL、モックAPI、ログイン状態の保存方式を維持しています。
-BackendとAIは独立したHonoプロセスとして起動します。現時点では生存確認APIのみで、業務API、認証、Firestore、Mastra、Orch Routerは未実装です。
+BackendとAIは独立したHonoプロセスとして起動します。Backendには業務API、認証・認可の境界、Firestore Adapterを実装しています。
+本番の認証Provider・クラウド接続は環境設定が必要で、Mastra・Orch Routerは未接続です。
 通常の開発起動では、これまでどおりMSWの架空データで全画面を操作できます。
 
 ## Dockerで起動
@@ -28,7 +29,7 @@ WebとBackendはループバックアドレスにのみ公開します。WebとA
 make ps                 # 3サービスの状態
 make logs               # ログ（Ctrl+Cで表示だけ終了）
 make logs SERVICE=web   # Webのみ
-make check              # Docker内で型・Lint・依存境界・本番ビルドを検証
+make check              # Docker内で型・Lint・テスト・OpenAPI・本番ビルドを検証
 make down               # このプロジェクトを停止
 ```
 
@@ -41,7 +42,7 @@ WEB_PORT=5174 BACKEND_PORT=8082 make up
 `.env` の作成は任意です。必要ならルートの `.env.example` を `.env` にコピーして編集してください。
 環境変数の変更後は `make up` を実行してください。Web、Backend、AIのソースはマウントされ、編集時に自動再読込されます。
 依存パッケージ、TypeScript設定、その他のイメージ内ファイルを変更した場合も `make up` で再ビルドします。
-Dockerfile／Composeはローカル開発用です。本番配信・デプロイ設定は今後追加します。
+`compose.yaml` はローカル開発用です。本番用の独立イメージ・Compose検証・Cloud Runへの配布手順は [CI/CD運用](docs/ci-cd.md) を参照してください。
 
 ## ローカルで起動
 
@@ -57,7 +58,7 @@ pnpm dev:web            # フロントエンドのみ
 サービス単位でも操作できます。
 
 ```sh
-pnpm --filter @aftercare/backend-server build
+pnpm --filter @aftercare/backend-server... build
 pnpm --filter @aftercare/backend-server start
 pnpm --filter @aftercare/ai-server build
 pnpm --filter @aftercare/ai-server start
@@ -191,7 +192,7 @@ VITE_USE_MOCK=false VITE_API_PROXY=http://127.0.0.1:8080 pnpm dev:web
 ```sh
 pnpm typecheck
 pnpm lint                # Lintと依存境界の検証
-pnpm test                # Backendの契約テスト（Emulator不要）
+pnpm test                # CIポリシー・Frontend・Backend・AIのテスト
 pnpm test:firestore      # Firestore Emulatorを起動して統合テスト
 pnpm openapi:check       # 生成済みOpenAPIと実装routeの一致を検証
 pnpm build
@@ -209,19 +210,24 @@ pnpm openapi:generate
 依存境界の検証は、WebからBackend／AI／内部契約への参照、サービス間の直接importを拒否します。
 既存UIの説明とBackendへの要件は [Web README](apps/web/README.md) を参照してください。
 
-## CI
+## CI/CD
 
-[GitHub Actions](.github/workflows/ci.yml) は `main` 向けPR、`main` へのpush、手動実行で動きます。
+[CI](.github/workflows/ci.yml) は全PR（依存ブランチ向けも含む）、`main` push、merge queue、手動実行が対象です。
 
-- **Quality**: 固定lockfileでインストールし、全workspaceの型・Lint・依存境界・本番ビルドを検証します。本番成果物にモックのService Workerが含まれないことも確認します。
-- **Firestore integration**: Firestore Emulatorに対してTransaction・冪等性・版競合・カーソルページングを検証します。
-- **Docker smoke**: 3サービスのhealthyを待ち、Web配信、Backendの公開API、WebのAPIプロキシ、BackendからAIへの内部HTTP接続を確認します。AIのホストポート非公開とWebからのネットワーク分離も検証します。最後にログを表示し、コンテナを終了します。
+- **Quality**: 固定lockfile、型、Lint・依存境界、全workspaceのテスト、生成済みOpenAPI、本番ビルドとモック除外を検証。
+- **Firestore integration**: Firestore Emulatorに対してTransaction・冪等性・版競合・カーソルページング・業務APIを検証。
+- **Workflow lint / Dependency audit**: Actions・埋込みshellの検証、high以上の依存脆弱性を検出。週次監査とDependabot更新も実行。
+- **Docker smoke / Production containers**: 開発・本番の3サービス、SPA、API転送、非root起動、AIのポート非公開・ネットワーク分離をHTTPとコンテナ検査で確認。
+- **CI Gate**: 全ジョブ成功を要求する固定名の必須チェック。失敗・キャンセル・skipは通過させません。
 
-Nodeとpnpmのバージョンは `.node-version` と `package.json` を参照します。外部クラウドやLLMの資格情報は不要です。
-QualityジョブはBackendの契約テストと、生成済みOpenAPIが実装routeと一致することも検証します。
+`main` のCI成功後、[Release](.github/workflows/release.yml) がテスト済みイメージを再ビルドせずGHCRへ配布します。
+[Deploy Cloud Run](.github/workflows/deploy.yml) は環境・サービス・成功したCI runを指定して手動実行します。OIDC認証、環境承認、候補revisionの疎通確認、traffic切替と失敗時の復元を行います。
+
+**GitHub Environment・GCP/IAMの初期設定が必要です。** 生存確認の成功だけでは、認証・永続化・Mastra/Orchの本番稼働を保証しません。
+設定値、必須チェック、リリース、切り戻し、未検証範囲は [CI/CD運用](docs/ci-cd.md) にまとめています。
+Nodeとpnpmは `.node-version` と `package.json` を参照します。CIには外部クラウドやLLMの資格情報は不要です。既存のLint警告は警告のままです。
 Firestore integrationジョブは、Emulatorに対して永続化の統合テストを実行します。実Firestoreの資格情報は使いません。
 ブラウザーE2Eは各機能の実装時に追加します。
-Lintの既存警告4件は現状どおり警告として扱います。
 
 Docker起動後、同じ疎通チェックをローカルでも実行できます。
 
@@ -232,5 +238,12 @@ make down
 ```
 
 ポートや `COMPOSE_PROJECT_NAME` を変更した場合は、起動とチェックで同じ環境変数を指定してください。
+
+本番イメージの検証（開発用とは別プロジェクト・別イメージタグ）:
+
+```sh
+make production-check
+COMPOSE_FILE=compose.production.yaml docker compose down
+```
 
 導入時の公式資料: [Hono Node.js](https://hono.dev/docs/getting-started/nodejs)、[pnpm workspaces](https://pnpm.io/workspaces)、[Node.js releases](https://nodejs.org/en/about/previous-releases)。
