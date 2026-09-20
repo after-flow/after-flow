@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -9,6 +10,17 @@ import { CaseService } from '../../../src/application/case/case-service.js'
 import { ConsentService } from '../../../src/application/consent/consent-service.js'
 import { DocumentService } from '../../../src/application/document/document-service.js'
 import type { InheritanceDecisionReader } from '../../../src/application/task/task-service.js'
+import { AgentRunService } from '../../../src/application/agent/agent-run-service.js'
+import type { AgentOperation } from '../../../src/domain/agent/agent-run.js'
+import {
+  InheritanceDecisionService,
+  StoredInheritanceDecisionReader,
+} from '../../../src/application/decision/decision-service.js'
+import { MessageService } from '../../../src/application/chat/message-service.js'
+import { CaseOverviewService } from '../../../src/application/overview/overview-service.js'
+import { AgentResultIntake } from '../../../src/application/chat/result-intake.js'
+import { ProposalService } from '../../../src/application/proposal/proposal-service.js'
+import { taskProposalApplier } from '../../../src/application/proposal/task-applier.js'
 import { TaskService } from '../../../src/application/task/task-service.js'
 import { PLACEHOLDER_RULE_CATALOG } from '../../../src/domain/task/rule-catalog.js'
 import type { RuleCatalog } from '../../../src/domain/task/rule-engine.js'
@@ -18,6 +30,7 @@ import { collections } from '../../../src/domain/shared/collections.js'
 import type { DocumentInspector } from '../../../src/application/ports/inspection.js'
 import { LocalObjectStorage } from '../../../src/infrastructure/storage/local-object-storage.js'
 import type { AppEnv } from '../../../src/presentation/http/context.js'
+import { createInternalApp } from '../../../src/presentation/routes/internal/v1/results.js'
 import { createPublicV1Routes } from '../../../src/presentation/routes/public/v1/index.js'
 import { readRepository, unitOfWork, workContext } from './emulator.js'
 
@@ -41,6 +54,10 @@ export interface TestAppOptions {
   ruleCatalog?: RuleCatalog
   /** 相続方法の確定状況。未指定なら未確定として扱う。 */
   decisions?: InheritanceDecisionReader
+  /** 接続済みの業務操作。未指定ならどれも未接続。 */
+  connectedOperations?: AgentOperation[]
+  /** 内部APIのサービストークン。未指定なら内部APIを公開しない。 */
+  serviceToken?: string
 }
 
 export function buildApp(tenantId: string, userId: string, options: TestAppOptions = {}) {
@@ -54,6 +71,14 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
   const storage = new LocalObjectStorage(
     options.storageRoot ?? mkdtempSync(path.join(tmpdir(), 'after-flow-docs-')),
   )
+  const agentRunService = new AgentRunService(
+    access,
+    readRepository(),
+    unitOfWork(),
+    consentService,
+    new Set(options.connectedOperations ?? []),
+  )
+
   const routes = createPublicV1Routes({
     caseService: new CaseService(access, readRepository(), unitOfWork()),
     consentService,
@@ -71,7 +96,16 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       access,
       readRepository(),
       unitOfWork(),
-      ...(options.decisions ? [options.decisions] : []),
+      options.decisions ?? new StoredInheritanceDecisionReader(readRepository()),
+    ),
+    agentRunService,
+    proposalService: new ProposalService(access, readRepository(), unitOfWork(), [taskProposalApplier]),
+    decisionService: new InheritanceDecisionService(access, readRepository(), unitOfWork()),
+    messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService),
+    overviewService: new CaseOverviewService(
+      access,
+      readRepository(),
+      (options.connectedOperations ?? []).length > 0,
     ),
   })
 
@@ -80,9 +114,18 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
     await next()
   })
 
+  const internalApp = options.serviceToken
+    ? createInternalApp({
+        intake: new AgentResultIntake(readRepository(), unitOfWork()),
+        serviceToken: options.serviceToken,
+        audience: 'backend-server',
+      })
+    : undefined
+
   return createApp({
     routes,
     authentication: stubAuthentication,
+    ...(internalApp ? { internalApp } : {}),
     ...(options.enforceConsent === false
       ? {}
       : {
@@ -115,7 +158,7 @@ export async function call(
   return { status: response.status, body: text ? (JSON.parse(text) as Json) : {} }
 }
 
-export function jsonRequest(method: string, body: unknown, idempotencyKey?: string): RequestInit {
+export function jsonRequest(method: string, body: unknown, idempotencyKey: string | null = randomUUID()): RequestInit {
   return {
     method,
     headers: {
