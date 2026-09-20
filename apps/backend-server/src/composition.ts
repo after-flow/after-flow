@@ -81,6 +81,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     connectedOperations(env),
   )
 
+  const proposalService = new ProposalService(access, database.read, database.uow, [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers])
   const routes = createPublicV1Routes({
     ...createBusinessServices(access, database.read, database.uow),
     caseService: new CaseService(access, database.read, database.uow),
@@ -109,7 +110,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     // すべての操作を有効にしない。
     agentRunService,
     // 種類ごとの反映は担当 Issue が登録する。未登録の種類は反映できない。
-    proposalService: new ProposalService(access, database.read, database.uow, [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers]),
+    proposalService,
     decisionService: new InheritanceDecisionService(access, database.read, database.uow),
     messageService: new MessageService(access, database.read, database.uow, agentRunService),
     overviewService: new CaseOverviewService(
@@ -132,7 +133,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   // 共有サービス資格情報だけの旧results endpointは本番にmountしない。
   const internalApp = executionAuthorization && env.BACKEND_INTERNAL_SERVICE_TOKEN
     ? createExecutionApp({
-        service: new InternalExecutionService(database.read, database.uow, consentService, new AgentResultIntake(database.read, database.uow)),
+        service: new InternalExecutionService(database.read, database.uow, consentService, new AgentResultIntake(database.read, database.uow), proposalService),
         authorization: executionAuthorization,
         serviceCredential: env.BACKEND_INTERNAL_SERVICE_TOKEN,
       })

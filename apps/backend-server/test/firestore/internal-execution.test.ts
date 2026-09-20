@@ -13,6 +13,10 @@ import { ContextVersionUnitOfWork } from '../../src/application/case/context-ver
 import { AccessService } from '../../src/application/authorization/case-access.js'
 import { ConsentService } from '../../src/application/consent/consent-service.js'
 import { AgentResultIntake } from '../../src/application/chat/result-intake.js'
+import { ProposalService } from '../../src/application/proposal/proposal-service.js'
+import { taskProposalApplier } from '../../src/application/proposal/task-applier.js'
+import { entityProposalAppliers } from '../../src/application/proposal/entity-appliers.js'
+import { taskActionProposalAppliers } from '../../src/application/proposal/task-action-appliers.js'
 import type { AgentRunEntity } from '../../src/domain/agent/agent-run.js'
 import { PLACEHOLDER_CATALOG } from '../../src/domain/consent/catalog.js'
 import { collections } from '../../src/domain/shared/collections.js'
@@ -26,7 +30,7 @@ import { startFakeAiServer } from './helpers/fake-ai-server.js'
 const signingKey = 'synthetic-test-signing-key-not-a-production-secret'
 const incoming = 'synthetic-incoming-service-identity'
 const outgoing = 'synthetic-outgoing-service-identity'
-const proof = (a: ContextArtifact) => ({ caseVersion: a.caseVersion, contextSnapshotId: a.contextSnapshotId, artifactVersion: a.artifactVersion, contentHash: a.contentHash })
+const proof = (a: ContextArtifact) => ({ caseVersion: a.caseVersion, contextSnapshotId: a.contextSnapshotId, artifactVersion: a.artifactVersion, contentHash: a.contentHash, fencingToken: a.fencingToken })
 
 async function setup(t: TestContext) {
   const tenantId = newTenantId(), userId = 'owner'
@@ -34,7 +38,8 @@ async function setup(t: TestContext) {
   const app = buildApp(tenantId, userId, { connectedOperations: ['case_planning', 'task_guidance', 'chat_reply'] })
   const read = readRepository(), uow = new ContextVersionUnitOfWork(unitOfWork())
   const consent = new ConsentService(PLACEHOLDER_CATALOG, new AccessService(read), read, uow)
-  const service = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow))
+  const proposals = new ProposalService(new AccessService(read), read, uow, [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers])
+  const service = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow), proposals)
   const authorization = new SignedExecutionAuthorization(signingKey)
   app.route('/internal/v1', createExecutionApp({ service, authorization, serviceCredential: incoming }))
   await call(app, '/consents', jsonRequest('POST', { agreements: PLACEHOLDER_CATALOG.documents.map(d => ({ kind: d.kind, version: d.version })) }))
@@ -231,5 +236,133 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal((await h.client.deliver(exec.job)).status, 'RETRYABLE')
     assert.equal((await h.client.deliver(exec.job)).status, 'ACCEPTED')
     assert.equal(h.ai.accepted.size, 1)
+  })
+})
+
+describeFirestore('AI Proposal lease / fencing / human approval', () => {
+  function proposal(context: ContextArtifact) {
+    return { ...proof(context), proposalId: randomUUID(), kind: 'ASSET_PROPOSAL', title: '架空財産の候補', summary: '',
+      payload: { operation: 'CREATE', fields: { name: '架空預金', kind: 'BANK', institution: '架空銀行', amount: 100, taxAttention: false, note: null } },
+      basis: [], assetDisposal: false }
+  }
+  async function approve(h: Awaited<ReturnType<typeof setup>>, submitted: any) {
+    const approval = (await call(h.app, `/cases/${h.caseId}/approvals/${submitted.approvalId}`)).body.data
+    return call(h.app, `/cases/${h.caseId}/approvals/${submitted.approvalId}/approve`, jsonRequest('POST', {
+      expectedVersion: approval.version, proposalVersion: submitted.proposalVersion, payloadHash: submitted.payloadHash,
+    }))
+  }
+  it('同じCaseへの並行context要求でleaseを取れる実行は一つだけ', async t => {
+    const h = await setup(t), a = await h.accept(), b = await h.accept()
+    const results = await Promise.all([h.request(a, 'context'), h.request(b, 'context')])
+    assert.deepEqual(results.map(result => result.status).sort(), [200, 409])
+    const lease = await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/coordination/writer`).get()
+    assert.equal(lease.get('fencingToken'), 1)
+  })
+  it('同一Caseの実行区間は直列化され、失効後に引き継がれた古い所有者は提出できない', async t => {
+    const h = await setup(t), a = await h.accept(), b = await h.accept()
+    const aContext = await h.context(a)
+    assert.equal((await h.request(b, 'context')).status, 409)
+    const lease = firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/coordination/writer`)
+    await lease.update({ expiresAt: new Date(0).toISOString() })
+    const bContext = await h.context(b)
+    assert.ok(bContext.fencingToken > aContext.fencingToken)
+    assert.equal((await h.request(a, 'proposals', proposal(aContext))).status, 409)
+    assert.equal((await h.request(a, 'heartbeat', {})).status, 409)
+    assert.equal((await h.request(a, 'result', { ...proof(aContext), resultId: randomUUID(), kind: 'case_planning', status: 'SUCCEEDED' })).status, 409)
+    const forged = proposal(bContext)
+    forged.fencingToken = aContext.fencingToken
+    assert.equal((await h.request(b, 'proposals', forged)).status, 409)
+    assert.equal((await h.request(b, 'proposals', proposal(bContext))).status, 200)
+  })
+
+  it('AI提出は不変Proposalと承認を一度だけ作り、業務Entityと案件版は承認まで変えない', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec), input = proposal(context)
+    const submitted = await h.request(exec, 'proposals', input)
+    assert.equal(submitted.status, 200, JSON.stringify(submitted.body))
+    assert.deepEqual((await h.request(exec, 'proposals', input)).body.data, submitted.body.data)
+    assert.equal((await h.request(exec, 'proposals', { ...input, title: '別の要求' })).status, 409)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/proposals`)).body.data.length, 1)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/approvals`)).body.data.length, 1)
+    assert.equal((await call(h.app, `/cases/${h.caseId}`)).body.data.caseVersion, context.caseVersion)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/assets`)).body.data.length, 0)
+    const history = await call(h.app, `/cases/${h.caseId}/proposals/${submitted.body.data.proposalId}/versions/1`)
+    assert.equal(history.body.data.source, 'AI')
+    assert.equal('execution' in history.body.data, false, '内部実行権を公開DTOへ渡さない')
+    assert.equal((await approve(h, submitted.body.data)).status, 200)
+    const assets = (await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/assets`).get()).docs
+    assert.equal(assets.length, 1)
+    assert.equal(assets[0]!.get('confirmation.state'), 'UNCONFIRMED')
+    assert.equal(assets[0]!.get('provenance.source'), 'AI')
+    assert.equal((await call(h.app, `/cases/${h.caseId}`)).body.data.caseVersion, context.caseVersion + 1)
+    assert.equal((await approve(h, submitted.body.data)).status, 409, '二重承認で再適用しない')
+  })
+
+  it('人の承認は失効したAI権限を流用せず現在のlease世代で適用する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = await h.request(exec, 'proposals', proposal(context))
+    const lease = firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/coordination/writer`)
+    await lease.update({ expiresAt: new Date(0).toISOString() })
+    assert.equal((await h.request(exec, 'proposals', proposal(context))).status, 409, '期限切れAIからの新規提出は禁止')
+    assert.equal((await approve(h, submitted.body.data)).status, 200, '保存済みの同一内容を人が確認する経路は独立')
+    const after = await lease.get()
+    assert.ok(after.get('fencingToken') > context.fencingToken)
+    assert.equal(after.get('holderRunId'), null)
+    assert.equal((await h.request(exec, 'proposals', proposal(context))).status, 409)
+  })
+
+  it('別の実行が現在のleaseを持つ間は人の適用も競合として拒否する', async t => {
+    const h = await setup(t), a = await h.accept(), context = await h.context(a)
+    const submitted = await h.request(a, 'proposals', proposal(context))
+    await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/coordination/writer`).update({ expiresAt: new Date(0).toISOString() })
+    const b = await h.accept()
+    await h.context(b)
+    const response = await approve(h, submitted.body.data)
+    assert.equal(response.status, 409)
+    assert.equal(response.body.error.details.reason, 'CASE_BUSY')
+    assert.equal((await call(h.app, `/cases/${h.caseId}/assets`)).body.data.length, 0)
+  })
+
+  it('人が案件内の業務を更新するとAI提出も、既存の提案適用もstaleになる', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = await h.request(exec, 'proposals', proposal(context))
+    await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '新しい手続き', category: '手動', stage: 'immediate' }))
+    assert.equal((await h.request(exec, 'proposals', proposal(context))).status, 409)
+    const response = await approve(h, submitted.body.data)
+    assert.equal(response.status, 409)
+    assert.equal(response.body.error.details.reason, 'STALE_PROPOSAL')
+    assert.equal((await call(h.app, `/cases/${h.caseId}/assets`)).body.data.length, 0)
+  })
+
+  it('取消や旧attemptのAI提案は提出・適用のどちらも拒否する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = await h.request(exec, 'proposals', proposal(context))
+    const run = (await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)).body.data
+    await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}/cancel`, jsonRequest('POST', { expectedVersion: run.version }))
+    assert.equal((await h.request(exec, 'proposals', proposal(context))).status, 409)
+    assert.equal((await approve(h, submitted.body.data)).status, 409)
+    const lease = await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/coordination/writer`).get()
+    assert.equal(lease.get('holderRunId'), null, '取消と同じtransactionでleaseを解放する')
+  })
+
+  it('AIに承認不要・source・本人意思の確定を申告させない', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    for (const extra of [{ approvalRequired: false }, { source: 'USER' }, { role: 'OWNER' }, { kind: 'DECISION_CONFIRM' }]) {
+      assert.equal((await h.request(exec, 'proposals', { ...proposal(context), ...extra })).status, 400)
+    }
+  })
+
+  it('外側の認可を通った直後に権限が撤回されても承認transactionで再拒否する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = (await h.request(exec, 'proposals', proposal(context))).body.data
+    const read = readRepository(), access = new AccessService(read)
+    const user = { tenantId: h.tenantId, userId: h.userId }
+    const cached = await access.authorizeCase(user, h.caseId, 'approval.decide')
+    access.authorizeCase = async () => cached
+    await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/caseMembers/${h.userId}`).update({ role: 'VIEWER' })
+    const service = new ProposalService(access, read, new ContextVersionUnitOfWork(unitOfWork()), entityProposalAppliers)
+    await assert.rejects(service.approve(user, h.caseId, submitted.approvalId, {
+      expectedVersion: 1, proposalVersion: submitted.proposalVersion, payloadHash: submitted.payloadHash,
+    }, { requestId: randomUUID(), idempotency: null }), { code: 'FORBIDDEN' })
+    assert.equal((await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/assets`).get()).size, 0)
   })
 })

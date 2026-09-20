@@ -3,12 +3,12 @@ import { DEFAULT_LEASE_DURATION_MS, isLeaseExpired } from '../../domain/agent/ca
 import { collections } from '../../domain/shared/collections.js'
 import { errors } from '../../shared/app-error.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
-import type { DocLocation, ReadRepository, UnitOfWork, WorkContext } from '../ports/persistence.js'
+import type { DocLocation, ReadRepository, Tx, UnitOfWork, WorkContext } from '../ports/persistence.js'
 
 /** Case ごとに 1 つだけ。固定 ID にして取り合いを 1 文書に集約する。 */
 const LEASE_DOCUMENT_ID = 'writer'
 
-function leaseLocation(caseId: string): DocLocation {
+export function leaseLocation(caseId: string): DocLocation {
   return { collection: collections.caseLeases, caseId, id: LEASE_DOCUMENT_ID }
 }
 
@@ -16,6 +16,37 @@ export interface LeaseGrant {
   runId: string
   fencingToken: number
   expiresAt: string
+}
+
+/** Run変更やProposal保存と同じtransactionで検証する。 */
+export async function assertLease(tx: Tx, caseId: string, runId: string, fencingToken: number): Promise<CaseLeaseEntity> {
+  const lease = await tx.get<CaseLeaseEntity>(leaseLocation(caseId))
+  if (!lease || lease.holderRunId !== runId || lease.fencingToken !== fencingToken) {
+    throw errors.conflict({ details: { reason: 'STALE_FENCING_TOKEN' } })
+  }
+  if (isLeaseExpired(lease, Date.now())) throw errors.conflict({ details: { reason: 'LEASE_EXPIRED' } })
+  return lease
+}
+
+export async function acquireLease(tx: Tx, caseId: string, runId: string, durationMs = DEFAULT_LEASE_DURATION_MS): Promise<LeaseGrant> {
+  const now = Date.now()
+  const current = await tx.get<CaseLeaseEntity>(leaseLocation(caseId))
+  if (current?.holderRunId && current.holderRunId !== runId && !isLeaseExpired(current, now)) {
+    throw errors.conflict({ details: { reason: 'CASE_BUSY' } })
+  }
+  const fencingToken = (current?.fencingToken ?? 0) + 1
+  const expiresAt = new Date(now + durationMs).toISOString()
+  const data = { holderRunId: runId, fencingToken, expiresAt, acquiredAt: new Date(now).toISOString() }
+  if (current) tx.update<CaseLeaseEntity>(leaseLocation(caseId), current.version, data)
+  else tx.create<CaseLeaseEntity>(leaseLocation(caseId), { id: LEASE_DOCUMENT_ID, ...data })
+  return { runId, fencingToken, expiresAt }
+}
+
+export async function releaseLease(tx: Tx, caseId: string, runId: string, fencingToken: number): Promise<void> {
+  const lease = await tx.get<CaseLeaseEntity>(leaseLocation(caseId))
+  if (lease?.holderRunId === runId && lease.fencingToken === fencingToken) {
+    tx.update<CaseLeaseEntity>(leaseLocation(caseId), lease.version, { holderRunId: null, expiresAt: null })
+  }
 }
 
 /**

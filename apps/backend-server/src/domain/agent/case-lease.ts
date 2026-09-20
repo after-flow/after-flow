@@ -27,7 +27,8 @@ export const DEFAULT_LEASE_DURATION_MS = 5 * 60 * 1000
 /** 失効しているか。境界は「期限に達したら失効」。 */
 export function isLeaseExpired(lease: CaseLeaseEntity, now: number): boolean {
   if (lease.expiresAt === null) return true
-  return Date.parse(lease.expiresAt) <= now
+  const expiry = Date.parse(lease.expiresAt)
+  return !Number.isFinite(expiry) || expiry <= now
 }
 
 /** その実行が今も書き込んでよいか。 */

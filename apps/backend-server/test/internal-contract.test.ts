@@ -28,7 +28,7 @@ describe('内部契約の分離', () => {
   })
   it('結果で自己申告role/tenant、任意業務変更、待機を最終結果に偽装する操作を拒否する', () => {
     const result = { kind: 'case_planning', resultId: 'result', status: 'SUCCEEDED',
-      caseVersion: 1, contextSnapshotId: 'snapshot', artifactVersion: 1, contentHash: 'a'.repeat(43) }
+      caseVersion: 1, contextSnapshotId: 'snapshot', artifactVersion: 1, contentHash: 'a'.repeat(43), fencingToken: 1 }
     assert.equal(internalResultSchema.safeParse(result).success, true)
     for (const key of ['tenantId', 'caseId', 'role', 'payload', 'approvalRequired']) {
       assert.equal(internalResultSchema.safeParse({ ...result, [key]: 'forged' }).success, false)

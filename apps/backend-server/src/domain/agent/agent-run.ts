@@ -52,6 +52,8 @@ export interface AgentRunEntity extends EntityBase {
   currentJobId?: string
   heartbeatAt?: string
   progressSequence?: number
+  /** 現在の実行区間のlease世代。retry/resumeで破棄し、取り直す。 */
+  fencingToken?: number | null
   /** 失敗理由。利用者に見せてよい範囲。 */
   failureReason: string | null
   /** 待機の理由。status が WAITING_* のときに入る。 */

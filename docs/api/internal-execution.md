@@ -40,7 +40,7 @@ AI providerは毎回資格情報を検証し、同一jobの異なる業務scope�
 ContextはDBの同一読取時点から作り、返却直前のTransactionでRunとCase版を再検証します。
 case_planningは案件の業務事実、task_guidanceは対象Task、chat_replyは対象Messageと案件基本情報に制限します。
 各一覧100件・合計128 KiBを超えたら `CONTEXT_LIMIT_EXCEEDED` とし、黙って切り捨てません。
-返却する `caseVersion/contextSnapshotId/artifactVersion/contentHash/expiresAt` を結果提出時に指定します。
+返却する `caseVersion/contextSnapshotId/artifactVersion/contentHash/fencingToken` を結果・提案提出時に指定します。`expiresAt` はArtifactのアクセス期限です。
 contentHashはキー順を正規化したJSONのSHA-256（base64url、43文字）です。
 ArtifactはBackendが保存したこのContext生成物で、別Run/attemptから取得できません。
 期限切れや案件変更後には再利用できず、元のContextで結果を確定できません。
@@ -51,15 +51,32 @@ ArtifactはBackendが保存したこのContext生成物で、別Run/attemptか�
 原本・masked原本・ファイル名・Storage keyはContextに含めません。
 書類本文の配送とdocument_analysisは #25/#26/#27 の接続まで明示的に無効です。
 
-heartbeatは生存時刻を記録し、認可が現在も有効な実行に限ってcapabilityを更新します。
+Contextの最初の取得でCase leaseを取得します。同じCaseで並行して書き込みを伴うAI実行区間を始めると `CASE_BUSY` です。
+heartbeatは生存時刻とlease期限を更新し、認可が現在も有効な実行に限ってcapabilityを更新します。
+期限切れのleaseを同じattemptが勝手に再取得することはできません。取消・最終結果では同じTransactionで解放します。
+Context Artifact自体の期限をheartbeatで無制限に延長はしません。
 controlは権限/同意の撤回後でも業務本文を含めずSTOPを返します。
 resultはContext・根拠の所属/版・Run/attempt・重複IDを同じTransactionで検証します。
 結果報告から任意の業務Entityを作成しません。正式変更はProposalの経路です。
 
+## AI Proposalと人の承認
+
+`POST /runs/:runId/proposals` はcase_planning capabilityだけが利用できます。
+Run・Job・attempt・Case版・Context hash・根拠・現在のlease期限とfencingTokenを保存と同じTransactionで検証し、
+immutableなProposal版とPENDING Approvalを同時作成します。AIがsource/role/承認不要を指定する入力は禁止します。
+各kindのpayloadは公開Proposalと同じApplierで検証します。現時点では全kindに人の承認が必要です。
+
+人の承認はAIの古いcapabilityを流用しません。現在の利用者権限、Runの取消/失敗/attempt変更、
+Proposalの内容・版・Case版・根拠を再検証し、現在のCase leaseをBackendの適用区間として取得・解放します。
+別Runが有効なleaseを保持中なら競合として拒否します。適用のTransactionでfencing世代を進めるため、
+古いAI実行は以後の書き込みができません。失効したAIからの新しい提案は拒否しますが、
+既に検証して保存した同一内容の提案は、leaseの時間切れだけを理由に人が確認できなくなる設計にはしません。
+業務Entity・Approval・Proposal・lease世代・監査・Outboxを原子的に確定します。
+実行provenanceの無い旧形式AI提案は適用せず、再作成を要求します。
+
 ## 未接続の範囲
 
-- Proposalのlease/fencing連携は #41、WaitRequest/resume/reconcilerは #37。
-- Case leaseをheartbeatで更新する接続は #41。現段階のheartbeatは生存報告のみ。
+- WaitRequest/resume/reconcilerは #37。
 - controlイベントの外部配送は未接続でOutboxに保持。AIは各Step前にcontrolを照会する必要があります。
 - 実AI/Mastra/Orchと本番サービスアカウントの接続検証は未実施です。livenessはreadinessの証明ではありません。
 
