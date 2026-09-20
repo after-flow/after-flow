@@ -358,29 +358,84 @@ export interface Evidence {
 
 export type ConfirmationState = 'UNCONFIRMED' | 'CONFIRMED'
 
+/** 記録の出自。公開APIからの登録は常に MANUAL。AI 由来は承認（#11）を経てのみ登録される */
+export type RecordSource = 'AI' | 'MANUAL'
+
+/**
+ * 金額は日本円の整数（円単位）。未入力（不明）は amount を省略／null にし、0 円と区別する。
+ * 範囲は 0 以上 1,000,000,000,000,000 未満。
+ */
+export type MoneyCurrency = 'JPY'
+
+/** 利用者が「確認した」と記録した事実。金融機関等による外部確認ではない */
+export interface ConfirmationRecord {
+  state: ConfirmationState
+  confirmedAt?: ISODateTime | null
+  confirmedBy?: string | null
+  /** 確認時点のエンティティ version。以後に値が変わると state は UNCONFIRMED に戻る */
+  confirmedVersion?: number | null
+}
+
+export type AssetKind = 'BANK' | 'REAL_ESTATE' | 'SECURITIES' | 'CRYPTO' | 'VEHICLE' | 'OTHER'
+
 export interface Asset {
   id: string
   caseId: string
   name: string
-  kind: 'BANK' | 'REAL_ESTATE' | 'SECURITIES' | 'CRYPTO' | 'VEHICLE' | 'OTHER'
+  kind: AssetKind
   institution?: string
   amount?: number
-  source: 'AI' | 'MANUAL'
+  currency?: MoneyCurrency
+  source: RecordSource
   confirmation: ConfirmationState
-  /** 生前贈与・名義預金など税務判断が必要な可能性がある項目 */
+  confirmationRecord?: ConfirmationRecord
+  /** 生前贈与・名義預金など税務判断が必要な可能性がある項目（利用者メモ。税額計算はしない） */
   taxAttention?: boolean
   note?: string
+  version: number
 }
+
+export type LiabilityKind = 'LOAN' | 'CREDIT' | 'TAX' | 'GUARANTEE' | 'OTHER'
 
 export interface Liability {
   id: string
   caseId: string
   name: string
-  kind: 'LOAN' | 'CREDIT' | 'TAX' | 'GUARANTEE' | 'OTHER'
+  kind: LiabilityKind
   creditor?: string
   amount?: number
-  source: 'AI' | 'MANUAL'
+  currency?: MoneyCurrency
+  source: RecordSource
   confirmation: ConfirmationState
+  confirmationRecord?: ConfirmationRecord
+  note?: string
+  version: number
+}
+
+/** source / confirmation / 由来Run はサーバー側で決めるため、リクエストには含めない */
+export interface CreateAssetRequest {
+  name: string
+  kind: AssetKind
+  institution?: string
+  amount?: number | null
+  taxAttention?: boolean
+  note?: string
+}
+
+export type UpdateAssetRequest = Partial<CreateAssetRequest> & ExpectedVersion
+
+export interface CreateLiabilityRequest {
+  name: string
+  kind: LiabilityKind
+  creditor?: string
+  amount?: number | null
+  note?: string
+}
+
+export type UpdateLiabilityRequest = Partial<CreateLiabilityRequest> & ExpectedVersion
+
+/** 確認は明示的な Command。対象 version を指定し、確認者・時刻はサーバーが記録する */
+export interface ConfirmEstateItemRequest extends ExpectedVersion {
   note?: string
 }
 

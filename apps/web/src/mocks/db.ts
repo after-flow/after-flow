@@ -395,6 +395,7 @@ export const db: Store = {
       amount: 3_240_000,
       source: 'AI',
       confirmation: 'UNCONFIRMED',
+      version: 1,
     },
     {
       id: 'asset_2',
@@ -405,6 +406,7 @@ export const db: Store = {
       confirmation: 'CONFIRMED',
       taxAttention: true,
       note: '土地・建物とも故人名義',
+      version: 1,
     },
   ],
 
@@ -418,6 +420,7 @@ export const db: Store = {
       amount: 68_000,
       source: 'AI',
       confirmation: 'UNCONFIRMED',
+      version: 1,
     },
   ],
 
