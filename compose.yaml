@@ -41,7 +41,7 @@ services:
       PORT: 8080
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       # 業務Firestoreの接続設定はBackendにだけ渡す。ai-serverには渡さない。
-      # 既定では未設定。`make up-data` がEmulatorの宛先を入れる。
+      # 既定では未設定。`make up` がEmulatorの宛先を入れる。
       FIRESTORE_EMULATOR_HOST: ${FIRESTORE_EMULATOR_HOST-}
       FIRESTORE_PROJECT_ID: ${FIRESTORE_PROJECT_ID:-after-flow-local}
       # 原本StorageもBackend専用。SDKの実験的なSTORAGE_EMULATOR_HOSTには
@@ -80,7 +80,7 @@ services:
     networks: [services]
 
   # 業務Firestoreの代わりに使う開発用Emulator。
-  # 既定では起動しない（イメージが大きいため）。`make up-data` で有効になる。
+  # Compose単体の既定profileでは起動しない。`make up` がdata profileを有効にする。
   # ai-serverは data ネットワークに接続しない。AIへ業務DBを触らせないため。
   firestore-emulator:
     image: ${FIRESTORE_EMULATOR_IMAGE:-gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators}

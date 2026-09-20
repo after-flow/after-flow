@@ -5,7 +5,7 @@ Backendだけが原本を扱う。`DOCUMENT_STORAGE_ROOT`（開発/CI）か`DOCU
 
 ## ローカルEmulator
 
-ルートで`make up-data`を実行すると、Firestore Emulatorと[fake-gcs-server](https://github.com/fsouza/fake-gcs-server)をdata profileで起動する。
+ルートで`make up`を実行すると、アプリ3サービスとともにFirestore Emulatorと[fake-gcs-server](https://github.com/fsouza/fake-gcs-server)をdata profileで起動する。`make up-data`は互換エイリアスとして同じ構成を起動する。
 Cloud Storageには`after-flow-documents` bucketを起動時に作成し、Backendへ`DOCUMENT_STORAGE_EMULATOR_ENDPOINT=http://storage-emulator:4443`を渡す。`make data-check`はBackendの実Adapterで作成・取得・削除を行い、AIにデータ接続設定が無いことも検証する。
 
 ホストからはFirestoreを`127.0.0.1:8085`、Cloud Storage JSON APIを`http://127.0.0.1:4443`で確認できる。ポートは`FIRESTORE_EMULATOR_PORT`と`STORAGE_EMULATOR_PORT`で変更できる。いずれもループバックだけに公開し、データは一時データとして扱う。

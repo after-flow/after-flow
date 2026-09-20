@@ -150,14 +150,11 @@ jobs:
           docker compose config --quiet
           docker compose --profile data config --quiet
       - name: Build and start all services
-        run: docker compose up --build --detach --wait --wait-timeout 120
+        run: make up
       - name: Verify HTTP connectivity and AI isolation
-        run: node scripts/smoke-compose.mjs
-      - name: Start and verify local data emulators
         run: |
-          make up-data
-          make data-check
           node scripts/smoke-compose.mjs
+          make data-check
       - name: Show service status and logs
         if: always()
         run: |
