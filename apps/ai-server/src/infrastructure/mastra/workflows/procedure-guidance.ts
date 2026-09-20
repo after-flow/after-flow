@@ -1,3 +1,4 @@
+import type { AgentBudget } from '../budget-processors.js'
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
@@ -18,6 +19,7 @@ const generatedSchema = loadedSchema.extend({ draft: guidanceDraftSchema, source
 const outputSchema = z.object({ resultId: internalId, applied: z.boolean(), reason: z.string().nullable() })
 
 export interface ProcedureGuidanceDependencies {
+  budget?: AgentBudget
   backend: Pick<BackendClient, 'context' | 'control' | 'result'>
   models: { core: MastraModelConfig; research: MastraModelConfig }
   scope: z.infer<typeof reviewedResearchScopeSchema>
@@ -60,10 +62,14 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const tools = createResearchTools({
         briefs: [selection.brief], catalogs: deps.catalogs, provider: deps.research, signal: deps.signal,
         maxSourceAgeMs: deps.maxSourceAgeMs, timeoutMs: deps.timeoutMs,
-        beforeTool: async kind => { await checkControl(); await deps.beforeTool(kind) },
+        beforeTool: async kind => {
+          await checkControl()
+          await deps.budget?.charge(kind === 'search' ? { searches: 1 } : { reads: 1 })
+          await deps.beforeTool(kind)
+        },
       })
       const { coreAgent, researchEvidence } = createGuidanceAgents({
-        models: deps.models, briefs: [selection.brief], signal: deps.signal,
+        budget: deps.budget, models: deps.models, briefs: [selection.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
       })
       const response = await coreAgent.generate(JSON.stringify({
