@@ -265,6 +265,32 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
       expectedVersion: approval.version, proposalVersion: submitted.proposalVersion, payloadHash: submitted.payloadHash,
     }))
   }
+  it('AI Task提案は承認時に依存と必要書類を反映し、不明・循環する依存を拒否する', async t => {
+    for (const variant of ['valid', 'foreign', 'cycle']) {
+      const h = await setup(t)
+      const existing = (await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '先行手続き', stage: 'government', category: 'fixture' }))).body.data
+      const taskDocs = firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/tasks`)
+      if (variant === 'cycle') await taskDocs.doc(existing.id).update({ dependencyTaskIds: [existing.id] })
+      const exec = await h.accept(), context = await h.context(exec)
+      const input = { ...proposal(context), kind: 'TASK_PROPOSAL', title: '後続手続き', payload: {
+        title: '後続手続き', summary: '', stage: 'government', category: 'fixture', submitTo: '架空機関',
+        dependencyTaskIds: [variant === 'foreign' ? 'foreign-task' : existing.id], requiredDocuments: [{ id: 'required-one', label: '確認資料' }],
+      } }
+      const submitted = await h.request(exec, 'proposals', input)
+      assert.equal(submitted.status, 200, JSON.stringify(submitted.body))
+      const approved = await approve(h, submitted.body.data)
+      if (variant === 'valid') {
+        assert.equal(approved.status, 200, JSON.stringify(approved.body))
+        const created = (await taskDocs.where('source', '==', 'AI').get()).docs.map(doc => doc.data()).find(task => task.title === '後続手続き')!
+        assert.deepEqual(created.dependencyTaskIds, [existing.id])
+        assert.deepEqual(created.requiredDocuments, [{ id: 'required-one', label: '確認資料', documentId: null, source: 'AI' }])
+      } else {
+        assert.ok(approved.status >= 400)
+        assert.equal((await taskDocs.where('source', '==', 'AI').get()).size, 0)
+      }
+      assert.equal((await taskDocs.doc(existing.id).get()).get('source'), 'MANUAL')
+    }
+  })
   it('同じCaseへの並行context要求でleaseを取れる実行は一つだけ', async t => {
     const h = await setup(t), a = await h.accept(), b = await h.accept()
     const results = await Promise.all([h.request(a, 'context'), h.request(b, 'context')])
