@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const INTERNAL_LIMITS = { bodyBytes: 131072, timeoutMs: 10000, authorizationSeconds: 300, requestSeconds: 60 } as const
 export const internalId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
 export const operationSchema = z.enum(['case_planning', 'task_guidance', 'chat_reply', 'document_analysis'])
-export const scopeSchema = z.enum(['context', 'artifact', 'control', 'heartbeat', 'events', 'result'])
+export const scopeSchema = z.enum(['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'proposals'])
 export type InternalScope = z.infer<typeof scopeSchema>
 
 /** Backend が発行するcapability。AIへ署名鍵は渡さない。 */
@@ -23,6 +23,7 @@ export type InternalRequestMetadata = z.infer<typeof requestMetadataSchema>
 
 export const contextProofSchema = z.object({
   caseVersion: z.number().int().positive(), contextSnapshotId: internalId,
+  fencingToken: z.number().int().positive(),
   artifactVersion: z.number().int().positive(), contentHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 })
 export type ContextProof = z.infer<typeof contextProofSchema>
@@ -52,10 +53,21 @@ export const eventSchema = z.object({
   phase: z.enum(['CONTEXT_FETCHED', 'PLANNING', 'GENERATING', 'VALIDATING']),
 }).strict()
 export type ProgressEvent = z.infer<typeof eventSchema>
+export const aiProposalSchema = contextProofSchema.extend({
+  proposalId: internalId,
+  kind: z.enum(['TASK_PROPOSAL', 'ASSET_PROPOSAL', 'LIABILITY_PROPOSAL', 'CONTRACT_PROPOSAL', 'PERSON_PROPOSAL', 'DOCUMENT_REQUEST', 'ESCALATION_PROPOSAL', 'EVIDENCE_PROPOSAL']),
+  title: z.string().min(1).max(120), summary: z.string().max(2000).default(''),
+  payload: z.record(z.string(), z.unknown()),
+  basis: z.array(basisSchema.extend({ label: z.string().max(120) })).max(20).default([]),
+  assetDisposal: z.boolean().default(false),
+}).strict()
+export type AiProposalInput = z.infer<typeof aiProposalSchema>
 const outcomeSchema = z.object({ applied: z.boolean(), reason: z.string().nullable() })
 const controlSchema = z.object({ instruction: z.enum(['CONTINUE', 'STOP']), reason: z.string().nullable(), caseVersion: z.number().int().nullable() })
 
 export const internalRoutes = {
+  proposals: { method: 'post', path: '/runs/:runId/proposals', scope: 'proposals', body: aiProposalSchema,
+    response: z.object({ proposalId: internalId, approvalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string() }) },
   context: { method: 'get', path: '/runs/:runId/context', scope: 'context', response: artifactEnvelopeSchema },
   artifact: { method: 'get', path: '/runs/:runId/artifacts/:artifactId', scope: 'artifact', response: artifactEnvelopeSchema },
   control: { method: 'get', path: '/runs/:runId/control', scope: 'control', response: controlSchema },

@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { ProposalVersionResource } from '@aftercare/public-contracts'
+import type { AiProposalInput } from '@aftercare/internal-contracts'
+import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
+import type { CaseLeaseEntity } from '../../domain/agent/case-lease.js'
+import { isLeaseExpired } from '../../domain/agent/case-lease.js'
+import { leaseLocation, assertLease } from '../agent/lease-service.js'
+import type { CaseMember } from '../../domain/authorization/case-role.js'
+import { roleAllows } from '../../domain/authorization/case-role.js'
+import type { TenantMember } from '../authorization/case-access.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import type {
   ApplicationStatus,
@@ -118,6 +126,7 @@ function versionLocation(caseId: string, proposalId: string, version: number): D
 
 function proposalContent(proposal: ProposalEntity): ProposalVersionEntity['content'] {
   return {
+    ...(proposal.execution ? { execution: proposal.execution } : {}),
     kind: proposal.kind, source: proposal.source, agentRunId: proposal.agentRunId,
     title: proposal.title, summary: proposal.summary, proposalVersion: proposal.proposalVersion,
     payload: proposal.payload, payloadHash: proposal.payloadHash, basis: proposal.basis,
@@ -203,6 +212,40 @@ export class ProposalService {
     private readonly approvalTtlMs: number = DEFAULT_APPROVAL_TTL_MS,
   ) {
     this.appliers = new Map(appliers.map((applier) => [applier.kind, applier]))
+  }
+
+  /** 認可済み内部実行のtransaction内だけで呼ぶ。全種類に人の承認を要求する。 */
+  async submitAi(tx: Tx, caseId: string, run: AgentRunEntity, input: AiProposalInput) {
+    if (!run.currentJobId || run.operation !== 'case_planning') throw errors.forbidden()
+    const current = await tx.require<AgentRunEntity>({ collection: collections.agentRuns, caseId, id: run.id })
+    if (current.currentAttemptId !== run.currentAttemptId || current.currentJobId !== run.currentJobId
+      || current.fencingToken !== input.fencingToken || current.status !== 'RUNNING') throw errors.conflict({ details: { reason: 'STALE_EXECUTION' } })
+    await assertLease(tx, caseId, current.id, input.fencingToken)
+    const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
+    if (entity.caseVersion !== input.caseVersion) throw errors.conflict({ details: { reason: 'STALE_CONTEXT' } })
+    const applier = this.appliers.get(input.kind)
+    if (!applier) throw errors.featureNotConnected()
+    applier.validate?.(input.payload)
+    await this.assertBasisBelongsToCase(tx, caseId, input.basis)
+    const proposalId = fingerprintOf({ runId: run.id, jobId: run.currentJobId, proposalId: input.proposalId })
+    const approvalId = fingerprintOf({ proposalId, proposalVersion: 1 })
+    const content: ProposalVersionEntity['content'] = {
+      kind: input.kind, source: 'AI', agentRunId: run.id, title: input.title, summary: input.summary,
+      proposalVersion: 1, payload: input.payload, payloadHash: hashPayload(input.payload), basis: input.basis,
+      caseVersionAtProposal: input.caseVersion, assetDisposal: input.assetDisposal, supersedesProposalVersion: null,
+      execution: { attemptId: run.currentAttemptId, jobId: run.currentJobId, fencingToken: input.fencingToken, contextSnapshotId: input.contextSnapshotId },
+    }
+    await preserveVersion(tx, caseId, proposalId, content)
+    tx.create<ProposalEntity>(proposalLocation(caseId, proposalId), { id: proposalId, ...content, status: 'AWAITING_APPROVAL' })
+    tx.create<ApprovalEntity>(approvalLocation(caseId, approvalId), {
+      id: approvalId, proposalId, proposalVersion: 1, payloadHash: content.payloadHash, status: 'PENDING',
+      applicationStatus: 'NOT_APPLIED', applicationFailureReason: null, decidedByUserId: null, decidedAt: null,
+      decisionNote: null, expiresAt: new Date(Date.now() + this.approvalTtlMs).toISOString(), assetDisposal: input.assetDisposal,
+    })
+    tx.audit({ caseId, type: 'proposal.ai_submitted', target: { collection: collections.proposals.name, id: proposalId, version: 1 },
+      detail: { runId: run.id, proposalVersion: 1, fencingToken: input.fencingToken, approvalId } })
+    tx.outbox({ type: 'approval.requested', caseId, payload: { runId: run.id, proposalId, approvalId } })
+    return { proposalId, approvalId, proposalVersion: 1, payloadHash: content.payloadHash }
   }
 
   /** 公開APIからの利用者提案。AI は認可済み内部APIを使う。 */
@@ -473,6 +516,11 @@ export class ProposalService {
   ): Promise<void> {
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const approval = await tx.require<ApprovalEntity>(approvalLocation(caseId, approvalId))
+      // 外側の認可後に権限が撤回されても適用しない。
+      const member = await tx.get<CaseMember>({ collection: collections.caseMembers, caseId, id: user.userId })
+      const tenantMember = await tx.get<TenantMember>({ collection: collections.members, caseId: null, id: user.userId })
+      if (!member?.active || member.userId !== user.userId || !roleAllows(member.role, 'approval.decide')
+        || !tenantMember?.active || tenantMember.userId !== user.userId) throw errors.forbidden()
       const now = Date.now()
 
       if (approval.status !== 'PENDING') {
@@ -544,6 +592,7 @@ export class ProposalService {
       }
 
       // 反映と承認の記録を同じ Transaction で確定する。
+      await this.fenceAiApplication(tx, caseId, proposal)
       await applier.apply(tx, { caseId, proposal, userId: user.userId })
 
       tx.update<ApprovalEntity>(approvalLocation(caseId, approvalId), input.expectedVersion, {
@@ -655,7 +704,35 @@ export class ProposalService {
     await this.access.authorizeCase(user, caseId, 'case.read')
     const snapshot = await this.read.get<ProposalVersionEntity>(user.tenantId, versionLocation(caseId, proposalId, version))
     if (!snapshot) throw errors.notFound()
-    return { proposalId, caseId, ...snapshot.content, recordedAt: snapshot.createdAt }
+    const content = { ...snapshot.content }
+    delete content.execution
+    return { proposalId, caseId, ...content, recordedAt: snapshot.createdAt }
+  }
+
+  /**
+   * 人の承認は古いAIのcapabilityでは行わない。現在のleaseを再検査し、
+   * Backendの短い適用区間として世代を進め、同じcommitで解放する。
+   * 待機中のlease失効だけで、保存済みの承認対象を不変履歴ごと失効させない。
+   */
+  private async fenceAiApplication(tx: Tx, caseId: string, proposal: ProposalEntity) {
+    if (proposal.source !== 'AI') return
+    if (!proposal.agentRunId || !proposal.execution) throw errors.preconditionFailed({ details: { reason: 'MISSING_EXECUTION_PROVENANCE' } })
+    const run = await tx.require<AgentRunEntity>({ collection: collections.agentRuns, caseId, id: proposal.agentRunId })
+    if (run.currentAttemptId !== proposal.execution.attemptId || run.currentJobId !== proposal.execution.jobId
+      || ['CANCELLED', 'FAILED', 'NEEDS_ATTENTION'].includes(run.status)) throw errors.conflict({
+        details: { reason: 'STALE_EXECUTION' },
+        internal: { staleProposalId: proposal.id, staleProposalEntityVersion: proposal.version },
+      })
+    const location = leaseLocation(caseId)
+    const lease = await tx.require<CaseLeaseEntity>(location)
+    if (lease.holderRunId && lease.holderRunId !== run.id && !isLeaseExpired(lease, Date.now())) {
+      throw errors.conflict({ details: { reason: 'CASE_BUSY' } })
+    }
+    const fencingToken = lease.fencingToken + 1
+    tx.update<CaseLeaseEntity>(location, lease.version, { holderRunId: null, expiresAt: null, fencingToken })
+    tx.audit({ caseId, type: 'proposal.application_fenced',
+      target: { collection: collections.proposals.name, id: proposal.id, version: proposal.version },
+      detail: { submissionFencingToken: proposal.execution.fencingToken, applicationFencingToken: fencingToken } })
   }
 
   /**

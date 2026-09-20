@@ -64,7 +64,7 @@ Entityの変更、承認の記録、提案の状態、監査、Outboxを1つのT
 ## 子Issueへ分割した範囲
 
 1. 財産・債務・契約・関係者の適用処理（#40）は実装済み。全入力値の固定と対象Entityの版検証を行います。
-2. AI由来の提案とCase lease / fencingTokenの連携、結果の鮮度検証（#41）。#36 の内部API契約に依存します。
+2. AI由来の提案とCase lease / fencingTokenの連携、結果の鮮度検証（#41）を実装。内部APIの提出は現在のleaseを必須とし、人の承認では最新権限・Case・根拠・Run/attemptを再検証したBackend適用区間で世代を進めます。待機中のlease失効と、人が確認する不変の承認対象の期限を混同しません。[内部実行契約](../api/internal-execution.md)。
 3. 書類要求・専門家引継ぎ・根拠の提案の適用処理（#42）は実装済み。承認必須で、外部連絡はしません。
 
 Entity別の入力と適用範囲は [Proposal payload契約](../api/proposal-payloads.md) を参照してください。

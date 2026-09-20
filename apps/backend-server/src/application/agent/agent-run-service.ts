@@ -11,6 +11,7 @@ import type { CommandMeta } from '../case/case-service.js'
 import type { ConsentService } from '../consent/consent-service.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
 import type { DocLocation, Page, ReadRepository, UnitOfWork } from '../ports/persistence.js'
+import { releaseLease } from './lease-service.js'
 
 export interface AgentRunView {
   id: string
@@ -234,6 +235,7 @@ export class AgentRunService {
         // 取消後に届いた古い attempt の結果を受け付けないよう、世代を変える。
         currentAttemptId: randomUUID(),
       })
+      if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       tx.audit({
         caseId,
         type: 'agent_run.cancelled',
@@ -271,6 +273,7 @@ export class AgentRunService {
       }
       const caseEntity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
       const jobId = randomUUID()
+      if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       tx.update<AgentRunEntity>(runLocation(caseId, runId), expectedVersion, {
         status: 'QUEUED',
         attempt: current.attempt + 1,
@@ -279,6 +282,7 @@ export class AgentRunService {
         initiatedByUserId: user.userId,
         caseVersionAtAccept: caseEntity.caseVersion,
         progressSequence: -1,
+        fencingToken: null,
         failureReason: null,
         waitingFor: null,
         finishedAt: null,

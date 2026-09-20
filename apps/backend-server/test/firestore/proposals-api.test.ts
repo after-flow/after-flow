@@ -223,7 +223,7 @@ describeFirestore('Entity別Proposal適用', () => {
     assert.equal(policy.status, 400)
   })
 
-  it('保存済みAI提案fixtureの適用でも財産・債務を確認済みにしない（提出認証は#41）', async () => {
+  it('実行provenanceのない旧形式AI提案を正式適用しない', async () => {
     const { tenantId, app, caseId } = await setup()
     for (const fixture of cases.slice(0, 2)) {
       const proposal = await submit(app, caseId, fixture.kind, { operation: 'CREATE', fields: fixture.fields })
@@ -232,12 +232,10 @@ describeFirestore('Entity別Proposal適用', () => {
       const storedProposal = (await proposalRef.get()).data()!
       proposal.id = `fixture-${proposal.id}`
       await proposalRef.parent.doc(proposal.id).create({ ...storedProposal, id: proposal.id, source: 'AI', agentRunId: 'fixture-run' })
-      assert.equal((await approve(app, caseId, await requestApproval(app, caseId, proposal))).status, 200)
-      const stored = (await firestore().collection(`tenants/${tenantId}/cases/${caseId}/${fixture.collection}`).get()).docs[0]!
-      assert.equal(stored.get('provenance.source'), 'AI')
-      assert.equal(stored.get('provenance.agentRunId'), 'fixture-run')
-      assert.equal(stored.get('provenance.proposalId'), proposal.id)
-      assert.equal(stored.get('confirmation.state'), 'UNCONFIRMED')
+      const rejected = await approve(app, caseId, await requestApproval(app, caseId, proposal))
+      assert.equal(rejected.status, 409)
+      assert.equal(rejected.body.error.details.reason, 'MISSING_EXECUTION_PROVENANCE')
+      assert.equal((await firestore().collection(`tenants/${tenantId}/cases/${caseId}/${fixture.collection}`).get()).size, 0)
     }
   })
 })

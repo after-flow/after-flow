@@ -8,9 +8,9 @@ info:
 servers:
   - url: /internal/v1
 paths:
-  /runs/{runId}/context:
-    get:
-      operationId: internal_context
+  /runs/{runId}/proposals:
+    post:
+      operationId: internal_proposals
       security:
         - serviceIdentity: []
           executionAuthorization: []
@@ -50,6 +50,211 @@ paths:
           required: true
           schema:
             type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $schema: https://json-schema.org/draft/2020-12/schema
+              type: object
+              properties:
+                caseVersion:
+                  type: integer
+                  exclusiveMinimum: 0
+                  maximum: 9007199254740991
+                contextSnapshotId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                fencingToken:
+                  type: integer
+                  exclusiveMinimum: 0
+                  maximum: 9007199254740991
+                artifactVersion:
+                  type: integer
+                  exclusiveMinimum: 0
+                  maximum: 9007199254740991
+                contentHash:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{43}$
+                proposalId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                kind:
+                  type: string
+                  enum:
+                    - TASK_PROPOSAL
+                    - ASSET_PROPOSAL
+                    - LIABILITY_PROPOSAL
+                    - CONTRACT_PROPOSAL
+                    - PERSON_PROPOSAL
+                    - DOCUMENT_REQUEST
+                    - ESCALATION_PROPOSAL
+                    - EVIDENCE_PROPOSAL
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                summary:
+                  default: ""
+                  type: string
+                  maxLength: 2000
+                payload:
+                  type: object
+                  propertyNames:
+                    type: string
+                  additionalProperties: {}
+                basis:
+                  default: []
+                  maxItems: 20
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum:
+                          - DOCUMENT
+                          - TASK
+                          - MESSAGE
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      version:
+                        type: integer
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
+                      label:
+                        type: string
+                        maxLength: 120
+                    required:
+                      - type
+                      - id
+                      - version
+                      - label
+                    additionalProperties: false
+                assetDisposal:
+                  default: false
+                  type: boolean
+              required:
+                - caseVersion
+                - contextSnapshotId
+                - fencingToken
+                - artifactVersion
+                - contentHash
+                - proposalId
+                - kind
+                - title
+                - payload
+              additionalProperties: false
+      responses:
+        "200":
+          description: Run scoped response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $schema: https://json-schema.org/draft/2020-12/schema
+                    type: object
+                    properties:
+                      proposalId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      approvalId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      proposalVersion:
+                        type: integer
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
+                      payloadHash:
+                        type: string
+                    required:
+                      - proposalId
+                      - approvalId
+                      - proposalVersion
+                      - payloadHash
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    required:
+                      - requestId
+                    properties:
+                      requestId:
+                        type: string
+        "400":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "401":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "403":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "404":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "409":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "500":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "503":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+  /runs/{runId}/context:
+    get:
+      operationId: internal_context
+      security:
+        - serviceIdentity: []
+          executionAuthorization: []
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+        - *a1
+        - *a2
+        - *a3
+        - *a4
+        - *a5
       responses:
         "200":
           description: Run scoped response
@@ -74,6 +279,10 @@ paths:
                         minLength: 1
                         maxLength: 128
                         pattern: ^[A-Za-z0-9_-]+$
+                      fencingToken:
+                        type: integer
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
                       artifactVersion:
                         type: integer
                         exclusiveMinimum: 0
@@ -93,6 +302,7 @@ paths:
                     required:
                       - caseVersion
                       - contextSnapshotId
+                      - fencingToken
                       - artifactVersion
                       - contentHash
                       - expiresAt
@@ -193,6 +403,10 @@ paths:
                         minLength: 1
                         maxLength: 128
                         pattern: ^[A-Za-z0-9_-]+$
+                      fencingToken:
+                        type: integer
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
                       artifactVersion:
                         type: integer
                         exclusiveMinimum: 0
@@ -212,6 +426,7 @@ paths:
                     required:
                       - caseVersion
                       - contextSnapshotId
+                      - fencingToken
                       - artifactVersion
                       - contentHash
                       - expiresAt
@@ -621,6 +836,10 @@ paths:
                       minLength: 1
                       maxLength: 128
                       pattern: ^[A-Za-z0-9_-]+$
+                    fencingToken:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
                     artifactVersion:
                       type: integer
                       exclusiveMinimum: 0
@@ -748,6 +967,7 @@ paths:
                   required:
                     - caseVersion
                     - contextSnapshotId
+                    - fencingToken
                     - artifactVersion
                     - contentHash
                     - resultId
@@ -765,6 +985,10 @@ paths:
                       minLength: 1
                       maxLength: 128
                       pattern: ^[A-Za-z0-9_-]+$
+                    fencingToken:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
                     artifactVersion:
                       type: integer
                       exclusiveMinimum: 0
@@ -817,6 +1041,7 @@ paths:
                   required:
                     - caseVersion
                     - contextSnapshotId
+                    - fencingToken
                     - artifactVersion
                     - contentHash
                     - resultId
@@ -834,6 +1059,10 @@ paths:
                       minLength: 1
                       maxLength: 128
                       pattern: ^[A-Za-z0-9_-]+$
+                    fencingToken:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
                     artifactVersion:
                       type: integer
                       exclusiveMinimum: 0
@@ -885,6 +1114,7 @@ paths:
                   required:
                     - caseVersion
                     - contextSnapshotId
+                    - fencingToken
                     - artifactVersion
                     - contentHash
                     - resultId

@@ -1,6 +1,7 @@
-import type { ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent } from '@aftercare/internal-contracts'
+import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent } from '@aftercare/internal-contracts'
 import { INTERNAL_LIMITS } from '@aftercare/internal-contracts'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
+import type { CaseLeaseEntity } from '../../domain/agent/case-lease.js'
 import { isRunTerminal, isRunWaiting } from '../../domain/agent/agent-run.js'
 import type { CaseMember } from '../../domain/authorization/case-role.js'
 import { roleAllows } from '../../domain/authorization/case-role.js'
@@ -15,6 +16,8 @@ import type { TenantMember } from '../authorization/case-access.js'
 import type { AgentResultIntake } from '../chat/result-intake.js'
 import type { ConsentService } from '../consent/consent-service.js'
 import type { ReadRepository, SnapshotReader, Tx, UnitOfWork } from '../ports/persistence.js'
+import type { ProposalService } from '../proposal/proposal-service.js'
+import { acquireLease, assertLease, leaseLocation, releaseLease } from './lease-service.js'
 
 interface RunArtifactEntity extends EntityBase {
   runId: string
@@ -53,7 +56,8 @@ const contextCollections: [CollectionDescriptor, string[]][] = [
 
 export class InternalExecutionService {
   constructor(private readonly read: SnapshotReader, private readonly uow: UnitOfWork,
-    private readonly consent: ConsentService, private readonly intake: AgentResultIntake) {}
+    private readonly consent: ConsentService, private readonly intake: AgentResultIntake,
+    private readonly proposals?: ProposalService) {}
 
   /** mint/delivery前にも保存済みscope、membership、同意を確認する。 */
   async dispatchClaims(tenantId: string, caseId: string, runId: string, jobId: string): Promise<ExecutionClaims> {
@@ -64,7 +68,8 @@ export class InternalExecutionService {
       this.assertActive(run)
       if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
       return { tenantId, caseId, runId, jobId, executionAttempt: run.currentAttemptId,
-        operation: run.operation, scopes: ['context', 'artifact', 'control', 'heartbeat', 'events', 'result'] }
+        operation: run.operation, scopes: ['context', 'artifact', 'control', 'heartbeat', 'events', 'result',
+          ...(run.operation === 'case_planning' ? ['proposals' as const] : [])] }
     })
   }
 
@@ -112,7 +117,7 @@ export class InternalExecutionService {
       }
       const duplicate = receipts.find(item => item.receipt)?.receipt
       // controlはキャッシュされたCONTINUEを返さない。artifactも有効性を再検証。
-      if (duplicate && (call.scope === 'result' || call.scope === 'events')) {
+      if (duplicate && (call.scope === 'result' || call.scope === 'events' || call.scope === 'proposals')) {
         record(duplicate.result)
         return duplicate.result as T
       }
@@ -175,6 +180,9 @@ export class InternalExecutionService {
     return this.execute(call, async (tx, run) => {
       const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: claims.caseId })
       if (entity.caseVersion !== snapshot.caseVersion || run.caseVersionAtAccept !== entity.caseVersion) throw errors.conflict({ details: { reason: 'STALE_CONTEXT' } })
+      const grant = run.fencingToken
+        ? await assertLease(tx, claims.caseId, run.id, run.fencingToken)
+        : await acquireLease(tx, claims.caseId, run.id)
       const id = fingerprintOf({ runId: run.id, jobId: claims.jobId, attempt: claims.executionAttempt, caseVersion: entity.caseVersion })
       const location = artifactLocation(claims.caseId, id)
       const previous = await tx.get<RunArtifactEntity>(location)
@@ -183,9 +191,12 @@ export class InternalExecutionService {
         return previous.artifact
       }
       const artifact: ContextArtifact = { ...snapshot, contextSnapshotId: id, artifactVersion: 1,
+        fencingToken: grant.fencingToken,
         contentHash: fingerprintOf(snapshot.content), expiresAt: new Date(Date.now() + 300_000).toISOString() }
       tx.create<RunArtifactEntity>(location, { id, runId: run.id, jobId: claims.jobId, executionAttempt: claims.executionAttempt, artifact })
-      tx.update<AgentRunEntity>(runLocation(claims.caseId, run.id), run.version, { status: 'RUNNING', startedAt: run.startedAt ?? new Date().toISOString() })
+      tx.update<AgentRunEntity>(runLocation(claims.caseId, run.id), run.version, {
+        status: 'RUNNING', fencingToken: grant.fencingToken, startedAt: run.startedAt ?? new Date().toISOString(),
+      })
       return artifact
     })
   }
@@ -200,9 +211,11 @@ export class InternalExecutionService {
     const { claims } = call
     if (stored.runId !== claims.runId || stored.jobId !== claims.jobId || stored.executionAttempt !== claims.executionAttempt) throw errors.notFound()
     const artifact = stored.artifact
+    await assertLease(tx, claims.caseId, claims.runId, artifact.fencingToken)
     const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: claims.caseId })
     if (Date.parse(artifact.expiresAt) <= Date.now() || artifact.caseVersion !== entity.caseVersion
-      || (proof && (proof.caseVersion !== artifact.caseVersion || proof.contentHash !== artifact.contentHash || proof.artifactVersion !== artifact.artifactVersion))
+      || (proof && (proof.caseVersion !== artifact.caseVersion || proof.contentHash !== artifact.contentHash
+        || proof.artifactVersion !== artifact.artifactVersion || proof.fencingToken !== artifact.fencingToken))
       || fingerprintOf(artifact.content) !== artifact.contentHash) throw errors.conflict({ details: { reason: 'STALE_CONTEXT' } })
     // バージョン更新を省略したlegacyデータにも安全側で対処する。
     const documents = artifact.content.documents as { id: string; version: number }[] | undefined
@@ -224,7 +237,11 @@ export class InternalExecutionService {
 
   control(call: InternalCall) {
     return this.execute(call, async (tx, run) => {
-      try { await this.assertAccess(tx, run); this.assertActive(run) }
+      try {
+        await this.assertAccess(tx, run)
+        this.assertActive(run)
+        if (run.fencingToken) await assertLease(tx, call.claims.caseId, run.id, run.fencingToken)
+      }
       catch { return { instruction: 'STOP' as const, reason: 'EXECUTION_NOT_ALLOWED', caseVersion: null } }
       const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: call.claims.caseId })
       return entity.caseVersion === run.caseVersionAtAccept
@@ -235,6 +252,9 @@ export class InternalExecutionService {
 
   heartbeat(call: InternalCall) {
     return this.execute(call, async (tx, run) => {
+      if (!run.fencingToken) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_REQUIRED' } })
+      const lease = await assertLease(tx, call.claims.caseId, run.id, run.fencingToken)
+      tx.update<CaseLeaseEntity>(leaseLocation(call.claims.caseId), lease.version, { expiresAt: new Date(Date.now() + 300_000).toISOString() })
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { heartbeatAt: new Date().toISOString() })
       return { accepted: true as const }
     })
@@ -242,6 +262,8 @@ export class InternalExecutionService {
 
   event(call: InternalCall, input: ProgressEvent) {
     return this.execute(call, async (tx, run) => {
+      if (!run.fencingToken) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_REQUIRED' } })
+      await assertLease(tx, call.claims.caseId, run.id, run.fencingToken)
       if (input.sequence <= (run.progressSequence ?? -1)) return { applied: false, reason: 'OLD_PROGRESS' }
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { progressSequence: input.sequence })
       tx.audit({ caseId: call.claims.caseId, type: 'agent_run.progress',
@@ -255,7 +277,30 @@ export class InternalExecutionService {
       if (input.kind !== run.operation) throw errors.forbidden()
       const artifact = await tx.require<RunArtifactEntity>(artifactLocation(call.claims.caseId, input.contextSnapshotId))
       await this.assertArtifact(tx, call, artifact, input)
-      for (const ref of input.basis) {
+      await this.assertBasis(tx, call, artifact, input.basis)
+      await releaseLease(tx, call.claims.caseId, run.id, input.fencingToken)
+      const envelope = { runId: run.id, attemptId: run.currentAttemptId }
+      if (input.kind === 'task_guidance') return this.intake.applyGuidanceResult(tx, call.claims.caseId, { ...input, ...envelope })
+      if (input.kind === 'chat_reply') return this.intake.applyChatReply(tx, call.claims.caseId, { ...input, ...envelope })
+      tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString() })
+      tx.audit({ caseId: call.claims.caseId, type: 'agent_run.result',
+        target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { resultId: input.resultId, status: input.status } })
+      return { applied: true, reason: null }
+    }, `result:${input.resultId}`)
+  }
+
+  proposal(call: InternalCall, input: AiProposalInput) {
+    return this.execute(call, async (tx, run) => {
+      if (!this.proposals) throw errors.featureNotConnected()
+      const artifact = await tx.require<RunArtifactEntity>(artifactLocation(call.claims.caseId, input.contextSnapshotId))
+      await this.assertArtifact(tx, call, artifact, input)
+      await this.assertBasis(tx, call, artifact, input.basis)
+      return this.proposals.submitAi(tx, call.claims.caseId, run, input)
+    }, `proposal:${input.proposalId}`)
+  }
+
+  private async assertBasis(tx: Tx, call: InternalCall, artifact: RunArtifactEntity, basis: InternalResult['basis']) {
+      for (const ref of basis) {
         const content = artifact.artifact.content
         const allowed = ref.type === 'DOCUMENT' ? content.documents
           : ref.type === 'TASK' ? (content.tasks ?? (content.task ? [content.task] : []))
@@ -269,13 +314,5 @@ export class InternalExecutionService {
           if (document.archived || document.storageState !== 'STORED' || document.inspection.status !== 'PASSED') throw errors.forbidden()
         }
       }
-      const envelope = { runId: run.id, attemptId: run.currentAttemptId }
-      if (input.kind === 'task_guidance') return this.intake.applyGuidanceResult(tx, call.claims.caseId, { ...input, ...envelope })
-      if (input.kind === 'chat_reply') return this.intake.applyChatReply(tx, call.claims.caseId, { ...input, ...envelope })
-      tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString() })
-      tx.audit({ caseId: call.claims.caseId, type: 'agent_run.result',
-        target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { resultId: input.resultId, status: input.status } })
-      return { applied: true, reason: null }
-    }, `result:${input.resultId}`)
   }
 }
