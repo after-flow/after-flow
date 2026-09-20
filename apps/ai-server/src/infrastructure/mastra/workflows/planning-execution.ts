@@ -1,5 +1,6 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
+import { contentHash } from '../../../orchestration/context/builder.js'
 import { contextProofSchema, internalId } from '@aftercare/internal-contracts'
 import { createCasePlanningWorkflow, planningOutputSchema } from './case-planning.js'
 import { proposalActions, proposalInputSchema, proposalSubmittedSchema } from './proposal.js'
@@ -24,8 +25,12 @@ export function createPlanningExecutionWorkflow(deps: Parameters<typeof createCa
       const first = inputData.proposals[0]
       return { plan: inputData, proposal: first ? { actionId: first.actionId, draft: first.draft, context: inputData.context } : null }
     } })
+  const currentReview = (plan: z.infer<typeof planningOutputSchema>) => plan.reviewConfigHash === contentHash(deps.templates) && Date.parse(plan.reviewValidUntil) > Date.now()
   const submit = createStep({ id: 'submit-plan-proposal', inputSchema: selectedSchema, outputSchema: submittedSchema,
-    execute: async args => ({ ...args.inputData, submitted: args.inputData.proposal ? await approval.submit(args.inputData.proposal) : null }) })
+    execute: async args => {
+      if (!currentReview(args.inputData.plan)) throw new Error('Plan review changed before submission')
+      return { ...args.inputData, submitted: args.inputData.proposal ? await approval.submit(args.inputData.proposal) : null }
+    } })
   const wait = createStep({ id: 'wait-plan-proposal', inputSchema: submittedSchema, outputSchema: verifiedSchema,
     resumeSchema: z.object({ resume: z.literal(true) }).strict(), suspendSchema: z.object({ waitRequestId: internalId }).strict(),
     execute: async args => {
@@ -43,7 +48,7 @@ export function createPlanningExecutionWorkflow(deps: Parameters<typeof createCa
       await deps.guard()
       const { resultId } = inputSchema.parse(getInitData())
       const remaining = Math.max(0, inputData.plan.proposals.length - (inputData.proposal ? 1 : 0))
-      const status = inputData.outcome === 'APPLIED' && !remaining && !inputData.plan.questions.length ? 'SUCCEEDED' as const : 'NEEDS_ATTENTION' as const
+      const status = inputData.outcome === 'APPLIED' && currentReview(inputData.plan) && !remaining && !inputData.plan.questions.length ? 'SUCCEEDED' as const : 'NEEDS_ATTENTION' as const
       const proof = contextProofSchema.parse(await deps.backend.context({ signal: deps.signal }))
       const response = await deps.backend.result({ ...proof, resultId, kind: 'case_planning', status, basis: [] }, { requestId: resultId, signal: deps.signal })
       return { ...response, status, remaining }

@@ -12,3 +12,5 @@
 WAIT再開は保存済み計画を使用し、Orch/Agent/提案送信を繰り返さない。新しいattemptへSnapshotをforkするのはRuntimeの認可と所有権確認後だけ。実行途中のRETRY/CHECKPOINTは未定義の再適用を避けるため拒否する。Provider/Orch/Templateが未提供の既定プロセスでは503を維持する。
 
 検証: 実Mastraの2 Agent fixture、既存/過去案の重複抑止、前提不足、別Case依存、独自期限拒否。Firestore統合試験で承認時の必要書類/依存反映と不明/循環依存の拒否を検証。
+
+承認待ちを跨ぐ際は、保存したTemplate設定hashと根拠/Templateの有効期限を再照合する。改定・期限切れがある場合は正式な適用結果がAPPLIEDでもNEEDS_ATTENTIONとする。確定済みBackend変更を巻き戻したり、古い根拠を使って自動的に別の提案を送ったりしない。

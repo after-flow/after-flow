@@ -50,3 +50,12 @@ test('native preparation workflow refuses a changed or cross-case live view', as
     if (result.status === 'success') assert.equal(result.result.state, 'NEEDS_REVIEW')
   }
 })
+
+
+test('readiness rechecks approved manifest facts instead of trusting mutable derived missing lists', () => {
+  const { procedure, context } = fixture()
+  const prep = buildInsurancePreparation({ ...context, facts: [{ ...context.facts[0], state: 'unknown' }] }, procedure)
+  const receipt = { artifactId: 'artifact', artifactVersion: 1, contentHash: prep.contentHash }
+  assert.equal(verifyInsurancePreparation({ ...prep, missingFields: [] }, receipt, { ...receipt, status: 'APPROVED' }).state, 'NEEDS_REVIEW')
+  assert.throws(() => verifyInsurancePreparation({ ...prep, manifest: { ...prep.manifest, caseVersion: 99 } }, receipt, { ...receipt, status: 'APPROVED' }), /modified/)
+})

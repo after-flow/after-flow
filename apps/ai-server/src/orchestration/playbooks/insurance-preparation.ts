@@ -47,10 +47,11 @@ export function buildInsurancePreparation(rawContext: unknown, rawProcedure: unk
 }
 /** Receipt and approval must be read from authenticated Backend APIs; a model cannot self-attest them. */
 export function verifyInsurancePreparation(preparation: ReturnType<typeof buildInsurancePreparation>, rawReceipt: unknown, rawApproval: unknown) {
+  if (contentHash(preparation.manifest) !== preparation.contentHash) throw new Error('Preparation manifest was modified')
   const receipt = rawReceipt == null ? null : preparationReceiptSchema.parse(rawReceipt)
   const approval = rawApproval == null ? null : preparationApprovalSchema.parse(rawApproval)
-  if (preparation.missingDocuments.length) return { state: 'WAITING_DOCUMENTS' as const, externalSubmission: false as const }
+  if (preparation.manifest.documents.some(item => item.document === null)) return { state: 'WAITING_DOCUMENTS' as const, externalSubmission: false as const }
   const approved = receipt && approval && approval.status === 'APPROVED' && receipt.artifactId === approval.artifactId && receipt.artifactVersion === approval.artifactVersion &&
     receipt.contentHash === preparation.contentHash && approval.contentHash === preparation.contentHash
-  return { state: approved && !preparation.missingFields.length && !preparation.manifest.unresolved.length ? 'READY' as const : 'NEEDS_REVIEW' as const, externalSubmission: false as const }
+  return { state: approved && preparation.manifest.facts.every(item => item.fact?.state === 'confirmed' && !!item.fact.value) && !preparation.manifest.unresolved.length ? 'READY' as const : 'NEEDS_REVIEW' as const, externalSubmission: false as const }
 }
