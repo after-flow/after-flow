@@ -1,6 +1,6 @@
 # ADR 0003: AgentRun・Outbox・Case leaseの実行制御
 
-- 状態: 中核を実装済み。内部API契約と待機・再開は子Issueへ分割
+- 状態: Backend内部契約・待機再開をFake AI HTTPで検証済み。実AI/Mastra統合は別Issue
 - 日付: 2026-09-20
 - 関連Issue: #10（親）、#12（同意Policy）、#15（チャット）、#8（書類）
 
@@ -56,10 +56,21 @@ Backendの試験は独立したFake AI HTTPサーバーに対して行ってい�
 
 ## 子Issueへ分割した範囲
 
-1. Backend内部APIの契約と認可（#36）を実装。短寿命のRun/Job/attempt認可、Context/Artifact、control、heartbeat、events、resultと独立した内部OpenAPI。[接続・制限](../api/internal-execution.md)。文書本文配送・lease連携・待機再開はそれぞれの子Issueに残します。
-2. WaitRequestとresume intent、定期Reconciler（#37）。先行して届いた承認イベントを捨てずInboxに残し、条件成立時に一度だけ再開配送します。
+1. Backend内部APIの契約と認可（#36）を実装。短寿命のRun/Job/attempt認可、Context/Artifact、control、heartbeat、events、result、proposals、wait-requestsと独立した内部OpenAPI。[接続・制限](../api/internal-execution.md)。lease連携は#41。文書本文配送は#25-27に残します。
+2. WaitRequestとresume intent、定期Reconciler（#37）を実装。AI提案・Approval・WaitRequestを同じtransactionで登録し、Snapshotより先行する承認/却下をInboxに保持。Snapshot保存状態を内部HTTPで照合し、一意なresume Jobと新attemptをtransactionで作成します。書類待ちの登録は可能ですが、実検査/配信が未接続のためDOCUMENTS条件での再開は無効です。
 3. Outbox配送の定期実行と再起動後の継続（#38）は独立workerとして実装。
    claim世代検証、SIGKILL後の別プロセスからの回復、滞留検知を含む。[運用手順](../runbooks/outbox-worker.md)。
+
+## 待機・復旧の契約
+
+- `PENDING_SNAPSHOT → WAITING → RESUME_QUEUED → RESUMED`。公開Runの待機とAI所有Snapshotを同一視しません。
+- InboxはOutbox ID/hashで冪等保存。消費イベントはWaitRequestの`inboxId`に記録し、再開Job ID/attemptを同一transactionで固定します。
+- 再開前に現在のCase権限・同意、Proposal版/hashと適用/却下結果を再確認。新context取得でCase版・lease世代・根拠を検証し、Snapshot内の古い事実は使いません。
+- Run内Action IDはattemptを跨いで不変。適用済みActionはfresh contextで照会でき、再提出でも再適用しません。未適用Actionの再提案はimmutableな新Proposal版と新Approvalになります。
+- lease切れRUNNINGはcheckpointがあればCHECKPOINT、無ければRETRY。任意命令位置からの復旧は保証しません。自動復旧は3 attemptまでで要確認に止めます。
+- 配送ACKより先に保存されたRun callbackは受領証明。旧Jobや完了済みRunを再配送で実行しません。
+- 同意・権限撤回はSnapshot HTTPの障害に依存せず取消し。AIは各Step前のcontrol照会でSTOPを確認する契約です。
+- Emulatorと独立Fake AI HTTPで先行承認、重複Job、遅着結果、lease失効、同意撤回、別workerプロセスでの待機復旧を検証。実Mastra Snapshot永続化の証明ではありません。
 
 ## 対象外
 

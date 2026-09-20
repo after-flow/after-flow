@@ -1,4 +1,4 @@
-import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent } from '@aftercare/internal-contracts'
+import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent, WaitRequestInput } from '@aftercare/internal-contracts'
 import { INTERNAL_LIMITS } from '@aftercare/internal-contracts'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { CaseLeaseEntity } from '../../domain/agent/case-lease.js'
@@ -18,6 +18,9 @@ import type { ConsentService } from '../consent/consent-service.js'
 import type { ReadRepository, SnapshotReader, Tx, UnitOfWork } from '../ports/persistence.js'
 import type { ProposalService } from '../proposal/proposal-service.js'
 import { acquireLease, assertLease, leaseLocation, releaseLease } from './lease-service.js'
+import { createPendingWait, recordWaiting, validateWaitCondition } from './wait-requests.js'
+import type { ProposalEntity } from '../../domain/proposal/proposal.js'
+import type { WaitRequestEntity } from '../../domain/agent/wait-request.js'
 
 interface RunArtifactEntity extends EntityBase {
   runId: string
@@ -68,12 +71,12 @@ export class InternalExecutionService {
       this.assertActive(run)
       if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
       return { tenantId, caseId, runId, jobId, executionAttempt: run.currentAttemptId,
-        operation: run.operation, scopes: ['context', 'artifact', 'control', 'heartbeat', 'events', 'result',
+        operation: run.operation, scopes: ['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'wait-requests',
           ...(run.operation === 'case_planning' ? ['proposals' as const] : [])] }
     })
   }
 
-  private async assertAccess(tx: Tx, run: AgentRunEntity): Promise<void> {
+  async assertAccess(tx: Tx, run: AgentRunEntity): Promise<void> {
     if (!run.initiatedByUserId || !run.caseId) throw errors.forbidden()
     const user = { tenantId: run.tenantId, userId: run.initiatedByUserId }
     const member = await tx.get<TenantMember>({ collection: collections.members, caseId: null, id: user.userId })
@@ -81,6 +84,12 @@ export class InternalExecutionService {
     if (!member?.active || member.userId !== user.userId || !caseMember?.active
       || caseMember.userId !== user.userId || !roleAllows(caseMember.role, 'case.write')) throw errors.forbidden()
     await this.consent.assertExternalAiAllowed(user, tx)
+  }
+
+  /** callbackの永続記録は、失われた配送ACKより強い受領証明。旧jobも再実行しない。 */
+  async deliverySettled(tenantId: string, caseId: string, runId: string, jobId: string): Promise<boolean> {
+    const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, runId))
+    return !!run && (run.currentJobId !== jobId || run.status !== 'QUEUED')
   }
 
   private assertActive(run: AgentRunEntity) {
@@ -117,7 +126,7 @@ export class InternalExecutionService {
       }
       const duplicate = receipts.find(item => item.receipt)?.receipt
       // controlはキャッシュされたCONTINUEを返さない。artifactも有効性を再検証。
-      if (duplicate && (call.scope === 'result' || call.scope === 'events' || call.scope === 'proposals')) {
+      if (duplicate && (call.scope === 'result' || call.scope === 'events' || call.scope === 'proposals' || call.scope === 'wait-requests')) {
         record(duplicate.result)
         return duplicate.result as T
       }
@@ -138,6 +147,12 @@ export class InternalExecutionService {
       if (!entity) throw errors.notFound()
       const content: Record<string, unknown> = { operation: run.operation,
         case: pick(entity, ['deceasedName', 'dateOfDeath', 'knownAt', 'municipality', 'status']) }
+      content.resume = run.pendingResume ?? null
+      const actions = await reader.list<ProposalEntity>(claims.tenantId, collections.proposals, claims.caseId, {
+        limit: 100, where: [{ field: 'agentRunId', op: '==', value: run.id }],
+      })
+      if (actions.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
+      content.actions = actions.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, status: p.status, proposalVersion: p.proposalVersion }))
       if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
       if (run.operation === 'task_guidance') {
         if (run.targetType !== 'TASK') throw errors.forbidden()
@@ -197,6 +212,12 @@ export class InternalExecutionService {
       tx.update<AgentRunEntity>(runLocation(claims.caseId, run.id), run.version, {
         status: 'RUNNING', fencingToken: grant.fencingToken, startedAt: run.startedAt ?? new Date().toISOString(),
       })
+      if (run.pendingResume?.waitRequestId) {
+        const location = { collection: collections.waitRequests, caseId: claims.caseId, id: run.pendingResume.waitRequestId }
+        const wait = await tx.require<WaitRequestEntity>(location)
+        if (wait.resumeJobId !== run.currentJobId) throw errors.conflict()
+        tx.update<WaitRequestEntity>(location, wait.version, { state: 'RESUMED' })
+      }
       return artifact
     })
   }
@@ -262,6 +283,7 @@ export class InternalExecutionService {
 
   event(call: InternalCall, input: ProgressEvent) {
     return this.execute(call, async (tx, run) => {
+      if ('type' in input) return recordWaiting(tx, run, input.waitRequestId, input.snapshotId)
       if (!run.fencingToken) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_REQUIRED' } })
       await assertLease(tx, call.claims.caseId, run.id, run.fencingToken)
       if (input.sequence <= (run.progressSequence ?? -1)) return { applied: false, reason: 'OLD_PROGRESS' }
@@ -274,6 +296,7 @@ export class InternalExecutionService {
 
   result(call: InternalCall, input: InternalResult) {
     return this.execute(call, async (tx, run) => {
+      if (run.activeWaitRequestId) throw errors.conflict({ details: { reason: 'WAIT_OUTSTANDING' } })
       if (input.kind !== run.operation) throw errors.forbidden()
       const artifact = await tx.require<RunArtifactEntity>(artifactLocation(call.claims.caseId, input.contextSnapshotId))
       await this.assertArtifact(tx, call, artifact, input)
@@ -287,6 +310,15 @@ export class InternalExecutionService {
         target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { resultId: input.resultId, status: input.status } })
       return { applied: true, reason: null }
     }, `result:${input.resultId}`)
+  }
+
+  wait(call: InternalCall, input: WaitRequestInput) {
+    return this.execute(call, async (tx, run) => {
+      const artifact = await tx.require<RunArtifactEntity>(artifactLocation(call.claims.caseId, input.contextSnapshotId))
+      await this.assertArtifact(tx, call, artifact, input)
+      await validateWaitCondition(tx, run, input.condition)
+      return createPendingWait(tx, run, input.waitRequestId, input.condition)
+    }, `wait:${input.waitRequestId}`)
   }
 
   proposal(call: InternalCall, input: AiProposalInput) {

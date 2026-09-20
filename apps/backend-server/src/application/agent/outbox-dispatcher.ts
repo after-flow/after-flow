@@ -152,6 +152,8 @@ export class OutboxDispatcher {
   }
 
   private async isDeliveryAllowed(tenantId: string, event: OutboxEvent): Promise<boolean> {
+    // SYSTEMが作るresume/recover。Scoped clientが保存済みRunの利用者をtransactionで再認可する。
+    if (event.type === 'agent.resume' || event.type === 'agent.recover') return true
     // 処理を止めるための通知は、同意の有無に関わらず届ける。
     if (CONTROL_EVENT_TYPES.has(event.type)) return true
     if (!event.initiatedByUserId) {

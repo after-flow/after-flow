@@ -20,19 +20,26 @@ export function caseTaskHandler(tasks: TaskService): LocalOutboxHandler {
   }
 }
 
+export function combineLocalHandlers(...handlers: LocalOutboxHandler[]): LocalOutboxHandler {
+  return { types: new Set(handlers.flatMap(h => [...h.types])),
+    deliverLocal: event => handlers.find(h => h.types.has(event.type))!.deliverLocal(event) }
+}
+
 /** HTTP要求から独立した管理対象ループ。終了時は実行中のバッチを待って閉じる。 */
 export async function runOutboxWorker(
   dispatcher: Pick<OutboxDispatcher, 'dispatchBatch' | 'backlog'>,
-  options: { tenantIds: string[]; intervalMs: number; signal: AbortSignal; once?: boolean },
+  options: { tenantIds: string[]; intervalMs: number; signal: AbortSignal; once?: boolean;
+    reconciler?: { tick(tenantId: string): Promise<{ checked: number; failed: number }> } },
 ): Promise<void> {
   do {
     for (const tenantId of options.tenantIds) {
       if (options.signal.aborted) return
       try {
         const result = await dispatcher.dispatchBatch(tenantId)
+        const reconciliation = await options.reconciler?.tick(tenantId)
         const backlog = await dispatcher.backlog(tenantId)
         logger.info('outbox worker tick', { tenantId, delivered: result.delivered.length,
-          retrying: result.retrying.length, blocked: result.blocked.length, rejected: result.rejected.length, ...backlog })
+          retrying: result.retrying.length, blocked: result.blocked.length, rejected: result.rejected.length, ...backlog, reconciliation })
       } catch {
         logger.error('outbox worker tick failed', { tenantId })
         if (options.once) throw new Error('outbox worker tick failed')
