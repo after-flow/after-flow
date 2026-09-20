@@ -76,12 +76,14 @@ function parametersOf(spec: RouteSpec) {
 }
 
 function successResponse(response: RouteResponseSpec) {
+  const mediaType = response.mediaType ?? 'application/json'
+  // 実体をそのまま返す route は封筒に包まない。schema も持たない。
+  const schema = response.schema
+    ? jsonSchemaOf(response.schema, 'output')
+    : { type: 'string', format: 'binary' }
   return [
     String(response.status),
-    {
-      description: response.description,
-      content: { 'application/json': { schema: jsonSchemaOf(response.schema, 'output') } },
-    },
+    { description: response.description, content: { [mediaType]: { schema } } },
   ] as const
 }
 
@@ -125,6 +127,29 @@ function operationOf(spec: RouteSpec) {
           requestBody: {
             required: true,
             content: { 'application/json': { schema: jsonSchemaOf(request.body, 'input') } },
+          },
+        }
+      : {}),
+    ...(request.multipart
+      ? {
+          requestBody: {
+            required: true,
+            content: {
+              'multipart/form-data': {
+                schema: {
+                  type: 'object',
+                  properties: Object.fromEntries(
+                    Object.entries(request.multipart.fields).map(([name, description]) => [
+                      name,
+                      name === 'file'
+                        ? { type: 'string', format: 'binary', description }
+                        : { type: 'string', description },
+                    ]),
+                  ),
+                  required: Object.keys(request.multipart.fields),
+                },
+              },
+            },
           },
         }
       : {}),

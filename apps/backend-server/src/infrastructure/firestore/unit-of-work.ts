@@ -293,6 +293,9 @@ export class FirestoreUnitOfWork implements UnitOfWork {
           caseId: event.caseId ?? null,
           type: event.type,
           payload: event.payload,
+          // 配送時に同意 Policy を評価するため、誰の操作かを残す。
+          // 要求本文の申告ではなく、認証済みの actor から取る。
+          initiatedByUserId: context.actor.userId,
           status: 'PENDING',
           attempts: 0,
           nextAttemptAt: FieldValue.serverTimestamp(),
