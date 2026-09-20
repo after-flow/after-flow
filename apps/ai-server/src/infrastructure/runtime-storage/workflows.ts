@@ -98,6 +98,19 @@ export class FirestoreWorkflowsStorage extends WorkflowsStorage {
     return { runs: (await query.get()).docs.map(doc => this.read(doc)!), total }
   }
   async deleteWorkflowRunById(scope: Scope): Promise<void> { await this.ref(scope).delete() }
+  /** Backend-authorized next attempt receives an isolated copy; completed steps are not replayed. */
+  async forkSuspendedSnapshot(input: { workflowName: string; fromRunId: string; toRunId: string }): Promise<void> {
+    if (input.fromRunId === input.toRunId) throw new Error('Resume requires a new attempt snapshot identity')
+    const source = { workflowName: input.workflowName, runId: input.fromRunId }
+    const target = { workflowName: input.workflowName, runId: input.toRunId }
+    await this.db.runTransaction(async tx => {
+      const [previousDoc, nextDoc] = await Promise.all([tx.get(this.ref(source)), tx.get(this.ref(target))])
+      const previous = this.read(previousDoc)
+      if (!previous || (previous.snapshot as WorkflowRunState).status !== 'suspended' || nextDoc.exists) throw new Error('Resume snapshot is unavailable or target already exists')
+      const now = new Date()
+      this.write(tx, target, { ...previous, runId: target.runId, snapshot: { ...(previous.snapshot as WorkflowRunState), runId: target.runId }, createdAt: now, updatedAt: now })
+    })
+  }
   async dangerouslyClearAll(): Promise<void> { throw new Error('Bulk clearing runtime storage is disabled; delete named runs') }
 
   /** Explicit bounded retention cleanup; never deletes running or waiting executions. */
