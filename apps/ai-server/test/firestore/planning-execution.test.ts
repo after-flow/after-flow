@@ -25,6 +25,7 @@ const draft = { tasks: [{ templateId: 'template', sourceIds: ['source'], depende
 
 
 test('planning approval resumes a stored plan without re-running agents or submitting twice', { skip: !process.env.AI_RUNTIME_EMULATOR_HOST }, async () => {
+  for (const reviewState of ['current', 'changed', 'expired'] as const) {
   const signal = new AbortController().signal
   const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief' }) } }, { text: JSON.stringify(draft) }])
   const research = scriptedModel([{ tool: 'searchOfficialSources', input: { query: '必要資料' } }, { tool: 'readOfficialSource', input: { sourceId: 'source' } },
@@ -42,7 +43,7 @@ test('planning approval resumes a stored plan without re-running agents or submi
     previousAttemptId: null, allowedKinds: ['TASK_PROPOSAL'], guard: async () => {}, registerWait: async id => assert.equal(id, 'wait'),
     backend: { context: async () => structuredClone(context), control: async () => ({ instruction: 'CONTINUE', reason: null, caseVersion: context.caseVersion }),
       propose: async input => { submissions++; actionId = input.proposalId; payloadHash = contentHash(input.payload); return { proposalId: 'proposal', approvalId: 'approval', proposalVersion: 1, payloadHash, waitRequestId: 'wait', applicationStatus: 'NOT_APPLIED' } },
-      result: async input => { reports++; assert.equal(input.kind, 'case_planning'); assert.equal('status' in input && input.status, 'SUCCEEDED'); return { applied: true, reason: null } } },
+      result: async input => { reports++; assert.equal(input.kind, 'case_planning'); assert.equal('status' in input && input.status, reviewState === 'current' ? 'SUCCEEDED' : 'NEEDS_ATTENTION'); return { applied: true, reason: null } } },
     prepare: async () => { preparations++; return { routing: { routeId: 'case-planning/v1', evidenceId: 'synthetic-orch' }, agents: { models: { core: core.model, research: research.model }, signal, briefs: [brief], researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds }, sources: () => tools.sources('brief') } } }
   try {
     const first = new Mastra({ storage: createRuntimeStore(db), workflows: { workflow: createPlanningExecutionWorkflow(deps) } })
@@ -51,8 +52,10 @@ test('planning approval resumes a stored plan without re-running agents or submi
     const content = { ...context.content, actions: [{ id: 'proposal', actionId, proposalVersion: 1, payloadHash, status: 'APPLIED' }], resume: { previousAttemptId: 'old', kind: 'WAIT', waitRequestId: 'wait', snapshotId: oldId, outcome: 'APPLIED' } }
     context = { ...context, caseVersion: 2, content, contentHash: contentHash(content) }
     await snapshots.forkSuspendedSnapshot({ workflowName: PLANNING_EXECUTION, fromRunId: oldId, toRunId: newId })
-    const next = new Mastra({ storage: createRuntimeStore(db), workflows: { workflow: createPlanningExecutionWorkflow({ ...deps, previousAttemptId: 'old' }) } })
+    const currentTemplates = reviewState === 'changed' ? [{ ...template, version: 'v2' }] : reviewState === 'expired' ? [{ ...template, expiresAt: '2020-01-01T00:00:00Z' }] : [template]
+    const next = new Mastra({ storage: createRuntimeStore(db), workflows: { workflow: createPlanningExecutionWorkflow({ ...deps, templates: currentTemplates, previousAttemptId: 'old' }) } })
     const resumed = await (await next.getWorkflow('workflow').createRun({ runId: newId })).resume({ resumeData: { resume: true } })
     assert.equal(resumed.status, 'success', JSON.stringify(resumed)); assert.equal(reports, 1); assert.equal(submissions, 1); assert.equal(preparations, 1)
   } finally { await db.terminate() }
+  }
 })

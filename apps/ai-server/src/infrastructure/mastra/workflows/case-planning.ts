@@ -1,7 +1,7 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { internalId, artifactEnvelopeSchema } from '@aftercare/internal-contracts'
-import { assertContextFresh, buildPlanningContext } from '../../../orchestration/context/builder.js'
+import { assertContextFresh, buildPlanningContext, contentHash } from '../../../orchestration/context/builder.js'
 import { planningDraftSchema, reviewedTaskTemplateSchema, validatePlan } from '../../../orchestration/playbooks/planning-output.js'
 import type { ReviewedTaskTemplate } from '../../../orchestration/playbooks/planning-output.js'
 import { proposalDraftSchema } from '../../../orchestration/actions/contracts.js'
@@ -17,6 +17,7 @@ const generatedSchema = inputSchema.extend({ artifact: artifactEnvelopeSchema, d
   sources: z.array(sourceDocumentSchema).max(20), research: researchEvidenceSchema, routing: routeSchema })
 export const planningOutputSchema = z.object({
   context: artifactEnvelopeSchema,
+  reviewConfigHash: z.string(), reviewValidUntil: z.string().datetime(),
   proposals: z.array(z.object({ actionId: internalId, draft: proposalDraftSchema, dependencyTaskIds: z.array(internalId), requiredDocuments: z.array(z.string()) })).max(10),
   questions: z.array(z.string()), skipped: z.array(z.object({ templateId: internalId, reason: z.enum(['EXISTING_TASK', 'PREVIOUS_PROPOSAL', 'PREREQUISITE_UNKNOWN']) })),
 }).strict()
@@ -48,7 +49,8 @@ export function createCasePlanningWorkflow(deps: {
     assertContextFresh(buildPlanningContext(inputData.artifact), latest)
     if (inputData.sources.some(source => Date.now() - Date.parse(source.fetchedAt) > deps.maxSourceAgeMs)) throw new Error('Planning sources expired')
     if (inputData.draft.tasks.length) assertCompleteResearch(inputData.research, new Set(inputData.sources.map(source => source.id)))
-    return { ...validatePlan({ ...inputData, context: latest, templates }), context: artifact }
+    return { ...validatePlan({ ...inputData, context: latest, templates }), context: artifact, reviewConfigHash: contentHash(templates),
+      reviewValidUntil: new Date(Math.min(...templates.map(template => Date.parse(template.expiresAt)), ...inputData.sources.map(source => Date.parse(source.fetchedAt) + deps.maxSourceAgeMs))).toISOString() }
   } })
   return createWorkflow({ id: 'case-planning-v1', inputSchema, outputSchema: planningOutputSchema }).then(generate).then(validate).commit()
 }
