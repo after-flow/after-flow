@@ -1,4 +1,6 @@
 import type { ISODateTime } from './resources.js'
+import type { ProposalResource, ApprovalResource } from './proposal.js'
+import type { AgentRunResource } from './agent.js'
 
 /**
  * 新しい公開契約の書類。
@@ -76,7 +78,13 @@ export interface DocumentResource {
     /** 解析を依頼できるか。false のとき理由が入る。 */
     canRequest: boolean
     blockedReasons: AnalysisBlockedReasonResource[]
+    run: Pick<AgentRunResource, 'id' | 'status' | 'waiting' | 'waitingFor' | 'failureReason' | 'version'> | null
   }
+  /** 保存済みAI Proposalからの候補。OCR済み/正式反映済みを意味しない。 */
+  extractionCandidates: Pick<ProposalResource, 'id' | 'proposalVersion' | 'kind' | 'title' | 'payload' | 'status' | 'basis'>[]
+  proposalRefs: Pick<ProposalResource, 'id' | 'proposalVersion' | 'kind' | 'status' | 'source'>[]
+  approvalRefs: Pick<ApprovalResource, 'id' | 'proposalId' | 'proposalVersion' | 'status' | 'applicationStatus'>[]
+  evidenceRefs: { id: string; taskId: string; label: string; version: number }[]
   /** 通常の一覧からの除外。個人データの完全消去ではない。 */
   archived: boolean
   archivedAt: ISODateTime | null

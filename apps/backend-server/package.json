@@ -20,6 +20,7 @@
     "@aftercare/internal-contracts": "workspace:*",
     "@aftercare/public-contracts": "workspace:*",
     "@google-cloud/firestore": "9.2.0",
+    "@google-cloud/storage": "8.2.0",
     "@hono/node-server": "2.1.1",
     "hono": "4.13.8",
     "jose": "6.2.12",
