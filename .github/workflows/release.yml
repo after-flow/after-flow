@@ -1,0 +1,72 @@
+name: Publish verified images
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Verify source CI
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: node scripts/verify-ci-run.mjs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: production-images
+          path: images
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Authenticate to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Publish the tested images without rebuilding
+        env:
+          SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          root="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for service in web backend-server ai-server; do
+            docker load --input "images/$service.tar.gz"
+            image="$root/$service:sha-$SHA"
+            docker tag "after-flow-$service:$SHA" "$image"
+            docker push "$image"
+            digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image")"
+            echo "- $service: \`$digest\` (commit \`$SHA\`)" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Remove registry credentials
+        if: always()
+        run: docker logout ghcr.io
