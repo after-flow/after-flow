@@ -9,6 +9,8 @@ import { CaseService } from '../../../src/application/case/case-service.js'
 import { ConsentService } from '../../../src/application/consent/consent-service.js'
 import { DocumentService } from '../../../src/application/document/document-service.js'
 import type { InheritanceDecisionReader } from '../../../src/application/task/task-service.js'
+import { AgentRunService } from '../../../src/application/agent/agent-run-service.js'
+import type { AgentOperation } from '../../../src/domain/agent/agent-run.js'
 import { TaskService } from '../../../src/application/task/task-service.js'
 import { PLACEHOLDER_RULE_CATALOG } from '../../../src/domain/task/rule-catalog.js'
 import type { RuleCatalog } from '../../../src/domain/task/rule-engine.js'
@@ -41,6 +43,8 @@ export interface TestAppOptions {
   ruleCatalog?: RuleCatalog
   /** 相続方法の確定状況。未指定なら未確定として扱う。 */
   decisions?: InheritanceDecisionReader
+  /** 接続済みの業務操作。未指定ならどれも未接続。 */
+  connectedOperations?: AgentOperation[]
 }
 
 export function buildApp(tenantId: string, userId: string, options: TestAppOptions = {}) {
@@ -72,6 +76,13 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       readRepository(),
       unitOfWork(),
       ...(options.decisions ? [options.decisions] : []),
+    ),
+    agentRunService: new AgentRunService(
+      access,
+      readRepository(),
+      unitOfWork(),
+      consentService,
+      new Set(options.connectedOperations ?? []),
     ),
   })
 

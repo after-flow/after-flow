@@ -4,6 +4,7 @@ import type {
   ApiFailure,
   CaseResource,
   ConsentStatusResource,
+  AgentRunResource,
   DeadlineResource,
   DocumentResource,
   ResponseMeta,
@@ -14,6 +15,7 @@ import { apiErrorBodySchema, apiErrorCodeSchema, apiFailureSchema, responseMetaS
 import { caseResourceSchema } from './case.js'
 import { consentStatusResourceSchema } from './consent.js'
 import { documentResourceSchema } from './document.js'
+import { agentRunResourceSchema } from './agent.js'
 import { deadlineResourceSchema, taskResourceSchema } from './task.js'
 
 /**
@@ -40,4 +42,7 @@ export type DocumentResourceMatches = Assert<
 export type TaskResourceMatches = Assert<Equals<z.infer<typeof taskResourceSchema>, TaskResource>>
 export type DeadlineResourceMatches = Assert<
   Equals<z.infer<typeof deadlineResourceSchema>, DeadlineResource>
+>
+export type AgentRunResourceMatches = Assert<
+  Equals<z.infer<typeof agentRunResourceSchema>, AgentRunResource>
 >

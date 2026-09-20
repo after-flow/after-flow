@@ -1,6 +1,7 @@
 import type { CaseService } from '../../../../application/case/case-service.js'
 import type { ConsentService } from '../../../../application/consent/consent-service.js'
 import type { DocumentService } from '../../../../application/document/document-service.js'
+import type { AgentRunService } from '../../../../application/agent/agent-run-service.js'
 import type { TaskService } from '../../../../application/task/task-service.js'
 import { errors } from '../../../../shared/app-error.js'
 import type { RegisteredRoute, RouteSpec } from '../../../http/route.js'
@@ -8,6 +9,7 @@ import { defineRoute } from '../../../http/route.js'
 import { caseSpecs, createCaseRoutes } from './cases.js'
 import { consentSpecs, createConsentRoutes } from './consents.js'
 import { createDocumentRoutes, documentSpecs } from './documents.js'
+import { agentRunSpecs, createAgentRunRoutes } from './agent-runs.js'
 import { createTaskRoutes, taskSpecs } from './tasks.js'
 import { healthRoute, healthSpec } from './health.js'
 
@@ -40,6 +42,11 @@ export const publicV1Specs: RouteSpec[] = [
   taskSpecs.createEvidence,
   taskSpecs.listDeadlines,
   taskSpecs.reevaluateDeadlines,
+  agentRunSpecs.acceptAgentRun,
+  agentRunSpecs.listAgentRuns,
+  agentRunSpecs.getAgentRun,
+  agentRunSpecs.cancelAgentRun,
+  agentRunSpecs.retryAgentRun,
 ]
 
 export interface PublicRouteDependencies {
@@ -47,6 +54,7 @@ export interface PublicRouteDependencies {
   consentService: ConsentService
   documentService: DocumentService
   taskService: TaskService
+  agentRunService: AgentRunService
 }
 
 /**
@@ -77,5 +85,6 @@ export function createPublicV1Routes(
     ...createCaseRoutes(dependencies.caseService),
     ...createDocumentRoutes(dependencies.documentService),
     ...createTaskRoutes(dependencies.taskService),
+    ...createAgentRunRoutes(dependencies.agentRunService),
   ]
 }

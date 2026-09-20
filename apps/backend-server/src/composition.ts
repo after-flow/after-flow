@@ -4,8 +4,12 @@ import { AccessService } from './application/authorization/case-access.js'
 import { CaseService } from './application/case/case-service.js'
 import { ConsentService } from './application/consent/consent-service.js'
 import { DocumentService } from './application/document/document-service.js'
+import { AgentRunService } from './application/agent/agent-run-service.js'
+import { OutboxDispatcher } from './application/agent/outbox-dispatcher.js'
+import type { AgentOperation } from './domain/agent/agent-run.js'
 import { TaskService } from './application/task/task-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
+import { HttpAgentJobClient, readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
 import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
 import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
@@ -67,6 +71,16 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       false,
     ),
     taskService: new TaskService(readRuleCatalog(env), access, database.read, database.uow),
+    // 接続済みの業務操作は設定で管理する。AI Server が未設定なら空集合で、
+    // どの操作も FEATURE_NOT_CONNECTED になる。UI にボタンがあるだけで
+    // すべての操作を有効にしない。
+    agentRunService: new AgentRunService(
+      access,
+      database.read,
+      database.uow,
+      consentService,
+      connectedOperations(env),
+    ),
   })
 
   // 認証済み利用者にだけ同意を要求する。未認証は先に 401 で止まる。
@@ -89,6 +103,31 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     consentGate,
     authentication: authentication(createTokenVerifier(readAuthConfig(env)), access),
   })
+}
+
+/**
+ * Outbox の配送を組み立てる。
+ *
+ * AI Server の設定が無ければ配送しない。イベントは PENDING のまま残り、
+ * 接続後に配送される。接続済みのふりをしない。
+ */
+export function createOutboxDispatcher(
+  env: NodeJS.ProcessEnv,
+  dependencies: { firestore: import('@google-cloud/firestore').Firestore; consent: ConsentService },
+): OutboxDispatcher | null {
+  const config = readAgentClientConfig(env)
+  if (!config) return null
+  return new OutboxDispatcher(dependencies.firestore, new HttpAgentJobClient(config), dependencies.consent)
+}
+
+/** 設定で有効にした業務操作だけを受け付ける。 */
+function connectedOperations(env: NodeJS.ProcessEnv): ReadonlySet<AgentOperation> {
+  const configured = (env.AI_CONNECTED_OPERATIONS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const supported: AgentOperation[] = ['document_analysis', 'case_planning', 'task_guidance', 'chat_reply']
+  return new Set(supported.filter((operation) => configured.includes(operation)))
 }
 
 function createDatabase(env: NodeJS.ProcessEnv) {

@@ -41,6 +41,9 @@ export const collections = {
   tasks: caseCollection('tasks'),
   deadlines: caseCollection('deadlines'),
   evidence: caseCollection('evidence'),
+  agentRuns: caseCollection('agentRuns'),
+  /** Case ごとの書き込み権。固定 ID の 1 文書だけを使う。 */
+  caseLeases: caseCollection('coordination'),
 } as const
 
 export type CollectionKey = keyof typeof collections
