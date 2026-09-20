@@ -7,7 +7,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 const server = serve({
-  fetch: createApp().fetch,
+  fetch: createApp({ serviceToken: process.env.AI_SERVICE_TOKEN, audience: process.env.AI_SERVICE_AUDIENCE }).fetch,
   hostname: process.env.HOST ?? '127.0.0.1',
   port,
 }, (info) => {
