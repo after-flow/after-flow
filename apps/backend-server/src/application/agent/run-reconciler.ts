@@ -92,6 +92,18 @@ export class RunReconciler implements LocalOutboxHandler {
         if (stored.state === 'PENDING_SNAPSHOT') await recordWaiting(tx, current, wait.id, snapshot.snapshotId!)
       })
       await this.resumeWait(tenantId, caseId, runId, wait.id, snapshot)
+    } else if (wait && snapshot.state === 'MISSING' && Date.parse(wait.updatedAt) < Date.now() - 600_000) {
+      await this.uow.run(context, async tx => {
+        const current = await tx.require<AgentRunEntity>(runLocation(caseId, runId))
+        const stored = await tx.require<WaitRequestEntity>(waitLocation(caseId, wait.id))
+        if (current.currentAttemptId !== query.executionAttempt || current.currentJobId !== query.jobId
+          || current.activeWaitRequestId !== stored.id || isRunTerminal(current.status) || current.status === 'NEEDS_ATTENTION'
+          || Date.parse(stored.updatedAt) >= Date.now() - 600_000) return
+        if (!await this.authorizeOrStop(tx, current)) return
+        if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
+        tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, { status: 'NEEDS_ATTENTION', failureReason: '待機Snapshotの保存を確認できません。再試行が必要です。' })
+        tx.audit({ caseId, type: 'agent_run.snapshot_missing', target: { collection: collections.agentRuns.name, id: runId, version: current.version + 1 }, detail: { waitRequestId: wait.id } })
+      })
     } else if (!wait) {
       await this.uow.run(context, async tx => {
         const current = await tx.require<AgentRunEntity>(runLocation(caseId, runId))

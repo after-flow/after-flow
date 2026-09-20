@@ -474,4 +474,47 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
     assert.equal(jobs.size, 1); assert.equal(jobs.docs[0]!.get('status'), 'DELIVERED')
     assert.equal(h.ai.accepted.has(jobs.docs[0]!.id), true)
   })
+
+  it('Snapshot保存失敗は要確認になり、手動retryで同一Actionの不変な新提案版を作る', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec), input = proposal(context)
+    const submitted = (await h.request(exec, 'proposals', input)).body.data
+    await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/waitRequests/${submitted.waitRequestId}`).update({ updatedAt: new Date(0).toISOString() })
+    await h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)
+    const path = `/cases/${h.caseId}/agent-runs/${exec.run.id}`
+    const run = (await call(h.app, path)).body.data
+    assert.equal(run.status, 'NEEDS_ATTENTION')
+    assert.equal((await call(h.app, `${path}/retry`, jsonRequest('POST', { expectedVersion: run.version }))).status, 202)
+    const stored = (await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).data() as AgentRunEntity
+    assert.equal(stored.activeWaitRequestId, null)
+    assert.equal((await h.client.deliver({ ...exec.job, eventId: stored.currentJobId! })).status, 'ACCEPTED')
+    const dispatch = h.ai.dispatches.at(-1)!, claims = await h.authorization.verify(dispatch.executionAuthorization)
+    const retried = { ...exec, dispatch, claims }, fresh = await h.context(retried)
+    const revised = await h.request(retried, 'proposals', { ...input, ...proof(fresh) })
+    assert.equal(revised.status, 200, JSON.stringify(revised.body)); assert.equal(revised.body.data.proposalVersion, 2)
+    assert.equal(revised.body.data.proposalId, submitted.proposalId)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/approvals/${submitted.approvalId}`)).body.data.status, 'EXPIRED')
+    assert.equal((await call(h.app, `/cases/${h.caseId}/proposals/${submitted.proposalId}/versions/1`)).status, 200)
+  })
+
+  it('誤ったSnapshot対応を拒否し、書類待ちは実検査接続前に再開しない', async t => {
+    const h = await setup(t)
+    const taskResponse = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '書類待ち', category: '手動', stage: 'immediate',
+      requiredDocuments: [{ id: 'required-slot', label: '合成書類', documentId: null }] }))
+    assert.equal(taskResponse.status, 201, JSON.stringify(taskResponse.body))
+    const task = taskResponse.body.data
+    const exec = await h.accept('task_guidance', task.id, 'TASK'), context = await h.context(exec)
+    const input = { ...proof(context), waitRequestId: 'document-wait', condition: { kind: 'DOCUMENTS', taskId: task.id, requiredDocumentIds: ['required-slot'] } }
+    const response = await h.request(exec, 'wait-requests', input)
+    assert.equal(response.status, 200, JSON.stringify(response.body))
+    assert.equal((await h.request(exec, 'wait-requests', input)).status, 200)
+    assert.equal((await h.request(exec, 'wait-requests', { ...input, waitRequestId: 'other', condition: { ...input.condition, taskId: 'other-task' } })).status, 404)
+    const waitRequestId = response.body.data.waitRequestId
+    h.ai.snapshots.set(exec.run.id, { runId: 'other-run', jobId: exec.claims.jobId, executionAttempt: exec.claims.executionAttempt,
+      waitRequestId, snapshotId: 'snapshot', state: 'WAITING' })
+    await assert.rejects(h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id), { code: 'CONFLICT' })
+    h.ai.snapshots.set(exec.run.id, { ...h.ai.snapshots.get(exec.run.id)!, runId: exec.run.id })
+    await h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)
+    assert.equal((await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).get('status'), 'WAITING_DOCUMENT')
+    assert.equal((await firestore().collection(`tenants/${h.tenantId}/outbox`).where('type', '==', 'agent.resume').get()).size, 0)
+  })
 })

@@ -1,6 +1,6 @@
 # Backend Outbox worker
 
-対象: #38。HTTPサーバーとは別の常駐プロセスとして起動する。本番デプロイ自体はこの実装の対象外。
+対象: #38 / #37。HTTPサーバーとは別の常駐プロセスとして起動する。本番デプロイ自体はこの実装の対象外。
 
 ## 起動
 
@@ -30,12 +30,16 @@ node apps/backend-server/dist/worker-main.js
 - `case.created` は初期Task生成、`case.reference_dates_changed` は期限再評価をBackend内で実行する。
   最新Caseを読み、古いイベントの起算日で上書きしない。AI接続・任意AI同意なしでも手動管理用の処理を続ける。
 - 外部配送では毎回同意を再判定する。未接続ならPENDINGで再試行する。
-- 実検査／内部API連携が未完了のため、独立workerでは `agent.document_analysis` と `document.*` を外部配送しない。
-  この実装を #27 / #36 や実AI / Mastra / Orch接続の完了とは扱わない。
+- `proposal.applied` / `approval.rejected` / `document.registered` はBackend Inboxへ冪等保存する。`approval.requested`はローカル通知として扱い、個人データをAIへ汎用転送しない。
+- 各tickで担当tenantのRunを安定した100件ページで照合する。先行Inbox、Snapshot保存後に通知できなかった待機、期限切れlease/RUNNINGを回復する。
+- SnapshotメタデータはAI内部HTTP経由だけで確認。1件の照会失敗はfailedとして数え、後続Runを続ける。同意/権限失効RunはHTTP照会前に取消す。
+- `agent.resume` / `agent.recover` はSYSTEM生成。Scoped clientが保存済みRunの開始者を再認可してから配送する。
+- 実検査が未完了のため、`agent.document_analysis` と文書本文配送、DOCUMENTS条件の自動再開は無効。この実装を#27や実AI/Mastra/Orch接続完了とは扱わない。
 
 ## 監視
 
 各tickは `outbox worker tick` にtenant ID、配送／再試行／ブロック／拒否件数、pending、failed、oldestAgeMsを出す。
+Reconcilerのchecked/failed件数も出す。failedが継続する場合はAI snapshot-status契約と接続設定を確認する。
 本文や資格情報は出さない。15分超の滞留、またはFAILEDが1件以上なら `outbox backlog alert` を警告として出す。
 運用ではこの警告、`outbox worker tick failed`、通常ログが2周期以上来ない状態を監視する。
 失敗通知のアラート先設定と本番IAM/index適用は運用環境側で行う。
