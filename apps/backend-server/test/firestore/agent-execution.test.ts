@@ -6,6 +6,10 @@ import { AccessService } from '../../src/application/authorization/case-access.j
 import { ConsentService } from '../../src/application/consent/consent-service.js'
 import { CaseLeaseService } from '../../src/application/agent/lease-service.js'
 import { OutboxDispatcher, backoffMs } from '../../src/application/agent/outbox-dispatcher.js'
+import { caseTaskHandler } from '../../src/application/agent/outbox-worker.js'
+import { TaskService } from '../../src/application/task/task-service.js'
+import { PLACEHOLDER_RULE_CATALOG } from '../../src/domain/task/rule-catalog.js'
+import type { OutboxEvent } from '../../src/domain/shared/outbox.js'
 import { PLACEHOLDER_CATALOG } from '../../src/domain/consent/catalog.js'
 import { INFRASTRUCTURE_COLLECTIONS } from '../../src/domain/shared/collections.js'
 import { HttpAgentJobClient } from '../../src/infrastructure/agent/http-agent-client.js'
@@ -418,6 +422,33 @@ describeFirestore('Outbox の配送', () => {
     assert.ok(report.pending > 0)
     assert.equal(report.failed, 0)
     assert.ok(report.oldestAgeMs >= 20 * 60_000)
+  })
+
+  it('AI同意なしでもローカル配送が初期Taskと最新起算日の期限再評価を実行する', async t => {
+    const ai = await startFakeAiServer()
+    t.after(() => ai.close())
+    const { tenantId, app, caseId } = await setup({ agreeExternalAi: false })
+    const access = new AccessService(readRepository())
+    const consent = new ConsentService(PLACEHOLDER_CATALOG, access, readRepository(), unitOfWork())
+    const local = caseTaskHandler(new TaskService(PLACEHOLDER_RULE_CATALOG, access, readRepository(), unitOfWork()))
+    const dispatcher = new OutboxDispatcher(firestore(), new HttpAgentJobClient({
+      baseUrl: ai.url, serviceToken: SERVICE_TOKEN, timeoutMs: 1000, audience: 'ai-server',
+    }), consent, 120_000, local)
+    assert.ok((await dispatcher.dispatchBatch(tenantId)).delivered.length > 0)
+    const before = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/tasks`).get()
+    assert.equal(before.size, PLACEHOLDER_RULE_CATALOG.initialProcedures.length)
+    const current = await call(app, `/cases/${caseId}`)
+    assert.equal((await call(app, `/cases/${caseId}`, jsonRequest('PATCH', {
+      expectedVersion: current.body.data.version, knownAt: '2026-05-01',
+    }))).status, 200)
+    await dispatcher.dispatchBatch(tenantId)
+    const dates = await call(app, `/cases/${caseId}/deadlines`)
+    assert.ok(dates.body.data.every((deadline: Json) => deadline.startDate === '2026-05-01'))
+    // 古いcase.createdを再配送しても重複せず、当時の起算日へ戻らない。
+    const original = (await outboxDocs(tenantId, 'case.created'))[0]!.data() as OutboxEvent
+    await local.deliverLocal(original)
+    assert.equal((await firestore().collection(`tenants/${tenantId}/cases/${caseId}/tasks`).get()).size, before.size)
+    assert.equal(ai.received.length, 0)
   })
 
   it('受け付けたイベントを配送し、認証情報を付ける', async (t) => {
