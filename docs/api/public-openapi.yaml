@@ -1151,7 +1151,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -2203,7 +2203,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -3711,7 +3711,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -4115,7 +4115,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -5821,7 +5821,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -6040,7 +6040,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -6964,7 +6964,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -7743,7 +7743,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -7960,7 +7960,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string
@@ -8483,7 +8483,7 @@ paths:
             pattern: ^[A-Za-z0-9_-]+$
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
           schema:
             type: string

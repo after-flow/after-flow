@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -157,7 +158,7 @@ export async function call(
   return { status: response.status, body: text ? (JSON.parse(text) as Json) : {} }
 }
 
-export function jsonRequest(method: string, body: unknown, idempotencyKey?: string): RequestInit {
+export function jsonRequest(method: string, body: unknown, idempotencyKey: string | null = randomUUID()): RequestInit {
   return {
     method,
     headers: {

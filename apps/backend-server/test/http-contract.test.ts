@@ -80,7 +80,7 @@ describe('入力検証', () => {
     const { response } = await call('/missing-upload-route', {
       method: 'POST',
       headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
-      body: 'x'.repeat(MAX_JSON_BODY_BYTES + 1),
+      body: 'x'.repeat(DEFAULT_MAX_BODY_BYTES + 1),
     })
     assert.equal(response.status, 404)
   })

@@ -76,7 +76,7 @@ export const publicV1Specs: RouteSpec[] = [
 export interface PublicRouteDependencies {
   caseService: CaseService
   consentService: ConsentService
-  documentService: DocumentService
+  documentService: DocumentService | null
   taskService: TaskService
   agentRunService: AgentRunService
   proposalService: ProposalService
@@ -91,11 +91,11 @@ export interface PublicRouteDependencies {
  * 契約には存在するが実機能が無い状態を、404 や空配列で隠さない。
  * 「まだ接続されていない」と理由付きで返す。
  */
-function notConnected(specs: RouteSpec[]): RegisteredRoute[] {
+function notConnected(specs: RouteSpec[], reason = 'business database is not configured'): RegisteredRoute[] {
   return specs.map((spec) =>
     defineRoute(spec, () => {
       throw errors.featureNotConnected({
-        details: { operation: spec.operationId, reason: 'business database is not configured' },
+        details: { operation: spec.operationId, reason },
       })
     }),
   )
@@ -111,7 +111,9 @@ export function createPublicV1Routes(
     healthRoute,
     ...createConsentRoutes(dependencies.consentService),
     ...createCaseRoutes(dependencies.caseService),
-    ...createDocumentRoutes(dependencies.documentService),
+    ...(dependencies.documentService
+      ? createDocumentRoutes(dependencies.documentService)
+      : notConnected(Object.values(documentSpecs), 'document storage is not configured')),
     ...createTaskRoutes(dependencies.taskService),
     ...createAgentRunRoutes(dependencies.agentRunService),
     ...createProposalRoutes(dependencies.proposalService, dependencies.decisionService),

@@ -77,17 +77,17 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   const routes = createPublicV1Routes({
     caseService: new CaseService(access, database.read, database.uow),
     consentService,
-    documentService: new DocumentService(
+    documentService: storageRoot ? new DocumentService(
       access,
       database.read,
       database.uow,
-      new LocalObjectStorage(storageRoot ?? ''),
+      new LocalObjectStorage(storageRoot),
       consentService,
       // 検査実装は方式決定後（#26）。未接続なので検査状態は PENDING のまま。
       null,
       // AI は未接続。解析は受け付けない。
       false,
-    ),
+    ) : null,
     // 放棄前ロックは保存済みの確定状況で判定する。未記録は未確定のまま。
     taskService: new TaskService(
       readRuleCatalog(env),
