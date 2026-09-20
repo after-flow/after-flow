@@ -75,6 +75,14 @@ describe('requestId の引き継ぎ', () => {
 })
 
 describe('入力検証', () => {
+  it('multipartにJSON専用の上限を適用しない', async () => {
+    const { response } = await call('/missing-upload-route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+      body: 'x'.repeat(MAX_JSON_BODY_BYTES + 1),
+    })
+    assert.equal(response.status, 404)
+  })
   it('query が契約を満たさない場合は 400 と該当項目を返す', async () => {
     const { response, body } = await call('/cases/case-1/fixtures?limit=9999')
     assert.equal(response.status, 400)

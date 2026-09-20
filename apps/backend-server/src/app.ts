@@ -27,12 +27,17 @@ export function createApp(routes: RegisteredRoute[] = publicV1Routes) {
   app.use('*', requestId)
   app.use(
     '*',
-    bodyLimit({
+    async (c, next) => {
+      if (!c.req.header('Content-Type')?.toLowerCase().startsWith('application/json')) {
+        return next()
+      }
+      return bodyLimit({
       maxSize: MAX_JSON_BODY_BYTES,
       onError: () => {
         throw errors.payloadTooLarge({ details: { maxBytes: MAX_JSON_BODY_BYTES } })
       },
-    }),
+      })(c, next)
+    },
   )
 
   // 例外と未定義 path を共通契約へ落とす。route 側で status を書き分けない。
