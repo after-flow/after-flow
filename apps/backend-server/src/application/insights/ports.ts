@@ -11,15 +11,16 @@ export interface AgentRunSummary {
   tenantId: string
   caseId: string
   runId: string
-  status: 'RUNNING' | 'WAITING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED'
+  status: import('../../domain/agent/agent-run.js').AgentRunStatus
+  currentAttemptId: string
 }
 
 /**
  * AgentRun の正式記録（#10）への参照。内部結果を受け取る際、Run が対象 Case のものかを確認するために使う。
- * #10 実装までは in-memory の登録済み Run だけを返す。
+ * Case と tenant で保存済み Run を解決する。
  */
 export interface AgentRunLookup {
-  findRun(tenantId: string, runId: string): Promise<AgentRunSummary | null>
+  findRun(tenantId: string, caseId: string, runId: string): Promise<AgentRunSummary | null>
 }
 
 export interface EvidenceTargetState {

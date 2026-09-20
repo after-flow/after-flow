@@ -43,6 +43,7 @@ export interface InsightServiceDeps {
   audit: AuditLogPort
   clock: Clock
   ids: IdGenerator
+  receive<T>(tenantId: string, caseId: string, runId: string, execute: () => Promise<T>): Promise<T>
 }
 
 /**
@@ -51,6 +52,7 @@ export interface InsightServiceDeps {
  */
 export interface InsightResultInput {
   runId: string
+  currentAttemptId: string
   resultId: string
   kind: InsightKind
   body: string
@@ -142,24 +144,31 @@ export class InsightService {
 
   /* ---------- 内部結果の受領（#10 の result handler から呼ばれる） ---------- */
 
-  async receiveInsightResult(tenantId: string, input: InsightResultInput): Promise<Insight> {
-    const run = await this.deps.runs.findRun(tenantId, input.runId)
+  async receiveInsightResult(tenantId: string, caseId: string, input: InsightResultInput): Promise<Insight> {
+    return this.deps.receive(tenantId, caseId, input.runId, () => this.receiveInTransaction(tenantId, caseId, input))
+  }
+
+  private async receiveInTransaction(tenantId: string, caseId: string, input: InsightResultInput): Promise<Insight> {
+    const run = await this.deps.runs.findRun(tenantId, caseId, input.runId)
     if (!run) throw notFound('AgentRun', input.runId)
     if (await this.deps.ledger.has(tenantId, input.runId, input.resultId)) {
       throw duplicate('同じ Run の結果はすでに受領しています', { runId: input.runId, resultId: input.resultId })
     }
-    const caseId = run.caseId
+    if (run.status !== 'RUNNING' || run.currentAttemptId !== input.currentAttemptId) {
+      throw duplicate('現在の実行からの結果ではありません')
+    }
 
     const evidence: InsightEvidence[] = []
     for (const e of input.evidence) {
+      if (e.documentId && e.taskId) throw validation('根拠は Document または Task のいずれかを指定してください')
       let captured: EvidenceTargetState | null = null
       if (e.documentId) {
         captured = await this.deps.evidence.resolveDocument(tenantId, caseId, e.documentId)
-        if (!captured) throw validation('根拠の Document が Case 内に見つかりません', { documentId: e.documentId })
+        if (!captured || captured.archived) throw validation('根拠の Document が Case 内に見つかりません', { documentId: e.documentId })
       }
       if (e.taskId) {
         captured = await this.deps.evidence.resolveTask(tenantId, caseId, e.taskId)
-        if (!captured) throw validation('根拠の Task が Case 内に見つかりません', { taskId: e.taskId })
+        if (!captured || captured.archived) throw validation('根拠の Task が Case 内に見つかりません', { taskId: e.taskId })
       }
       evidence.push({
         label: e.label,

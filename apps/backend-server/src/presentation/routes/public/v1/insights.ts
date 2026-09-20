@@ -1,36 +1,56 @@
-import type { AcknowledgeInsightRequest, DismissInsightRequest } from '@aftercare/public-contracts'
-import { Hono } from 'hono'
-import { z, type ZodType } from 'zod'
+import { z } from 'zod'
 import type { InsightService } from '../../../../application/insights/insight-service.js'
-import { ok, okPage, requestIdOf } from '../../../http/envelope.js'
-import { commandContext, parseBody, parseListQuery } from '../../../http/request.js'
-import type { AppBindings } from '../../../http/types.js'
-import { longText } from './schemas/common.js'
+import { ok } from '../../../http/envelope.js'
+import { defineRoute, type RegisteredRoute, type RouteSpec } from '../../../http/route.js'
+import { idSchema, successEnvelope } from '../../../schemas/common.js'
+import { businessListQuerySchema, insightResourceSchema } from '../../../schemas/business.js'
+import { businessContext } from './business-context.js'
+const acknowledgeSchema = z.object({ note: z.string().max(2000).optional() }).strict()
+const dismissSchema = z.object({ reason: z.string().max(2000).optional() }).strict()
 
-const acknowledgeSchema = z.object({ note: longText.optional() }).strict() satisfies ZodType<AcknowledgeInsightRequest>
-const dismissSchema = z.object({ reason: longText.optional() }).strict() satisfies ZodType<DismissInsightRequest>
+export const insightsSpecs = {
+  listInsights: {
+    operationId: 'listInsights', method: 'get', path: '/cases/:caseId/insights',
+    summary: 'listInsights', tags: ['insights'], auth: 'user',
+    request: { params: z.object({ caseId: idSchema }), query: businessListQuerySchema },
+    success: { status: 200, description: 'Insight', schema: successEnvelope(z.array(insightResourceSchema)) },
+    failures: ['VALIDATION_FAILED', 'UNAUTHENTICATED', 'FORBIDDEN', 'NOT_FOUND'],
+    list: true,
+  },
+  acknowledge: {
+    operationId: 'acknowledge', method: 'post', path: '/cases/:caseId/insights/:insightId/acknowledge',
+    summary: 'acknowledge', tags: ['insights'], auth: 'user',
+    request: { params: z.object({ caseId: idSchema, insightId: idSchema }), body: acknowledgeSchema },
+    success: { status: 200, description: 'Insight', schema: successEnvelope(insightResourceSchema) },
+    failures: ['VALIDATION_FAILED', 'UNAUTHENTICATED', 'FORBIDDEN', 'NOT_FOUND', 'PRECONDITION_REQUIRED', 'PRECONDITION_FAILED', 'CONFLICT', 'IDEMPOTENCY_KEY_REUSED'],
+    idempotency: 'required',
+  },
+  dismiss: {
+    operationId: 'dismiss', method: 'post', path: '/cases/:caseId/insights/:insightId/dismiss',
+    summary: 'dismiss', tags: ['insights'], auth: 'user',
+    request: { params: z.object({ caseId: idSchema, insightId: idSchema }), body: dismissSchema },
+    success: { status: 200, description: 'Insight', schema: successEnvelope(insightResourceSchema) },
+    failures: ['VALIDATION_FAILED', 'UNAUTHENTICATED', 'FORBIDDEN', 'NOT_FOUND', 'PRECONDITION_REQUIRED', 'PRECONDITION_FAILED', 'CONFLICT', 'IDEMPOTENCY_KEY_REUSED'],
+    idempotency: 'required',
+  },
+} satisfies Record<string, RouteSpec>
 
-/**
- * /cases/:caseId 配下。気づきの登録は内部結果（#10）経由のみで、公開APIには POST/PATCH を置かない。
- * 既読・非表示は閲覧者ごとの Command。
- */
-export function insightRoutes(service: InsightService) {
-  const app = new Hono<AppBindings>()
-
-  app.get('/insights', async (c) => {
-    const ctx = commandContext(c, requestIdOf(c), false)
-    return okPage(c, await service.listInsights(ctx, parseListQuery(c)))
-  })
-  app.post('/insights/:insightId/acknowledge', async (c) => {
-    const ctx = commandContext(c, requestIdOf(c), true)
-    const result = await service.acknowledge(ctx, c.req.param('insightId'), await parseBody(c, acknowledgeSchema))
-    return ok(c, result.body)
-  })
-  app.post('/insights/:insightId/dismiss', async (c) => {
-    const ctx = commandContext(c, requestIdOf(c), true)
-    const result = await service.dismiss(ctx, c.req.param('insightId'), await parseBody(c, dismissSchema))
-    return ok(c, result.body)
-  })
-
-  return app
+export function createInsightRoutes(service: InsightService): RegisteredRoute[] {
+  return [
+    defineRoute(insightsSpecs.listInsights, async (c, input) => {
+      const ctx = businessContext(c, input.params.caseId, input.idempotencyKey)
+      const page = await service.listInsights(ctx, { ...input.query, cursor: input.query.cursor ?? null })
+      return ok(c, page.items, page.nextCursor ? { nextCursor: page.nextCursor } : {})
+    }),
+    defineRoute(insightsSpecs.acknowledge, async (c, input) => {
+      const ctx = businessContext(c, input.params.caseId, input.idempotencyKey)
+      const result = await service.acknowledge(ctx, input.params.insightId, input.body)
+      return ok(c, result.body)
+    }),
+    defineRoute(insightsSpecs.dismiss, async (c, input) => {
+      const ctx = businessContext(c, input.params.caseId, input.idempotencyKey)
+      const result = await service.dismiss(ctx, input.params.insightId, input.body)
+      return ok(c, result.body)
+    }),
+  ]
 }

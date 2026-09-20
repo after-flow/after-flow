@@ -9,31 +9,6 @@ export type ISODateTime = string
 
 /* ---------- Envelope / Pagination (Backend Public API) ---------- */
 
-export interface ResponseMeta {
-  requestId: string
-  /** 次ページのカーソル。一覧レスポンスのみ。無い場合は null */
-  nextCursor?: string | null
-}
-
-export interface ApiSuccess<T> {
-  data: T
-  meta: ResponseMeta
-}
-
-export interface ApiErrorBody {
-  code: string
-  message: string
-  /** 同じ内容で再試行して成功する見込みがあるか（503/429 など） */
-  retryable: boolean
-  details?: unknown
-}
-
-export interface ApiFailure {
-  error: ApiErrorBody
-  meta: ResponseMeta
-}
-
-/** 更新系リクエストに載せる楽観ロック用バージョン */
 export interface ExpectedVersion {
   expectedVersion: number
 }
