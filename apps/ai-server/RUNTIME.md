@@ -55,3 +55,18 @@ SDK retryは0に固定。複数Providerの実Fallbackは別PRで各attemptの課
 - mainはRuntime未注入の503を維持する。Loop、Adapter、Workflow、予算の一部だけを接続して本番対応とは表示しない。
 
 検証: Firestore Emulatorで独立client間のclaim競合、Job衝突、旧所有権、累積上限、snapshot保存前後の再開、実Mastra Workflowの単一起動/完了、STOPを検証。Mastraの実ループでProvider/Tool実行前の予算停止を検証する。実Backendとの通し試験は後続。
+
+## Workflow HandlerとHTTPホスト
+
+`createGuidanceHandler` / `createChatHandler`はWorker SessionのBackend Clientとsignalを実Workflowへ接続し、
+Jobごとの安定したresult IDとWorkflow run IDで保存・報告する。共有予算のchargeはSession.guardへ固定する。
+複数Providerを使う場合は`createAuthorizedModels`が作った具象モデルだけを受け取り、
+同じSession.guard・operation・core/research役割に束縛されていることを確認する。別Runのモデル/予算を再利用しない。
+
+`startExecutionHost`はRuntimeとWorkerの両方を要求する。HTTP要求ごとに非管理Promiseを作らず、監督対象のloopを一つ持つ。
+Workerの異常終了・予期しない正常終了ではHTTPも閉じる。終了時はsignalで停止し、有限の猶予後に接続を閉じる。
+mainはこのhostを使うが、実Orch/Provider/grant/Catalogのcompositionが未設定のため、Runtime未注入の503は維持する。
+
+Backend Emulator試験に、独立AIプロセスへ実dispatchを送り、実Backend認証・Context・AI専用Firestore・
+実MastraチャットWorkflow・結果反映まで通す試験を追加する。二重配送しても返信は一つ。
+モデルとOrchは明示的な合成fixtureであり、実Provider品質やハッカソン接続の完了とは区別する。

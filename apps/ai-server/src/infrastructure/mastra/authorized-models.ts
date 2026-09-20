@@ -5,6 +5,14 @@ import type { OrchRouter, ProviderGrant, ProviderPolicy, RouteRequest } from '..
 import type { BudgetCharge } from '../../application/execution/contracts.js'
 
 type Model = Extract<MastraModelConfig, { specificationVersion: 'v2'; doGenerate: (...args: never[]) => PromiseLike<{ content: unknown[] }> }>
+type ModelBinding = { charge(value: BudgetCharge): Promise<void>; role: RouteRequest['role']; operation: RouteRequest['operation'] }
+const authorizedModels = new WeakMap<object, ModelBinding>()
+export function assertAuthorizedModelSet(models: unknown, expected: ModelBinding): void {
+  if (!Array.isArray(models) || !models.length || models.length > 2 || models.some(entry =>
+    !entry || typeof entry.model !== 'object' || authorizedModels.get(entry.model)?.charge !== expected.charge ||
+    authorizedModels.get(entry.model)?.role !== expected.role || authorizedModels.get(entry.model)?.operation !== expected.operation ||
+    entry.maxRetries !== 0)) throw new Error('Physical provider budget adapter must match this execution')
+}
 export interface ProviderMetric {
   policyId: string; policyRevision: string; routeEvidenceId: string; role: 'core' | 'research'
   status: 'success' | 'failure'; durationMs: number; inputTokens: number | null; outputTokens: number | null
@@ -111,6 +119,7 @@ export async function createAuthorizedModels(options: {
         } catch (error) { throw await failed(error, started) }
       },
     }
+    authorizedModels.set(wrapped, { charge: options.charge, role: request.role, operation: request.operation })
     return { model: wrapped, maxRetries: 0, modelSettings: { maxOutputTokens: reservation.maxOutputTokens } }
   })
   return { models, evidenceId: decision.evidenceId }

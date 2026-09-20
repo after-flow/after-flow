@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
+import { fileURLToPath } from 'node:url'
+import { createInterface } from 'node:readline'
+import { setTimeout as delay } from 'node:timers/promises'
 import { spawn } from 'node:child_process'
 import type { AddressInfo } from 'node:net'
 import { it } from 'node:test'
@@ -524,5 +527,57 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
     await h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)
     assert.equal((await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).get('status'), 'WAITING_DOCUMENT')
     assert.equal((await firestore().collection(`tenants/${h.tenantId}/outbox`).where('type', '==', 'agent.resume').get()).size, 0)
+  })
+})
+
+
+describeFirestore('Real AI Worker HTTP integration (synthetic model/Orch only)', () => {
+  it('dispatches to an independent AI service and receives one grounded-workflow chat result through authenticated Backend APIs', async t => {
+    const h = await setup(t)
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !/^(FIRESTORE_|GOOGLE_APPLICATION_CREDENTIALS|STORAGE_|DOCUMENT_STORAGE_|BACKEND_EXECUTION_SIGNING_KEY)/.test(key)))
+    const ai = spawn(process.execPath, ['--import', 'tsx', 'test/helpers/runtime-http.ts'], {
+      cwd: fileURLToPath(new URL('../../../ai-server/', import.meta.url)), stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...env, AI_HTTP_FIXTURE: 'synthetic-only', AI_RUNTIME_PROJECT_ID: 'after-flow-ai-runtime-test', AI_RUNTIME_DATABASE_ID: 'ai-runtime-e2e',
+        AI_RUNTIME_EMULATOR_HOST: process.env.FIRESTORE_EMULATOR_HOST!, AI_TEST_BACKEND_ORIGIN: h.baseUrl,
+        AI_TEST_BACKEND_TOKEN: incoming, AI_TEST_INGRESS_TOKEN: outgoing },
+    })
+    let errorOutput = ''
+    ai.stderr.on('data', chunk => { errorOutput = (errorOutput + String(chunk)).slice(-4000) })
+    const lines = createInterface({ input: ai.stdout })
+    t.after(async () => {
+      lines.close()
+      if (ai.exitCode === null) {
+        ai.kill('SIGTERM')
+        await Promise.race([once(ai, 'exit'), delay(10000, undefined, { ref: false }).then(() => { if (ai.exitCode === null) ai.kill('SIGKILL') })])
+      }
+    })
+    const port = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`AI fixture did not start: ${errorOutput}`)), 20000)
+      lines.on('line', line => {
+        try { const value = JSON.parse(line); if (value.type === 'ready' && Number.isInteger(value.port)) { clearTimeout(timer); resolve(value.port) } } catch { /* SDK log */ }
+      })
+      ai.once('error', error => { clearTimeout(timer); reject(error) })
+      ai.once('exit', () => { clearTimeout(timer); reject(new Error(`AI fixture stopped: ${errorOutput}`)) })
+    })
+    const client = new ScopedHttpAgentJobClient({ baseUrl: `http://127.0.0.1:${port}`, serviceToken: outgoing, audience: 'ai-server', timeoutMs: 10000 }, h.service, h.authorization)
+    const posted = await call(h.app, `/cases/${h.caseId}/messages`, jsonRequest('POST', { body: '何から始めたらいいでしょうか？' }))
+    assert.equal(posted.status, 202, JSON.stringify(posted.body))
+    const runId = posted.body.data.runId as string
+    const run = (await readRepository().get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: runId }))!
+    const job = { eventId: run.currentJobId!, tenantId: h.tenantId, caseId: h.caseId, type: 'agent.chat_reply', payload: { runId }, attempt: 1 }
+    assert.equal((await client.deliver(job)).status, 'ACCEPTED')
+    assert.equal((await client.deliver(job)).status, 'ACCEPTED')
+    let history: any[] = []
+    for (let attempt = 0; attempt < 100; attempt++) {
+      history = (await call(h.app, `/cases/${h.caseId}/messages`)).body.data
+      if (history.length === 2) break
+      await delay(100)
+    }
+    assert.equal(history.length, 2, errorOutput)
+    assert.equal(history.filter(message => message.role === 'assistant').length, 1)
+    assert.match(history.find(message => message.role === 'assistant').body, /対象の手続き/)
+    assert.equal((await client.deliver(job)).status, 'ACCEPTED')
+    assert.equal((await call(h.app, `/cases/${h.caseId}/messages`)).body.data.length, 2)
   })
 })

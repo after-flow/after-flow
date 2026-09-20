@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Agent } from '@mastra/core/agent'
-import { createAuthorizedModels } from '../src/infrastructure/mastra/authorized-models.js'
+import { createAuthorizedModels, assertAuthorizedModelSet } from '../src/infrastructure/mastra/authorized-models.js'
 import type { ProviderMetric } from '../src/infrastructure/mastra/authorized-models.js'
 import { assertProviderAllowed } from '../src/orchestration/models/policy.js'
 import type { ProviderPolicy, ProviderGrant, RouteRequest } from '../src/orchestration/models/policy.js'
@@ -82,4 +82,19 @@ test('a partial provider stream prevents a second provider from receiving the pr
   await assert.rejects(reader.read(), /TRANSIENT/)
   await assert.rejects(Promise.resolve(model2.doStream({ prompt: [] })))
   assert.equal(second.calls.length, 0)
+})
+
+
+test('a provider adapter is bound to its execution guard, operation and agent role', async () => {
+  const model = { ...scriptedModel([]).model, provider: 'first' }
+  const charge = async () => {}
+  const result = await createAuthorizedModels({ request: { ...request, policyIds: ['first'] }, policies: [policy('first')], signal: new AbortController().signal,
+    router: { route: async input => ({ requestId: input.requestId, evidenceId: 'fixture-only', policyIds: ['first'], expiresAt: expiry() }) },
+    grant: async () => grant(), models: new Map([['first', model]]), charge, record: async () => {},
+  })
+  const binding = { charge, role: 'core' as const, operation: 'task_guidance' as const }
+  assert.doesNotThrow(() => assertAuthorizedModelSet(result.models, binding))
+  assert.throws(() => assertAuthorizedModelSet(result.models, { ...binding, charge: async () => {} }), /match this execution/)
+  assert.throws(() => assertAuthorizedModelSet(result.models, { ...binding, role: 'research' }), /match this execution/)
+  assert.throws(() => assertAuthorizedModelSet(result.models, { ...binding, operation: 'chat_reply' }), /match this execution/)
 })
