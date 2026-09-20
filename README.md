@@ -34,10 +34,23 @@ make check              # Docker内で型・Lint・テスト・OpenAPI・本番�
 make down               # このプロジェクトを停止
 ```
 
+FirestoreとCloud Storageもローカルで使う場合は、data profileを有効にします。
+
+```sh
+make up-data
+make data-check          # 両Emulatorの読み書きとAIからの分離を再確認
+```
+
+- Firestore Emulator: `127.0.0.1:8085`（project: `after-flow-local`）
+- Cloud Storage Emulator: **http://127.0.0.1:4443**（bucket: `after-flow-documents`）
+
+`make up-data`はBackendにだけEmulator設定を渡します。AI Serverはデータ用Dockerネットワークに参加せず、Firestore・原本Storageの環境変数も受け取りません。Emulatorのデータは開発用の一時データで、`make down`後の保持は保証しません。
+
 既存プロセスとポートが重複する場合は、次のように変更できます。
 
 ```sh
 WEB_PORT=5174 BACKEND_PORT=8082 make up
+FIRESTORE_EMULATOR_PORT=8086 STORAGE_EMULATOR_PORT=4444 make up-data
 ```
 
 `.env` の作成は任意です。必要ならルートの `.env.example` を `.env` にコピーして編集してください。
@@ -49,7 +62,7 @@ WEB_PORT=5174 BACKEND_PORT=8082 make up
 
 Backend起動後に http://127.0.0.1:8080/api-docs を開くと、生成済みの公開OpenAPIと同じroute定義を使うSwagger UIが表示されます。操作を開いて **Try it out** → **Execute** で、同じBackendへ要求を送れます。UI資産はローカル配信され、内部APIは表示されません。
 
-認証が必要な操作は画面右上の **Authorize** にBearer tokenを入力してください。認証Providerが未設定の環境では、保護されたAPIは設計どおり401になります。Firestoreを使う業務APIの検証には `make up-data` と、有効なtenant membershipを持つ認証設定が別途必要です。生存確認は認証なしで試せます。
+認証が必要な操作は画面右上の **Authorize** にBearer tokenを入力してください。認証Providerが未設定の環境では、保護されたAPIは設計どおり401になります。Firestoreと原本Storageを使う業務APIの検証には `make up-data` と、有効なtenant membershipを持つ認証設定が別途必要です。生存確認は認証なしで試せます。
 
 開発時はAPIドキュメントが既定で有効です。無効化する場合は `API_DOCS_ENABLED=false` を設定します。本番（`NODE_ENV=production`）では既定で無効です。`API_DOCS_ENABLED=true` を明示した場合でも、表示対象は公開APIだけです。
 
@@ -243,6 +256,14 @@ Docker起動後、同じ疎通チェックをローカルでも実行できま�
 ```sh
 make up
 node scripts/smoke-compose.mjs
+make down
+```
+
+データ用Emulatorを含む確認:
+
+```sh
+make up-data
+make data-check
 make down
 ```
 
