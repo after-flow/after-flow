@@ -1,0 +1,1180 @@
+# 自動生成ファイル。直接編集しない。
+# 生成: pnpm --filter @aftercare/backend-server openapi:generate
+openapi: 3.1.0
+info:
+  title: after-flow internal execution API
+  version: 1.0.0
+  description: Request lifetime <= 60s; capability <= 300s; body <= 131072 bytes; client timeout <= 10000ms. 429/5xx/transport errors retry; 409 requires explicit duplicate ACK. Credentials and business document bytes must not be logged.
+servers:
+  - url: /internal/v1
+paths:
+  /runs/{runId}/context:
+    get:
+      operationId: internal_context
+      security:
+        - serviceIdentity: []
+          executionAuthorization: []
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+        - &a1
+          in: header
+          name: X-Request-Id
+          required: true
+          schema:
+            type: string
+        - &a2
+          in: header
+          name: X-Job-Id
+          required: true
+          schema:
+            type: string
+        - &a3
+          in: header
+          name: X-Execution-Attempt
+          required: true
+          schema:
+            type: string
+        - &a4
+          in: header
+          name: X-Issued-At
+          required: true
+          schema:
+            type: integer
+        - &a5
+          in: header
+          name: X-Expires-At
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Run scoped response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $schema: https://json-schema.org/draft/2020-12/schema
+                    type: object
+                    properties:
+                      caseVersion:
+                        type: integer
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
+                      contextSnapshotId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      artifactVersion:
+                        type: integer
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
+                      contentHash:
+                        type: string
+                        pattern: ^[A-Za-z0-9_-]{43}$
+                      expiresAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+                      content:
+                        type: object
+                        propertyNames:
+                          type: string
+                        additionalProperties: {}
+                    required:
+                      - caseVersion
+                      - contextSnapshotId
+                      - artifactVersion
+                      - contentHash
+                      - expiresAt
+                      - content
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    required:
+                      - requestId
+                    properties:
+                      requestId:
+                        type: string
+        "400":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "401":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "403":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "404":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "409":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "500":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "503":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+  /runs/{runId}/artifacts/{artifactId}:
+    get:
+      operationId: internal_artifact
+      security:
+        - serviceIdentity: []
+          executionAuthorization: []
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: artifactId
+          required: true
+          schema:
+            type: string
+        - *a1
+        - *a2
+        - *a3
+        - *a4
+        - *a5
+      responses:
+        "200":
+          description: Run scoped response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $schema: https://json-schema.org/draft/2020-12/schema
+                    type: object
+                    properties:
+                      caseVersion:
+                        type: integer
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
+                      contextSnapshotId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
+                      artifactVersion:
+                        type: integer
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
+                      contentHash:
+                        type: string
+                        pattern: ^[A-Za-z0-9_-]{43}$
+                      expiresAt:
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+                      content:
+                        type: object
+                        propertyNames:
+                          type: string
+                        additionalProperties: {}
+                    required:
+                      - caseVersion
+                      - contextSnapshotId
+                      - artifactVersion
+                      - contentHash
+                      - expiresAt
+                      - content
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    required:
+                      - requestId
+                    properties:
+                      requestId:
+                        type: string
+        "400":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "401":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "403":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "404":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "409":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "500":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "503":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+  /runs/{runId}/control:
+    get:
+      operationId: internal_control
+      security:
+        - serviceIdentity: []
+          executionAuthorization: []
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+        - *a1
+        - *a2
+        - *a3
+        - *a4
+        - *a5
+      responses:
+        "200":
+          description: Run scoped response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $schema: https://json-schema.org/draft/2020-12/schema
+                    type: object
+                    properties:
+                      instruction:
+                        type: string
+                        enum:
+                          - CONTINUE
+                          - STOP
+                      reason:
+                        type:
+                          - string
+                          - "null"
+                      caseVersion:
+                        anyOf:
+                          - type: integer
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
+                          - type: "null"
+                    required:
+                      - instruction
+                      - reason
+                      - caseVersion
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    required:
+                      - requestId
+                    properties:
+                      requestId:
+                        type: string
+        "400":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "401":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "403":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "404":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "409":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "500":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "503":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+  /runs/{runId}/heartbeat:
+    post:
+      operationId: internal_heartbeat
+      security:
+        - serviceIdentity: []
+          executionAuthorization: []
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+        - *a1
+        - *a2
+        - *a3
+        - *a4
+        - *a5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $schema: https://json-schema.org/draft/2020-12/schema
+              type: object
+              properties: {}
+              additionalProperties: false
+      responses:
+        "200":
+          description: Run scoped response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $schema: https://json-schema.org/draft/2020-12/schema
+                    type: object
+                    properties:
+                      accepted:
+                        type: boolean
+                        const: true
+                      executionAuthorization:
+                        type: string
+                    required:
+                      - accepted
+                      - executionAuthorization
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    required:
+                      - requestId
+                    properties:
+                      requestId:
+                        type: string
+        "400":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "401":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "403":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "404":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "409":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "500":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "503":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+  /runs/{runId}/events:
+    post:
+      operationId: internal_events
+      security:
+        - serviceIdentity: []
+          executionAuthorization: []
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+        - *a1
+        - *a2
+        - *a3
+        - *a4
+        - *a5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $schema: https://json-schema.org/draft/2020-12/schema
+              type: object
+              properties:
+                eventId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                sequence:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+                phase:
+                  type: string
+                  enum:
+                    - CONTEXT_FETCHED
+                    - PLANNING
+                    - GENERATING
+                    - VALIDATING
+              required:
+                - eventId
+                - sequence
+                - phase
+              additionalProperties: false
+      responses:
+        "200":
+          description: Run scoped response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $schema: https://json-schema.org/draft/2020-12/schema
+                    type: object
+                    properties:
+                      applied:
+                        type: boolean
+                      reason:
+                        type:
+                          - string
+                          - "null"
+                    required:
+                      - applied
+                      - reason
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    required:
+                      - requestId
+                    properties:
+                      requestId:
+                        type: string
+        "400":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "401":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "403":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "404":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "409":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "500":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "503":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+  /runs/{runId}/result:
+    post:
+      operationId: internal_result
+      security:
+        - serviceIdentity: []
+          executionAuthorization: []
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+        - *a1
+        - *a2
+        - *a3
+        - *a4
+        - *a5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $schema: https://json-schema.org/draft/2020-12/schema
+              oneOf:
+                - type: object
+                  properties:
+                    caseVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contextSnapshotId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    artifactVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contentHash:
+                      type: string
+                      pattern: ^[A-Za-z0-9_-]{43}$
+                    resultId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    basis:
+                      default: []
+                      maxItems: 20
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum:
+                              - DOCUMENT
+                              - TASK
+                              - MESSAGE
+                          id:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          version:
+                            type: integer
+                            exclusiveMinimum: 0
+                            maximum: 9007199254740991
+                        required:
+                          - type
+                          - id
+                          - version
+                        additionalProperties: false
+                    kind:
+                      type: string
+                      const: task_guidance
+                    status:
+                      type: string
+                      enum:
+                        - COMPLETED
+                        - PARTIAL
+                        - FAILED
+                    target:
+                      anyOf:
+                        - type: string
+                          maxLength: 200
+                        - type: "null"
+                    where:
+                      anyOf:
+                        - type: string
+                          maxLength: 500
+                        - type: "null"
+                    bring:
+                      default: []
+                      maxItems: 50
+                      type: array
+                      items:
+                        type: string
+                        maxLength: 200
+                    steps:
+                      default: []
+                      maxItems: 50
+                      type: array
+                      items:
+                        type: string
+                        maxLength: 500
+                    formExampleUrl:
+                      anyOf:
+                        - type: string
+                          maxLength: 2000
+                          format: uri
+                        - type: "null"
+                    formExampleLabel:
+                      anyOf:
+                        - type: string
+                          maxLength: 120
+                        - type: "null"
+                    note:
+                      anyOf:
+                        - type: string
+                          maxLength: 2000
+                        - type: "null"
+                    sources:
+                      default: []
+                      maxItems: 20
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          label:
+                            type: string
+                            minLength: 1
+                            maxLength: 120
+                          url:
+                            type: string
+                            maxLength: 2000
+                            format: uri
+                          checkedAt:
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+                        required:
+                          - label
+                          - url
+                          - checkedAt
+                        additionalProperties: false
+                    missing:
+                      default: []
+                      maxItems: 50
+                      type: array
+                      items:
+                        type: string
+                        maxLength: 200
+                    failureReason:
+                      anyOf:
+                        - type: string
+                          maxLength: 500
+                        - type: "null"
+                  required:
+                    - caseVersion
+                    - contextSnapshotId
+                    - artifactVersion
+                    - contentHash
+                    - resultId
+                    - kind
+                    - status
+                  additionalProperties: false
+                - type: object
+                  properties:
+                    caseVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contextSnapshotId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    artifactVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contentHash:
+                      type: string
+                      pattern: ^[A-Za-z0-9_-]{43}$
+                    resultId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    basis:
+                      default: []
+                      maxItems: 20
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum:
+                              - DOCUMENT
+                              - TASK
+                              - MESSAGE
+                          id:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          version:
+                            type: integer
+                            exclusiveMinimum: 0
+                            maximum: 9007199254740991
+                        required:
+                          - type
+                          - id
+                          - version
+                        additionalProperties: false
+                    kind:
+                      type: string
+                      const: chat_reply
+                    body:
+                      type: string
+                      minLength: 1
+                      maxLength: 10000
+                    professionalNotice:
+                      default: false
+                      type: boolean
+                  required:
+                    - caseVersion
+                    - contextSnapshotId
+                    - artifactVersion
+                    - contentHash
+                    - resultId
+                    - kind
+                    - body
+                  additionalProperties: false
+                - type: object
+                  properties:
+                    caseVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contextSnapshotId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    artifactVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contentHash:
+                      type: string
+                      pattern: ^[A-Za-z0-9_-]{43}$
+                    resultId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    basis:
+                      default: []
+                      maxItems: 20
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum:
+                              - DOCUMENT
+                              - TASK
+                              - MESSAGE
+                          id:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          version:
+                            type: integer
+                            exclusiveMinimum: 0
+                            maximum: 9007199254740991
+                        required:
+                          - type
+                          - id
+                          - version
+                        additionalProperties: false
+                    kind:
+                      type: string
+                      const: case_planning
+                    status:
+                      type: string
+                      enum:
+                        - SUCCEEDED
+                        - FAILED
+                        - NEEDS_ATTENTION
+                  required:
+                    - caseVersion
+                    - contextSnapshotId
+                    - artifactVersion
+                    - contentHash
+                    - resultId
+                    - kind
+                    - status
+                  additionalProperties: false
+      responses:
+        "200":
+          description: Run scoped response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $schema: https://json-schema.org/draft/2020-12/schema
+                    type: object
+                    properties:
+                      applied:
+                        type: boolean
+                      reason:
+                        type:
+                          - string
+                          - "null"
+                    required:
+                      - applied
+                      - reason
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    required:
+                      - requestId
+                    properties:
+                      requestId:
+                        type: string
+        "400":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "401":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "403":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "404":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "409":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "500":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+        "503":
+          description: InternalError
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalError"
+  /runs/{runId}/dispatch:
+    post:
+      operationId: ai_dispatch
+      description: AI Server provider契約。Backendはこの契約で送信する。AI実装/ readiness完了の宣言ではない。
+      servers:
+        - url: https://ai-server.internal/internal/v1
+      security:
+        - serviceIdentity: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-Audience
+          in: header
+          required: true
+          schema:
+            type: string
+            const: ai-server
+        - name: X-Request-Id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $schema: https://json-schema.org/draft/2020-12/schema
+              type: object
+              properties:
+                jobId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                runId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                executionAttempt:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                operation:
+                  type: string
+                  enum:
+                    - case_planning
+                    - task_guidance
+                    - chat_reply
+                    - document_analysis
+                issuedAt:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+                expiresAt:
+                  type: integer
+                  exclusiveMinimum: 0
+                  maximum: 9007199254740991
+                executionAuthorization:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+              required:
+                - jobId
+                - runId
+                - executionAttempt
+                - operation
+                - issuedAt
+                - expiresAt
+                - executionAuthorization
+              additionalProperties: false
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $schema: https://json-schema.org/draft/2020-12/schema
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  runId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  status:
+                    type: string
+                    enum:
+                      - ACCEPTED
+                      - DUPLICATE
+                required:
+                  - jobId
+                  - runId
+                  - status
+                additionalProperties: false
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $schema: https://json-schema.org/draft/2020-12/schema
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  runId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  status:
+                    type: string
+                    enum:
+                      - ACCEPTED
+                      - DUPLICATE
+                required:
+                  - jobId
+                  - runId
+                  - status
+                additionalProperties: false
+        "409":
+          description: Verified duplicate only
+          content:
+            application/json:
+              schema:
+                $schema: https://json-schema.org/draft/2020-12/schema
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  runId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  status:
+                    type: string
+                    enum:
+                      - ACCEPTED
+                      - DUPLICATE
+                required:
+                  - jobId
+                  - runId
+                  - status
+                additionalProperties: false
+components:
+  securitySchemes:
+    serviceIdentity:
+      type: http
+      scheme: bearer
+    executionAuthorization:
+      type: apiKey
+      in: header
+      name: X-Execution-Authorization
+  schemas:
+    InternalError:
+      type: object
+      required:
+        - error
+        - meta
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - retryable
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_FAILED
+                - UNAUTHENTICATED
+                - FORBIDDEN
+                - NOT_FOUND
+                - CONSENT_REQUIRED
+                - CONFLICT
+                - IDEMPOTENCY_KEY_REUSED
+                - PRECONDITION_FAILED
+                - FEATURE_NOT_CONNECTED
+                - INTERNAL
+            message:
+              type: string
+            retryable:
+              type: boolean
+            details:
+              type: object
+        meta:
+          type: object
+          properties:
+            requestId:
+              type: string

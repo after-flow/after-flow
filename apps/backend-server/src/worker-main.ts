@@ -12,7 +12,11 @@ import { ContextVersionUnitOfWork } from './application/case/context-version-uni
 import { assertValidId } from './infrastructure/firestore/paths.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
 import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
-import { HttpAgentJobClient, readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
+import { readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
+import { ScopedHttpAgentJobClient } from './infrastructure/agent/scoped-http-agent-client.js'
+import { readExecutionAuthorization } from './infrastructure/identity/execution-authorization.js'
+import { InternalExecutionService } from './application/agent/internal-execution-service.js'
+import { AgentResultIntake } from './application/chat/result-intake.js'
 import type { AgentJobClient } from './application/ports/agent-client.js'
 
 export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = false): Promise<void> {
@@ -34,7 +38,9 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   const consent = new ConsentService(readConsentCatalog(env), access, read, uow)
   const tasks = new TaskService(readRuleCatalog(env), access, read, uow, new StoredInheritanceDecisionReader(read))
   const unavailable: AgentJobClient = { deliver: async () => ({ status: 'RETRYABLE', reason: 'AI_NOT_CONNECTED' }) }
-  const client = config ? new HttpAgentJobClient(config) : unavailable
+  const authorization = readExecutionAuthorization(env)
+  const execution = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow))
+  const client = config && authorization ? new ScopedHttpAgentJobClient(config, execution, authorization) : unavailable
   // 実検査・内部context接続が揃うまでは、書類解析配送を有効化しない（#27/#36）。
   const guarded: AgentJobClient = { deliver: job => job.type === 'agent.document_analysis' || job.type.startsWith('document.')
     ? Promise.resolve({ status: 'RETRYABLE', reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' }) : client.deliver(job) }

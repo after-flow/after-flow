@@ -376,13 +376,14 @@ describeFirestore('Outbox の配送', () => {
   })
 
   it('workerプロセスを強制停止して再起動すると未確定配送を再開し受信側で一度だけ処理する', { timeout: 30_000 }, async t => {
-    const ai = await startFakeAiServer()
+    const ai = await startFakeAiServer({ protocol: 'scoped' })
     t.after(() => ai.close())
     const { tenantId, app, caseId } = await setup()
     await call(app, `/cases/${caseId}/agent-runs`, jsonRequest('POST', acceptBody(caseId)))
     function worker() {
       const child = spawn(process.execPath, ['--import', 'tsx', 'src/worker-main.ts', '--once'], {
         env: { ...process.env, NODE_ENV: 'test', OUTBOX_TENANT_IDS: tenantId, AI_SERVER_URL: ai.url,
+          BACKEND_EXECUTION_SIGNING_KEY: 'synthetic-worker-signing-key-not-a-real-secret',
           AI_SERVICE_TOKEN: SERVICE_TOKEN, AI_SERVICE_TIMEOUT_MS: '1000', OUTBOX_VISIBILITY_MS: '2000' },
         stdio: ['ignore', 'pipe', 'pipe'],
       })

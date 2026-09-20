@@ -70,7 +70,7 @@ for (const unit of units) {
  */
 const compose = parseYaml(readFileSync(path.join(root, 'compose.yaml'), 'utf8'))
 const aiService = compose?.services?.['ai-server'] ?? {}
-const businessDataEnv = /^(FIRESTORE_|GOOGLE_APPLICATION_CREDENTIALS|STORAGE_)/
+const businessDataEnv = /^(FIRESTORE_|GOOGLE_APPLICATION_CREDENTIALS|STORAGE_|BACKEND_EXECUTION_SIGNING_KEY)/
 for (const key of Object.keys(aiService.environment ?? {})) {
   if (businessDataEnv.test(key)) {
     errors.push(`compose.yaml: ai-server must not receive business data settings (${key})`)

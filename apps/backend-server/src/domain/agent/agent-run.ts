@@ -47,6 +47,11 @@ export interface AgentRunEntity extends EntityBase {
   attempt: number
   /** 直近の attempt の識別子。古い attempt の結果を弾くために使う。 */
   currentAttemptId: string
+  /** 新契約で受け付けたRunに必須。旧データは内部APIでfail closed。 */
+  initiatedByUserId?: string
+  currentJobId?: string
+  heartbeatAt?: string
+  progressSequence?: number
   /** 失敗理由。利用者に見せてよい範囲。 */
   failureReason: string | null
   /** 待機の理由。status が WAITING_* のときに入る。 */

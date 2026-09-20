@@ -1,5 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { dispatchSchema } from '@aftercare/internal-contracts'
+import type { RunDispatch } from '@aftercare/internal-contracts'
 
 /**
  * 独立した Fake AI HTTP サーバー。
@@ -16,6 +18,7 @@ export interface FakeAiServer {
   countOf(eventId: string): number
   /** 重複排除して受理した eventId。 */
   accepted: Set<string>
+  dispatches: RunDispatch[]
   /** 次の応答を指定する。未指定なら 202。 */
   respondWith(status: number): void
   /** 応答を返さずに接続を切る。送信したか分からない状態を作る。 */
@@ -26,10 +29,11 @@ export interface FakeAiServer {
 }
 
 export async function startFakeAiServer(
-  options: { expectedToken?: string } = {},
+  options: { expectedToken?: string; protocol?: 'scoped' } = {},
 ): Promise<FakeAiServer> {
   const received: FakeAiServer['received'] = []
   const accepted = new Set<string>()
+  const dispatches: RunDispatch[] = []
   let nextStatus: number | null = null
   let dropNextRequest = false
   let held: { signal(id: string): void; wait: Promise<void>; status: number } | null = null
@@ -44,7 +48,20 @@ export async function startFakeAiServer(
         return
       }
 
-      const job = JSON.parse(body || '{}') as { eventId?: string; type?: string; attempt?: number }
+      const raw = JSON.parse(body || '{}')
+      const dispatch = options.protocol === 'scoped' ? dispatchSchema.safeParse(raw) : null
+      if (dispatch && (!dispatch.success || request.url !== `/internal/v1/runs/${dispatch.data.runId}/dispatch`)) {
+        response.writeHead(400).end()
+        return
+      }
+      const scoped = dispatch?.success ? dispatch.data : null
+      if (scoped) dispatches.push(scoped)
+      const job = scoped ? { eventId: scoped.jobId, type: `agent.${scoped.operation}`, attempt: 1 }
+        : raw as { eventId?: string; type?: string; attempt?: number }
+      const respond = (status: number) => {
+        response.writeHead(status, { 'content-type': 'application/json' }).end(scoped
+          ? JSON.stringify({ jobId: scoped.jobId, runId: scoped.runId, status: status === 409 ? 'DUPLICATE' : 'ACCEPTED' }) : '')
+      }
       received.push({
         eventId: job.eventId ?? '',
         type: job.type ?? '',
@@ -57,7 +74,7 @@ export async function startFakeAiServer(
         held = null
         if (job.eventId && current.status === 202) accepted.add(job.eventId)
         current.signal(job.eventId ?? '')
-        void current.wait.then(() => response.writeHead(current.status).end())
+        void current.wait.then(() => respond(current.status))
         return
       }
 
@@ -77,11 +94,11 @@ export async function startFakeAiServer(
 
       if (job.eventId && accepted.has(job.eventId)) {
         // 受信側の重複排除。既に処理済みの配送は 409 で弾く。
-        response.writeHead(409).end()
+        respond(409)
         return
       }
       if (job.eventId) accepted.add(job.eventId)
-      response.writeHead(202).end()
+      respond(202)
     })
   })
 
@@ -92,6 +109,7 @@ export async function startFakeAiServer(
     url: `http://127.0.0.1:${address.port}`,
     received,
     accepted,
+    dispatches,
     countOf: (eventId) => received.filter((entry) => entry.eventId === eventId).length,
     respondWith: (status) => {
       nextStatus = status

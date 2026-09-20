@@ -4,18 +4,20 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "pnpm contracts:build && tsx watch src/main.ts",
+    "contracts:build": "pnpm --filter @aftercare/internal-contracts build",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "worker": "tsx src/worker-main.ts",
-    "worker:once": "tsx src/worker-main.ts --once",
+    "worker": "pnpm contracts:build && tsx src/worker-main.ts",
+    "worker:once": "pnpm contracts:build && tsx src/worker-main.ts --once",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
-    "test": "node --import tsx --test \"test/**/*.test.ts\"",
-    "openapi:generate": "tsx src/tools/generate-openapi.ts",
-    "openapi:check": "tsx src/tools/generate-openapi.ts --check",
-    "test:firestore": "node ../../scripts/with-firestore-emulator.mjs -- node --import tsx --test \"test/firestore/**/*.test.ts\""
+    "test": "pnpm contracts:build && node --import tsx --test \"test/**/*.test.ts\"",
+    "openapi:generate": "pnpm contracts:build && tsx src/tools/generate-openapi.ts",
+    "openapi:check": "pnpm contracts:build && tsx src/tools/generate-openapi.ts --check",
+    "test:firestore": "pnpm contracts:build && node ../../scripts/with-firestore-emulator.mjs -- node --import tsx --test \"test/firestore/**/*.test.ts\""
   },
   "dependencies": {
+    "@aftercare/internal-contracts": "workspace:*",
     "@aftercare/public-contracts": "workspace:*",
     "@google-cloud/firestore": "9.2.0",
     "@hono/node-server": "2.1.1",
