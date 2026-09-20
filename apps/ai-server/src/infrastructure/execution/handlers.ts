@@ -7,6 +7,9 @@ import type { ChatReplyDependencies } from '../mastra/workflows/chat-reply.js'
 import type { AgentBudget } from '../mastra/budget-processors.js'
 import { contentHash } from '../../orchestration/context/builder.js'
 import type { ExecutionSession, WorkflowHandler } from './runtime.js'
+import { createPlanningExecutionWorkflow, PLANNING_EXECUTION } from '../mastra/workflows/planning-execution.js'
+import type { GuidanceAgentDependencies } from '../mastra/agents/guidance-agents.js'
+import type { FirestoreWorkflowsStorage } from '../runtime-storage/workflows.js'
 import { assertAuthorizedModelSet } from '../mastra/authorized-models.js'
 
 type Prepared<T> = Omit<T, 'backend' | 'signal' | 'budget'> & { budget: AgentBudget }
@@ -15,7 +18,7 @@ interface HandlerConfig<T> {
   /** Resolve reviewed scope/catalog and real Orch-authorized, budgeted models for this section. */
   prepare(session: ExecutionSession): Promise<Prepared<T>>
 }
-function bindBudget(prepared: Prepared<ProcedureGuidanceDependencies> | Prepared<ChatReplyDependencies>, session: ExecutionSession): AgentBudget {
+function bindBudget(prepared: Pick<GuidanceAgentDependencies, 'models'> & { budget: AgentBudget }, session: ExecutionSession): AgentBudget {
   if (prepared.budget.inferenceChargedByProviderAdapter || Array.isArray(prepared.models.core) || Array.isArray(prepared.models.research)) {
     assertAuthorizedModelSet(prepared.models.core, { charge: session.guard, role: 'core', operation: session.receipt.operation })
     assertAuthorizedModelSet(prepared.models.research, { charge: session.guard, role: 'research', operation: session.receipt.operation })
@@ -48,6 +51,33 @@ export function createChatHandler(config: HandlerConfig<ChatReplyDependencies>):
     const resultId = contentHash({ jobId: session.receipt.jobId, kind: 'chat-result' })
     const result = await run.start({ inputData: { resultId } })
     if (result.status !== 'success') throw new Error('Chat workflow did not complete')
+    return 'COMPLETED'
+  } }
+}
+
+export function createPlanningHandler(config: {
+  storage: MastraCompositeStore; snapshots: FirestoreWorkflowsStorage
+  templates: Parameters<typeof createPlanningExecutionWorkflow>[0]['templates']; maxSourceAgeMs: number
+  prepare(session: ExecutionSession): Promise<Awaited<ReturnType<Parameters<typeof createPlanningExecutionWorkflow>[0]['prepare']>> & { agents: GuidanceAgentDependencies & { budget: AgentBudget } }>
+}): WorkflowHandler {
+  return { workflowName: PLANNING_EXECUTION, async execute(session) {
+    await session.guard()
+    const workflow = createPlanningExecutionWorkflow({ backend: session.backend, signal: session.signal, guard: session.guard,
+      previousAttemptId: session.receipt.resume?.previousAttemptId ?? null, allowedKinds: ['TASK_PROPOSAL'], registerWait: session.registerWait,
+      templates: config.templates, maxSourceAgeMs: config.maxSourceAgeMs,
+      prepare: async () => { const prepared = await config.prepare(session); return { ...prepared, agents: { ...prepared.agents, budget: bindBudget(prepared.agents, session) } } },
+    })
+    const mastra = new Mastra({ storage: config.storage, workflows: { workflow } })
+    const resume = session.receipt.resume
+    if (resume?.kind === 'WAIT') {
+      if (!resume.snapshotId) throw new Error('Planning resume requires a durable snapshot')
+      await config.snapshots.forkSuspendedSnapshot({ workflowName: PLANNING_EXECUTION, fromRunId: resume.snapshotId, toRunId: session.receipt.workflowRunId })
+    } else if (resume) throw new Error('Planning replay requires explicit recovery policy')
+    const run = await mastra.getWorkflow('workflow').createRun({ runId: session.receipt.workflowRunId })
+    const result = resume?.kind === 'WAIT' ? await run.resume({ resumeData: { resume: true } }) :
+      await run.start({ inputData: { runId: session.receipt.runId, resultId: contentHash({ runId: session.receipt.runId, kind: 'planning-result' }) } })
+    if (result.status === 'suspended') return 'WAITING'
+    if (result.status !== 'success') throw new Error('Planning execution did not complete')
     return 'COMPLETED'
   } }
 }

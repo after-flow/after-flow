@@ -31,7 +31,7 @@ test('planner produces bounded template differences through two native Mastra ag
   const context = artifact()
   const workflow = createCasePlanningWorkflow({ signal, templates: [template], maxSourceAgeMs: 60000,
     backend: { context: async () => structuredClone(context), control: async () => ({ instruction: 'CONTINUE', reason: null, caseVersion: 1 }) },
-    prepare: async () => ({ routeEvidenceId: 'synthetic-orch', agents: { models: { core: core.model, research: research.model }, signal, briefs: [brief], researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds }, sources: () => tools.sources('brief') }) })
+    prepare: async () => ({ routing: { routeId: 'case-planning/v1', evidenceId: 'synthetic-orch' }, agents: { models: { core: core.model, research: research.model }, signal, briefs: [brief], researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds }, sources: () => tools.sources('brief') }) })
   const result = await (await workflow.createRun()).start({ inputData: { runId: 'run' } })
   assert.equal(result.status, 'success', JSON.stringify(result))
   if (result.status !== 'success') assert.fail()
