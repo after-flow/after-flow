@@ -3,7 +3,9 @@ import { createApp } from './app.js'
 import { AccessService } from './application/authorization/case-access.js'
 import { CaseService } from './application/case/case-service.js'
 import { ConsentService } from './application/consent/consent-service.js'
+import { DocumentService } from './application/document/document-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
+import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
 import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
@@ -39,9 +41,29 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     database.read,
     database.uow,
   )
+  const storageRoot = env.DOCUMENT_STORAGE_ROOT
+  if (!storageRoot) {
+    // 原本の保存先が無い状態で登録を受け付けると、成功に見えて原本が残らない。
+    logger.warn('document storage is not configured', {
+      effect: 'document APIs reject every request with FEATURE_NOT_CONNECTED',
+      required: ['DOCUMENT_STORAGE_ROOT'],
+    })
+  }
+
   const routes = createPublicV1Routes({
     caseService: new CaseService(access, database.read, database.uow),
     consentService,
+    documentService: new DocumentService(
+      access,
+      database.read,
+      database.uow,
+      new LocalObjectStorage(storageRoot ?? ''),
+      consentService,
+      // 検査実装は方式決定後（#26）。未接続なので検査状態は PENDING のまま。
+      null,
+      // AI は未接続。解析は受け付けない。
+      false,
+    ),
   })
 
   // 認証済み利用者にだけ同意を要求する。未認証は先に 401 で止まる。

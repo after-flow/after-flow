@@ -1,5 +1,6 @@
 import type { ApiErrorCode } from '@aftercare/public-contracts'
 import type { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
 import { errors } from '../../shared/app-error.js'
 import type { AppContext, AppEnv } from './context.js'
@@ -11,12 +12,25 @@ export interface RouteRequestSpec {
   params?: z.ZodObject
   query?: z.ZodObject
   body?: z.ZodType
+  /**
+   * multipart を受け取る route。
+   *
+   * 中身の取り出しと検査は handler が行う。共通の JSON 解析を通すと、
+   * 原本を文字列として読み込んでしまう。
+   */
+  multipart?: { fields: Record<string, string> }
 }
 
 export interface RouteResponseSpec {
   status: number
   description: string
-  schema: z.ZodType
+  /** JSON 応答のスキーマ。binary の応答では省略する。 */
+  schema?: z.ZodType
+  /**
+   * 応答の媒体型。既定は application/json。
+   * 原本の取得のように、封筒に包まず実体を返す route で指定する。
+   */
+  mediaType?: string
 }
 
 /**
@@ -54,6 +68,13 @@ export interface RouteSpec<Req extends RouteRequestSpec = RouteRequestSpec> {
    * 復旧できないため、それらだけ `exempt` にする。
    */
   consent?: 'exempt'
+  /**
+   * この route が受け付ける body の上限。
+   *
+   * 原本アップロードだけ大きくするため、route ごとに持たせる。
+   * 全体を大きくすると、JSON の API も同じ量を受け付けてしまう。
+   */
+  maxBodyBytes?: number
 }
 
 type InferOr<S, Fallback> = S extends z.ZodType ? z.infer<S> : Fallback
@@ -191,13 +212,25 @@ export interface RegisterOptions {
   consentGate?: (c: AppContext) => Promise<void>
 }
 
+/** JSON 要求の既定の上限。原本アップロードは route 側で上書きする。 */
+export const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+
 export function registerRoutes(
   app: Hono<AppEnv>,
   routes: RegisteredRoute[],
   options: RegisterOptions = {},
 ) {
   for (const { spec, handler } of routes) {
-    app.on(spec.method.toUpperCase(), spec.path, async (c) => {
+    const limit = bodyLimit({
+      maxSize: spec.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
+      onError: () => {
+        throw errors.payloadTooLarge({
+          details: { maxBytes: spec.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES },
+        })
+      },
+    })
+
+    app.on(spec.method.toUpperCase(), spec.path, limit, async (c) => {
       // 認証が必要な route は、認証 middleware の有無に関係なくここで止める。
       // middleware の付け忘れが「誰でも通る API」にならないようにする。
       if (spec.auth === 'user' && !c.get('user')) throw errors.unauthenticated()
@@ -225,6 +258,7 @@ export function registerRoutes(
         assertExpectedVersion(raw, spec.expectedVersion)
         body = parseOrThrow(request.body, raw, 'body')
       }
+      // multipart は handler が自分で取り出す。ここでは解析しない。
 
       return handler(c, {
         params,

@@ -90,7 +90,10 @@ apps/
     src/presentation/openapi/ route定義からのOpenAPI生成
     src/domain/case/           Case Entityと版の規則
     src/domain/consent/        同意文書の定義と判定
+    src/domain/document/       書類Entity・実体による形式判定・検査状態
     src/application/consent/   同意の記録・撤回・利用可否Policy
+    src/application/document/  書類の登録・取得・除外・回収
+    src/infrastructure/storage/ 原本の保存（開発・CI用のローカル実装）
     src/application/case/      Case のCommand・Query
     src/presentation/routes/public/v1/ health・cases
     test/                    契約テスト（node:test）
@@ -123,8 +126,12 @@ Makefile                    起動・停止・検証
 
 Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
 
-現在の公開APIは生存確認、同意、案件（作成・一覧・詳細・訂正）です。案件の一覧は自分が参加しているものだけを返します。
+現在の公開APIは生存確認、同意、案件（作成・一覧・詳細・訂正）、書類（登録・一覧・詳細・原本取得・除外）です。案件の一覧は自分が参加しているものだけを返します。
 業務データベースが未設定の状態では、業務APIは `FEATURE_NOT_CONNECTED` を理由付きで返します。空配列や固定の成功では返しません。
+
+書類はPDF・JPEG・PNG、1ファイル10 MiBまでです。Content-Typeの申告だけでなく先頭バイトで実体を検査します。
+検知・マスキングの方式は未確定です（[ADR 0002](docs/adr/0002-document-inspection.md)）。検査器が未接続の間、検査状態は「未検査」のままで、合格としては扱いません。未検査・拒否・失敗の書類はAIへ配信しません。
+書類の除外は通常の一覧から外す操作で、個人データの完全消去とは別です。監査や根拠からの参照は壊しません。
 
 必須同意（利用規約・個人情報の取扱い）が揃うまで業務APIは `CONSENT_REQUIRED` を返します。同意を取得するためのAPIは塞ぎません。
 任意の外部AI同意が無くても、手動での案件・書類・手続きの管理は利用できます。同意文書の文面と提供先は業務側の承認後に確定するため、未設定時は仮文面と分かるカタログを使い、本番では拒否します。

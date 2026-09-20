@@ -1,12 +1,18 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { createMiddleware } from 'hono/factory'
 import { createApp } from '../../../src/app.js'
 import { AccessService } from '../../../src/application/authorization/case-access.js'
 import type { TenantMember } from '../../../src/application/authorization/case-access.js'
 import { CaseService } from '../../../src/application/case/case-service.js'
 import { ConsentService } from '../../../src/application/consent/consent-service.js'
+import { DocumentService } from '../../../src/application/document/document-service.js'
 import { PLACEHOLDER_CATALOG } from '../../../src/domain/consent/catalog.js'
 import type { ConsentCatalog } from '../../../src/domain/consent/consent.js'
 import { collections } from '../../../src/domain/shared/collections.js'
+import type { DocumentInspector } from '../../../src/application/ports/inspection.js'
+import { LocalObjectStorage } from '../../../src/infrastructure/storage/local-object-storage.js'
 import type { AppEnv } from '../../../src/presentation/http/context.js'
 import { createPublicV1Routes } from '../../../src/presentation/routes/public/v1/index.js'
 import { readRepository, unitOfWork, workContext } from './emulator.js'
@@ -21,6 +27,12 @@ export interface TestAppOptions {
   catalog?: ConsentCatalog
   /** false にすると必須同意の検査を外す。既定は本番と同じく有効。 */
   enforceConsent?: boolean
+  /** 検査実装。未指定なら検査は行われず、状態は PENDING のままになる。 */
+  inspector?: DocumentInspector
+  /** AI が接続されている前提にするか。既定は未接続。 */
+  aiConnected?: boolean
+  /** 原本の保存先。未指定ならテストごとに一時ディレクトリーを作る。 */
+  storageRoot?: string
 }
 
 export function buildApp(tenantId: string, userId: string, options: TestAppOptions = {}) {
@@ -31,9 +43,21 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
     readRepository(),
     unitOfWork(),
   )
+  const storage = new LocalObjectStorage(
+    options.storageRoot ?? mkdtempSync(path.join(tmpdir(), 'after-flow-docs-')),
+  )
   const routes = createPublicV1Routes({
     caseService: new CaseService(access, readRepository(), unitOfWork()),
     consentService,
+    documentService: new DocumentService(
+      access,
+      readRepository(),
+      unitOfWork(),
+      storage,
+      consentService,
+      options.inspector ?? null,
+      options.aiConnected ?? false,
+    ),
   })
 
   const stubAuthentication = createMiddleware<AppEnv>(async (c, next) => {

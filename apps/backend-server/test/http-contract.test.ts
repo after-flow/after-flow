@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { createApp, MAX_JSON_BODY_BYTES } from '../src/app.js'
+import { createApp } from '../src/app.js'
+import { DEFAULT_MAX_BODY_BYTES } from '../src/presentation/http/route.js'
 import { fixtureRoutes, stubAuthentication } from './helpers/fixture-routes.js'
 
 const app = createApp({ routes: fixtureRoutes, authentication: stubAuthentication })
@@ -135,7 +136,7 @@ describe('入力検証', () => {
     const { response, body } = await call('/cases/case-1/fixtures', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'idem-0000001' },
-      body: 'x'.repeat(MAX_JSON_BODY_BYTES + 1),
+      body: 'x'.repeat(DEFAULT_MAX_BODY_BYTES + 1),
     })
     assert.equal(response.status, 413)
     assert.equal(body?.error.code, 'PAYLOAD_TOO_LARGE')
