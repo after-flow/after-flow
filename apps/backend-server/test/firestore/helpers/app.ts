@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -15,6 +16,9 @@ import {
   InheritanceDecisionService,
   StoredInheritanceDecisionReader,
 } from '../../../src/application/decision/decision-service.js'
+import { MessageService } from '../../../src/application/chat/message-service.js'
+import { CaseOverviewService } from '../../../src/application/overview/overview-service.js'
+import { AgentResultIntake } from '../../../src/application/chat/result-intake.js'
 import { ProposalService } from '../../../src/application/proposal/proposal-service.js'
 import { taskProposalApplier } from '../../../src/application/proposal/task-applier.js'
 import { TaskService } from '../../../src/application/task/task-service.js'
@@ -26,6 +30,7 @@ import { collections } from '../../../src/domain/shared/collections.js'
 import type { DocumentInspector } from '../../../src/application/ports/inspection.js'
 import { LocalObjectStorage } from '../../../src/infrastructure/storage/local-object-storage.js'
 import type { AppEnv } from '../../../src/presentation/http/context.js'
+import { createInternalApp } from '../../../src/presentation/routes/internal/v1/results.js'
 import { createPublicV1Routes } from '../../../src/presentation/routes/public/v1/index.js'
 import { readRepository, unitOfWork, workContext } from './emulator.js'
 
@@ -51,6 +56,8 @@ export interface TestAppOptions {
   decisions?: InheritanceDecisionReader
   /** 接続済みの業務操作。未指定ならどれも未接続。 */
   connectedOperations?: AgentOperation[]
+  /** 内部APIのサービストークン。未指定なら内部APIを公開しない。 */
+  serviceToken?: string
 }
 
 export function buildApp(tenantId: string, userId: string, options: TestAppOptions = {}) {
@@ -64,6 +71,14 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
   const storage = new LocalObjectStorage(
     options.storageRoot ?? mkdtempSync(path.join(tmpdir(), 'after-flow-docs-')),
   )
+  const agentRunService = new AgentRunService(
+    access,
+    readRepository(),
+    unitOfWork(),
+    consentService,
+    new Set(options.connectedOperations ?? []),
+  )
+
   const routes = createPublicV1Routes({
     caseService: new CaseService(access, readRepository(), unitOfWork()),
     consentService,
@@ -83,15 +98,15 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       unitOfWork(),
       options.decisions ?? new StoredInheritanceDecisionReader(readRepository()),
     ),
-    agentRunService: new AgentRunService(
-      access,
-      readRepository(),
-      unitOfWork(),
-      consentService,
-      new Set(options.connectedOperations ?? []),
-    ),
+    agentRunService,
     proposalService: new ProposalService(access, readRepository(), unitOfWork(), [taskProposalApplier]),
     decisionService: new InheritanceDecisionService(access, readRepository(), unitOfWork()),
+    messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService),
+    overviewService: new CaseOverviewService(
+      access,
+      readRepository(),
+      (options.connectedOperations ?? []).length > 0,
+    ),
   })
 
   const stubAuthentication = createMiddleware<AppEnv>(async (c, next) => {
@@ -99,9 +114,18 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
     await next()
   })
 
+  const internalApp = options.serviceToken
+    ? createInternalApp({
+        intake: new AgentResultIntake(readRepository(), unitOfWork()),
+        serviceToken: options.serviceToken,
+        audience: 'backend-server',
+      })
+    : undefined
+
   return createApp({
     routes,
     authentication: stubAuthentication,
+    ...(internalApp ? { internalApp } : {}),
     ...(options.enforceConsent === false
       ? {}
       : {
@@ -134,7 +158,7 @@ export async function call(
   return { status: response.status, body: text ? (JSON.parse(text) as Json) : {} }
 }
 
-export function jsonRequest(method: string, body: unknown, idempotencyKey?: string): RequestInit {
+export function jsonRequest(method: string, body: unknown, idempotencyKey: string | null = randomUUID()): RequestInit {
   return {
     method,
     headers: {

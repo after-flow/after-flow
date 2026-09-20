@@ -99,6 +99,28 @@ export class TenantAccess {
 }
 
 /**
+ * AI の実行としての実行文脈。
+ *
+ * サービス間認証を通り、保存済みの Run から scope を導出した場合にだけ
+ * 作る。AI の自己申告 tenant や role からは作らない。
+ */
+export class AgentAccess {
+  constructor(
+    readonly tenantId: string,
+    readonly caseId: string,
+    private readonly agentRunId: string,
+  ) {}
+
+  get actor(): ActorRef {
+    return { type: 'AI', userId: null, agentRunId: this.agentRunId }
+  }
+
+  toWorkContext(requestId: string | null): WorkContext {
+    return { tenantId: this.tenantId, actor: this.actor, requestId, idempotency: null }
+  }
+}
+
+/**
  * 認証済み利用者から tenant / Case の権限を導出する。
  *
  * 要求本文の自己申告（ownerName、続柄、role）は一切使わない。

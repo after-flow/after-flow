@@ -83,7 +83,7 @@ export const caseSpecs = {
       'PRECONDITION_FAILED',
     ],
     expectedVersion: 'required',
-    idempotency: 'optional',
+    idempotency: 'required',
   },
 } satisfies Record<string, RouteSpec>
 
@@ -92,7 +92,7 @@ function commandMeta(c: AppContext, idempotencyKey: string | null, body: unknown
     requestId: c.get('requestId') ?? null,
     idempotency: idempotencyKey
       ? // 内容そのものは保存せず、指紋だけで同一性を判定する。
-        { key: idempotencyKey, fingerprint: fingerprintOf(body) }
+        { key: idempotencyKey, fingerprint: fingerprintOf({ method: c.req.method, path: c.req.path, body }) }
       : null,
   }
 }

@@ -91,7 +91,7 @@ export const proposalSpecs = {
     success: { status: 200, description: '訂正後の提案', schema: proposalEnvelope },
     failures: [...COMMON_FAILURES, 'CONFLICT', 'PRECONDITION_REQUIRED', 'PRECONDITION_FAILED'],
     expectedVersion: 'required',
-    idempotency: 'optional',
+    idempotency: 'required',
   },
   requestApproval: {
     operationId: 'requestApproval',
@@ -149,7 +149,7 @@ export const proposalSpecs = {
       'FEATURE_NOT_CONNECTED',
     ],
     expectedVersion: 'required',
-    idempotency: 'optional',
+    idempotency: 'required',
   },
   reject: {
     operationId: 'rejectProposal',
@@ -162,7 +162,7 @@ export const proposalSpecs = {
     success: { status: 200, description: '却下後の承認', schema: approvalEnvelope },
     failures: [...COMMON_FAILURES, 'CONFLICT', 'PRECONDITION_REQUIRED', 'PRECONDITION_FAILED'],
     expectedVersion: 'required',
-    idempotency: 'optional',
+    idempotency: 'required',
   },
   listDecisions: {
     operationId: 'listInheritanceDecisions',
@@ -202,14 +202,14 @@ export const proposalSpecs = {
     success: { status: 200, description: '確定後の状況', schema: decisionEnvelope },
     failures: [...COMMON_FAILURES, 'CONFLICT', 'PRECONDITION_REQUIRED'],
     expectedVersion: 'required',
-    idempotency: 'optional',
+    idempotency: 'required',
   },
 } satisfies Record<string, RouteSpec>
 
 function commandMeta(c: AppContext, idempotencyKey: string | null, body: unknown) {
   return {
     requestId: c.get('requestId') ?? null,
-    idempotency: idempotencyKey ? { key: idempotencyKey, fingerprint: fingerprintOf(body) } : null,
+    idempotency: idempotencyKey ? { key: idempotencyKey, fingerprint: fingerprintOf({ method: c.req.method, path: c.req.path, body }) } : null,
   }
 }
 

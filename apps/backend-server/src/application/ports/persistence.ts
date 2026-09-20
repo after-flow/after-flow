@@ -138,4 +138,16 @@ export interface ReadRepository {
     collection: CollectionDescriptor,
     options: ListGroupOptions,
   ): Promise<Page<T>>
+  /**
+   * 条件に一致する件数。
+   *
+   * 一覧の 1 ページ目を数えて全件とするのを避けるために使う。
+   * 表示のためだけに全文書を読み出さない。
+   */
+  count(
+    tenantId: string,
+    collection: CollectionDescriptor,
+    caseId: string | null,
+    where?: { field: string; op: '==' | '<' | '<=' | '>' | '>='; value: unknown }[],
+  ): Promise<number>
 }

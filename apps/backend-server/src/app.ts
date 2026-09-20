@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from 'hono'
 import type { AppEnv } from './presentation/http/context.js'
 import { handleError, handleNotFound } from './presentation/http/error-handler.js'
 import { requestId } from './presentation/http/request-id.js'
+import type { Hono as HonoApp } from 'hono'
 import type { AppContext } from './presentation/http/context.js'
 import type { RegisteredRoute } from './presentation/http/route.js'
 import { registerRoutes } from './presentation/http/route.js'
@@ -24,6 +25,13 @@ export interface CreateAppOptions {
    * 通ったことにしないため、既定では検査しない。
    */
   consentGate?: (c: AppContext) => Promise<void>
+  /**
+   * AI からの内部 API。
+   *
+   * 未設定なら公開しない。設定が無いまま内部 API が開いている状態を作らない。
+   * ネットワークの分離は配備側の責務。
+   */
+  internalApp?: HonoApp<AppEnv>
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -42,6 +50,7 @@ export function createApp(options: CreateAppOptions = {}) {
     ...(options.consentGate ? { consentGate: options.consentGate } : {}),
   })
   app.route('/api/v1', v1)
+  if (options.internalApp) app.route('/internal/v1', options.internalApp)
 
   return app
 }

@@ -11,6 +11,9 @@ import {
   InheritanceDecisionService,
   StoredInheritanceDecisionReader,
 } from './application/decision/decision-service.js'
+import { MessageService } from './application/chat/message-service.js'
+import { CaseOverviewService } from './application/overview/overview-service.js'
+import { AgentResultIntake } from './application/chat/result-intake.js'
 import { ProposalService } from './application/proposal/proposal-service.js'
 import { taskProposalApplier } from './application/proposal/task-applier.js'
 import { TaskService } from './application/task/task-service.js'
@@ -25,6 +28,7 @@ import { createTokenVerifier, readAuthConfig } from './infrastructure/identity/c
 import { authentication } from './presentation/http/authentication.js'
 import type { AppEnv } from './presentation/http/context.js'
 import { logger } from './presentation/http/logger.js'
+import { createInternalApp } from './presentation/routes/internal/v1/results.js'
 import { createPublicV1Routes } from './presentation/routes/public/v1/index.js'
 
 /**
@@ -62,20 +66,28 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     })
   }
 
+  const agentRunService = new AgentRunService(
+    access,
+    database.read,
+    database.uow,
+    consentService,
+    connectedOperations(env),
+  )
+
   const routes = createPublicV1Routes({
     caseService: new CaseService(access, database.read, database.uow),
     consentService,
-    documentService: new DocumentService(
+    documentService: storageRoot ? new DocumentService(
       access,
       database.read,
       database.uow,
-      new LocalObjectStorage(storageRoot ?? ''),
+      new LocalObjectStorage(storageRoot),
       consentService,
       // 検査実装は方式決定後（#26）。未接続なので検査状態は PENDING のまま。
       null,
       // AI は未接続。解析は受け付けない。
       false,
-    ),
+    ) : null,
     // 放棄前ロックは保存済みの確定状況で判定する。未記録は未確定のまま。
     taskService: new TaskService(
       readRuleCatalog(env),
@@ -87,16 +99,16 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     // 接続済みの業務操作は設定で管理する。AI Server が未設定なら空集合で、
     // どの操作も FEATURE_NOT_CONNECTED になる。UI にボタンがあるだけで
     // すべての操作を有効にしない。
-    agentRunService: new AgentRunService(
-      access,
-      database.read,
-      database.uow,
-      consentService,
-      connectedOperations(env),
-    ),
+    agentRunService,
     // 種類ごとの反映は担当 Issue が登録する。未登録の種類は反映できない。
     proposalService: new ProposalService(access, database.read, database.uow, [taskProposalApplier]),
     decisionService: new InheritanceDecisionService(access, database.read, database.uow),
+    messageService: new MessageService(access, database.read, database.uow, agentRunService),
+    overviewService: new CaseOverviewService(
+      access,
+      database.read,
+      connectedOperations(env).size > 0,
+    ),
   })
 
   // 認証済み利用者にだけ同意を要求する。未認証は先に 401 で止まる。
@@ -105,18 +117,28 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     if (user) await consentService.assertBasicConsent(user)
   }
 
+  // 内部 API はサービストークンが設定されている場合だけ公開する。
+  const internalApp = env.AI_SERVICE_TOKEN
+    ? createInternalApp({
+        intake: new AgentResultIntake(database.read, database.uow),
+        serviceToken: env.AI_SERVICE_TOKEN,
+        audience: env.BACKEND_SERVICE_AUDIENCE ?? 'backend-server',
+      })
+    : undefined
+
   if (!env.AUTH_ISSUER) {
     // 設定が無いこと自体をはっきり残す。無効のまま本番へ出さないため。
     logger.warn('authentication is not configured', {
       effect: 'routes that require a user reject every request with 401',
       required: ['AUTH_ISSUER', 'AUTH_AUDIENCE', 'AUTH_JWKS_URI'],
     })
-    return createApp({ routes, consentGate })
+    return createApp({ routes, consentGate, ...(internalApp ? { internalApp } : {}) })
   }
 
   return createApp({
     routes,
     consentGate,
+    ...(internalApp ? { internalApp } : {}),
     authentication: authentication(createTokenVerifier(readAuthConfig(env)), access),
   })
 }

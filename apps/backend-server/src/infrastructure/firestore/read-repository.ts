@@ -148,4 +148,20 @@ export class FirestoreReadRepository implements ReadRepository {
       }),
     }
   }
+
+  async count(
+    tenantId: string,
+    collection: CollectionDescriptor,
+    caseId: string | null,
+    where: { field: string; op: '==' | '<' | '<=' | '>' | '>='; value: unknown }[] = [],
+  ): Promise<number> {
+    assertValidId(tenantId, 'tenantId')
+    let query: Query = this.firestore.collection(collectionPath(tenantId, collection, caseId))
+    for (const clause of where) {
+      query = query.where(clause.field, clause.op, clause.value)
+    }
+    // 集計クエリを使う。件数のためだけに全文書を読み出さない。
+    const snapshot = await query.count().get()
+    return snapshot.data().count
+  }
 }

@@ -122,14 +122,14 @@ export const documentSpecs = {
       'PRECONDITION_REQUIRED',
     ],
     expectedVersion: 'required',
-    idempotency: 'optional',
+    idempotency: 'required',
   },
 } satisfies Record<string, RouteSpec>
 
 function commandMeta(c: AppContext, idempotencyKey: string | null, body: unknown) {
   return {
     requestId: c.get('requestId') ?? null,
-    idempotency: idempotencyKey ? { key: idempotencyKey, fingerprint: fingerprintOf(body) } : null,
+    idempotency: idempotencyKey ? { key: idempotencyKey, fingerprint: fingerprintOf({ method: c.req.method, path: c.req.path, body }) } : null,
   }
 }
 
