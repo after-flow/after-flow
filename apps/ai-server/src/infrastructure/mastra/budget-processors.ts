@@ -3,6 +3,8 @@ import type { BudgetCharge } from '../../application/execution/contracts.js'
 import { ExecutionRejected } from '../../application/execution/contracts.js'
 
 export interface AgentBudget {
+  /** Only with createAuthorizedModels: it charges each physical provider attempt. */
+  inferenceChargedByProviderAdapter?: true
   /** Shared durable Run reservation, including Backend control/ownership verification. */
   charge(value: BudgetCharge): Promise<void>
   /** Provider policy must supply a proven whole-request token/cost upper bound, including schemas. */
@@ -20,6 +22,7 @@ export function createBudgetProcessors(budget: AgentBudget) {
       id: `durable-budget-${role}`,
       processInputStep: ({ modelSettings }) => ({ modelSettings: { ...modelSettings, maxRetries: 0, maxOutputTokens: budget.inference[role].maxOutputTokens } }),
       processLLMRequest: async () => {
+        if (budget.inferenceChargedByProviderAdapter) { await budget.charge({}); return }
         const { tokens, costMicros } = budget.inference[role]
         await budget.charge({ inferenceAttempts: 1, tokens, costMicros })
       },

@@ -1,5 +1,6 @@
 import type { AgentBudget } from '../budget-processors.js'
 import { createStep, createWorkflow } from '@mastra/core/workflows'
+import type { ModelWithRetries } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
 import { artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
@@ -21,7 +22,7 @@ const outputSchema = z.object({ resultId: internalId, applied: z.boolean(), reas
 export interface ProcedureGuidanceDependencies {
   budget?: AgentBudget
   backend: Pick<BackendClient, 'context' | 'control' | 'result'>
-  models: { core: MastraModelConfig; research: MastraModelConfig }
+  models: { core: MastraModelConfig | ModelWithRetries[]; research: MastraModelConfig | ModelWithRetries[] }
   scope: z.infer<typeof reviewedResearchScopeSchema>
   catalogs: readonly { id: string; allowedHosts: readonly string[] }[]
   research: ResearchProvider
