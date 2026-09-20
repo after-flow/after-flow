@@ -85,3 +85,5 @@ HTTP・UI・Dockerの挙動は今回変更しない。Issue #55/#56/#59 やMVP�
 
 BackendClientはHTTPSを既定とします。ローカルDockerのHTTPには、信頼済みcomposition rootから`allowInsecureHttp: true`と`insecureHttpAllowedHosts: ['backend-server']`の両方を明示します。ホストは完全一致で照合し、モデル入力から変更させません。クラウド接続ではHTTPSを使用します。
 AI単体の`build`/`typecheck`も内部共有契約を先にbuildするため、clean checkoutで実行できます。テストは`src`のHTTP生存確認と`test`の基盤・内部HTTPの両方を実行します。
+
+Contextの確認区分はフィールド単位で決めます。Case/Taskの状態や段階、Decisionの状態、確認状態そのものなどBackend管理の記録は`confirmed`、Caseの申告項目は`user_reported`、出自のない説明や未確認の金額は`unknown`です。Decisionの`state`が正式な記録でも、その`method`を本人確定扱いにはしません。正式なTask状態は外部機関の受理確認とは区別します。

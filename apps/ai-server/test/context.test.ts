@@ -54,6 +54,36 @@ test('artifact verification rejects hash tampering, stale context, operation mis
   assert.throws(() => buildCoreContext({ ...source, content: document, contentHash: contentHash(document) }, 'case_planning'))
 })
 
+test('Backend state and descriptive facts keep distinct provenance within the same entity', () => {
+  const source = artifact()
+  const content = { ...source.content,
+    tasks: [{ id: 'task-1', version: 1, status: 'SUBMITTED', stage: 'government', title: '申告された手続き', source: 'MANUAL', submitTo: null }],
+    contracts: [{ id: 'contract-1', version: 1, progressState: 'NOT_STARTED', policyState: 'UNKNOWN', provider: '申告先' }],
+    deadlines: [{ id: 'deadline-1', version: 1, confirmation: 'UNCONFIRMED', dueDate: '2026-10-01' }],
+  }
+  const context = buildCoreContext({ ...source, content, contentHash: contentHash(content) }, 'case_planning')
+  const state = (id: string, field: string) => context.modelInput.facts.find(f => f.entityId === id && f.field === field)?.state
+  for (const [id, field] of [['case-1', 'status'], ['task-1', 'status'], ['task-1', 'stage'], ['task-1', 'source'],
+    ['contract-1', 'progressState'], ['contract-1', 'policyState'], ['deadline-1', 'confirmation'],
+    ['asset-2', 'confirmation'], ['decision-1', 'state'], ['decision-1', 'personId']]) {
+    assert.equal(state(id!, field!), 'confirmed', `${id}.${field}`)
+  }
+  assert.equal(state('case-1', 'deceasedName'), 'user_reported')
+  assert.equal(state('case-1', 'municipality'), 'user_reported')
+  for (const [id, field] of [['task-1', 'title'], ['task-1', 'submitTo'], ['contract-1', 'provider'], ['deadline-1', 'dueDate'], ['asset-2', 'amount']]) {
+    assert.equal(state(id!, field!), 'unknown', `${id}.${field}`)
+  }
+  assert.equal(state('decision-1', 'method'), 'user_reported')
+  assert.ok(context.modelInput.limitations.some(text => text.includes('外部機関による受理')))
+
+  // The singular task_guidance target must use the same field policy as planning tasks.
+  const { tasks, ...rest } = content
+  const target = { ...rest, operation: 'task_guidance', task: tasks[0] }
+  const guidance = buildCoreContext({ ...source, content: target, contentHash: contentHash(target) }, 'task_guidance')
+  assert.equal(guidance.modelInput.facts.find(f => f.group === 'task' && f.field === 'status')?.state, 'confirmed')
+  assert.equal(guidance.modelInput.facts.find(f => f.group === 'task' && f.field === 'stage')?.state, 'confirmed')
+})
+
 test('size limits reject instead of dropping decisions, and fresh checks detect case changes', () => {
   const source = artifact()
   assert.throws(() => buildCoreContext(source, 'case_planning', { maxBytes: 20 }), { code: 'CONTEXT_TOO_LARGE' })
@@ -78,4 +108,16 @@ test('research context uses reviewed strings only, leaving names, contract title
 test('canonical hash is independent of object key order but preserves array order', () => {
   assert.equal(contentHash({ b: 2, a: 1 }), contentHash({ a: 1, b: 2 }))
   assert.notEqual(contentHash([1, 2]), contentHash([2, 1]))
+})
+
+test('message role is Backend metadata; only user message bodies are user reported', () => {
+  for (const role of ['user', 'assistant']) {
+    const source = artifact()
+    const content = { operation: 'chat_reply', case: source.content.case,
+      message: { id: 'message-1', version: 1, role, body: '架空の内容' }, documents: [] }
+    const context = buildCoreContext({ ...source, content, contentHash: contentHash(content) }, 'chat_reply')
+    const facts = context.modelInput.facts.filter(f => f.group === 'message')
+    assert.equal(facts.find(f => f.field === 'role')?.state, 'confirmed')
+    assert.equal(facts.find(f => f.field === 'body')?.state, role === 'user' ? 'user_reported' : 'unknown')
+  }
 })

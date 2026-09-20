@@ -19,6 +19,22 @@ const fields = {
 } as const
 type Group = keyof typeof fields | 'tasks'
 type FactState = 'confirmed' | 'user_reported' | 'extracted_candidate' | 'unknown'
+// These fields describe the Backend's authoritative record, not independently
+// verified real-world events. Descriptive facts keep their own provenance below.
+const backendStateFields: Partial<Record<Group, readonly string[]>> = {
+  case: ['status'],
+  task: ['status', 'stage', 'source', 'dependencyTaskIds', 'evidenceRequired', 'assetDisposal'],
+  tasks: ['status', 'stage', 'source', 'dependencyTaskIds', 'evidenceRequired', 'assetDisposal'],
+  message: ['role'],
+  persons: ['excludedAt'],
+  relationships: ['fromPersonId', 'toPersonId', 'excludedAt'],
+  assets: ['confirmation'],
+  liabilities: ['confirmation'],
+  contracts: ['policyState', 'progressState'],
+  benefits: ['progressState'],
+  deadlines: ['confirmation'],
+  decisions: ['personId', 'state'],
+}
 export interface ContextFact {
   group: Group; entityId: string; entityVersion: number; field: string; value: unknown; state: FactState
 }
@@ -99,6 +115,7 @@ export function buildCoreContext(input: unknown, operation: CoreContext['operati
     const modelInput = {
       facts, documents: content.documents,
       limitations: [
+        'confirmedの状態フィールドはBackend内の正式な記録を示す。提出報告やTask完了を、外部機関による受理・給付・法的判断の確認と解釈しない。',
         'Backendは訂正・却下の履歴と明示的な禁止事項をまだ配信していない。履歴が無いと判断しない。',
         '未確認の財産・債務は出自が未配信のためunknown。本人申告や抽出候補と推定しない。',
         '文書本文は配信されていない。contentAvailable:falseの文書を読んだと述べない。',
@@ -114,8 +131,10 @@ export function buildCoreContext(input: unknown, operation: CoreContext['operati
 
 function factState(group: string, field: string, entity: Record<string, unknown>): FactState {
   if (entity[field] === null || entity[field] === undefined) return 'unknown'
-  if (group === 'case' || group === 'message') return 'user_reported'
-  if (group === 'decisions') return entity.state === 'CONFIRMED' ? 'confirmed' : entity.state === 'REPORTED' ? 'user_reported' : 'unknown'
+  if (backendStateFields[group as Group]?.includes(field)) return 'confirmed'
+  if (group === 'case' && ['deceasedName', 'dateOfDeath', 'knownAt', 'municipality'].includes(field)) return 'user_reported'
+  if (group === 'message' && field === 'body') return entity.role === 'user' ? 'user_reported' : 'unknown'
+  if (group === 'decisions' && field === 'method') return entity.state === 'CONFIRMED' ? 'confirmed' : entity.state === 'REPORTED' ? 'user_reported' : 'unknown'
   if (group === 'deadlines') return entity.confirmation === 'CONFIRMED' ? 'confirmed' : 'unknown'
   if (group === 'assets' || group === 'liabilities') {
     const confirmation = z.object({ state: z.enum(['CONFIRMED', 'UNCONFIRMED']) }).safeParse(entity.confirmation)
