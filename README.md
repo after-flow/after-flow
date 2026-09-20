@@ -88,7 +88,25 @@ apps/
     src/presentation/http/   requestId・検証・共通エラー処理・route定義
     src/presentation/schemas/ 共通入力スキーマと公開契約との一致検証
     src/presentation/openapi/ route定義からのOpenAPI生成
-    src/presentation/routes/public/v1/health.ts
+    src/domain/case/           Case Entityと版の規則
+    src/domain/consent/        同意文書の定義と判定
+    src/domain/document/       書類Entity・実体による形式判定・検査状態
+    src/domain/task/           Task・状態遷移表・期限のRule Engine
+    src/domain/agent/          AgentRunの状態とCase lease
+    src/domain/message/        チャットの発言
+    src/domain/proposal/       提案・承認の版とhash
+    src/domain/decision/       相続方法についての本人の意思
+    src/application/consent/   同意の記録・撤回・利用可否Policy
+    src/application/document/  書類の登録・取得・除外・回収
+    src/application/task/      手続きのCommandと期限の算定
+    src/application/agent/     AI実行の受付・Outbox配送・書き込み権
+    src/application/chat/      発言の受付・案内の保存・結果の受領
+    src/application/proposal/  提案から確定までの共通経路
+    src/application/decision/  本人の意思の記録と確定
+    src/infrastructure/storage/ 原本の保存（開発・CI用のローカル実装）
+    src/application/case/      Case のCommand・Query
+    src/presentation/routes/public/v1/   公開API
+    src/presentation/routes/internal/v1/ AIからの結果受領
     test/                    契約テスト（node:test）
     test/firestore/          Emulatorに対する統合テスト
   ai-server/
@@ -106,6 +124,8 @@ docs/
   api/public-openapi.yaml   route定義から生成する公開API仕様
 infra/
   firestore/                Security Rules・index・Emulatorの説明
+  consent/                  同意文書カタログの雛形
+  rules/                    期限ルールと初期手続きの定義の雛形
 Dockerfile                  固定Node/pnpmと依存インストール
 compose.yaml                Web / Backend / AIの独立コンテナ
 Makefile                    起動・停止・検証
@@ -117,6 +137,28 @@ Makefile                    起動・停止・検証
 ## API・モックの扱い
 
 Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
+
+現在の公開APIは生存確認、同意、案件（作成・一覧・詳細・訂正）、書類（登録・一覧・詳細・原本取得・除外）、手続きと期限、AI実行の受付と参照、提案・承認・本人の意思、チャットと手順案内です。案件の一覧は自分が参加しているものだけを返します。
+業務データベースが未設定の状態では、業務APIは `FEATURE_NOT_CONNECTED` を理由付きで返します。空配列や固定の成功では返しません。
+
+チャットの発言は202で受け付けます。回答は後から履歴の取得で確認します。回答の実行を受け付けられない場合も発言は残し、理由を返します。
+手順案内には出典と確認日、調べきれなかった項目を必ず添えます。案内や回答は説明であり、それだけで手続きを完了したり正式な事実を登録したりしません。
+
+承認は、その人が見た提案の版と内容のhashに結び付きます。内容を訂正すると新しい版になり、対象を失った承認は期限切れになります。承認の受付と業務状態への反映は別に返します。受け付けただけで反映済みとは表示させません。
+相続方法は、下書き・本人以外による報告・本人による確定を区別します。確定できるのは本人と紐付いた利用者だけです。放棄前ロックは確定だけを根拠に外します。
+
+AI実行は202で受け付けます。受け付けただけで完了ではなく、結果は別途取得します。待機・失敗・取消を区別して返し、待機を失敗として表示させません。
+接続されていない業務操作と、外部AI同意が無い要求は理由を添えて拒否します。配送はOutboxから行い、配送の直前にも同意を確認します。AI Serverが未設定の間、イベントは未配送のまま残ります。
+
+手続きの状態はコマンドで変更します。statusの直接指定は受け付けません。準備完了、本人による提出報告、完了は別の状態です。
+期限は業務レビュー済みのルールからだけ算定します。未レビューのルールでは日付を返さず、要確認として返します。仕様書や旧モックの日数をそのまま本番の法定期限として扱いません。
+
+書類はPDF・JPEG・PNG、1ファイル10 MiBまでです。Content-Typeの申告だけでなく先頭バイトで実体を検査します。
+検知・マスキングの方式は未確定です（[ADR 0002](docs/adr/0002-document-inspection.md)）。検査器が未接続の間、検査状態は「未検査」のままで、合格としては扱いません。未検査・拒否・失敗の書類はAIへ配信しません。
+書類の除外は通常の一覧から外す操作で、個人データの完全消去とは別です。監査や根拠からの参照は壊しません。
+
+必須同意（利用規約・個人情報の取扱い）が揃うまで業務APIは `CONSENT_REQUIRED` を返します。同意を取得するためのAPIは塞ぎません。
+任意の外部AI同意が無くても、手動での案件・書類・手続きの管理は利用できます。同意文書の文面と提供先は業務側の承認後に確定するため、未設定時は仮文面と分かるカタログを使い、本番では拒否します。
 
 公開APIは認証済みユーザーとCase membershipに限定します。採用する認証Providerは未確定で、実接続の着手条件は [ADR 0001](docs/adr/0001-authentication-provider.md) に記録しています。
 認証の設定が無いまま起動した場合、認証が必要なAPIはすべて401を返します。検証を省略して通す既定値はありません。

@@ -10,6 +10,15 @@ import type { NewOutboxEvent } from '../../domain/shared/outbox.js'
  * `infrastructure/firestore` にだけ置き、テストでも同じポートを使う。
  */
 
+/**
+ * サーバー時刻を入れる場所を示す印。
+ *
+ * Application が時計を持つと、保存された時刻が各プロセスの時計に
+ * 依存する。保存側がこの印をサーバー時刻へ置き換える。
+ * 配列の要素には使えない（保存側の制約）。時系列の正本は AuditEvent。
+ */
+export const SERVER_TIME = '__server_time__'
+
 /** 操作した主体。認証済みの情報からのみ組み立てる。 */
 export interface ActorRef {
   type: 'USER' | 'SYSTEM' | 'AI'
@@ -90,6 +99,16 @@ export interface ListOptions {
   where?: { field: string; op: '==' | '<' | '<=' | '>' | '>='; value: unknown }[]
 }
 
+export interface ListGroupOptions extends ListOptions {
+  /**
+   * 並び替えキーが同値のときに順序を決める項目。
+   *
+   * collection group query では文書 ID が完全パスになり、ページ境界の
+   * 比較に使いづらい。問い合わせ条件の中で一意になる項目を指定する。
+   */
+  tiebreakField: string
+}
+
 export interface Page<T> {
   items: T[]
   /** 続きがある場合のみ。件数から全件を推測させない。 */
@@ -108,4 +127,27 @@ export interface ReadRepository {
     caseId: string | null,
     options: ListOptions,
   ): Promise<Page<T>>
+  /**
+   * Case を跨いだ横断検索。
+   *
+   * 「自分がメンバーである Case の一覧」のように、親が特定できない
+   * 問い合わせだけに使う。tenant の境界は必ず条件に含める。
+   */
+  listGroup<T extends EntityBase>(
+    tenantId: string,
+    collection: CollectionDescriptor,
+    options: ListGroupOptions,
+  ): Promise<Page<T>>
+  /**
+   * 条件に一致する件数。
+   *
+   * 一覧の 1 ページ目を数えて全件とするのを避けるために使う。
+   * 表示のためだけに全文書を読み出さない。
+   */
+  count(
+    tenantId: string,
+    collection: CollectionDescriptor,
+    caseId: string | null,
+    where?: { field: string; op: '==' | '<' | '<=' | '>' | '>='; value: unknown }[],
+  ): Promise<number>
 }

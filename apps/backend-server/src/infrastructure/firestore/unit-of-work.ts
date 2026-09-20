@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { DocumentReference, Firestore, Transaction } from '@google-cloud/firestore'
 import { FieldValue } from '@google-cloud/firestore'
 import type { DocLocation, Tx, UnitOfWork, WorkContext } from '../../application/ports/persistence.js'
+import { SERVER_TIME } from '../../application/ports/persistence.js'
 import type { NewAuditEvent } from '../../domain/shared/audit.js'
 import { collections, INFRASTRUCTURE_COLLECTIONS } from '../../domain/shared/collections.js'
 import type { EntityBase, EntityPatch } from '../../domain/shared/entity.js'
@@ -26,6 +27,21 @@ type PendingWrite =
   | { kind: 'delete'; ref: DocumentReference }
 
 type PendingAudit = Omit<NewAuditEvent, 'tenantId' | 'actor' | 'requestId'>
+
+/**
+ * SERVER_TIME の印をサーバー時刻へ置き換える。
+ *
+ * 配列の中は置き換えない。保存側が配列内の sentinel を受け付けないため、
+ * 黙って壊れた値を書くより、印のまま保存されて試験で気付くほうがよい。
+ */
+function withServerTime(data: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) => [
+      key,
+      value === SERVER_TIME ? FieldValue.serverTimestamp() : value,
+    ]),
+  )
+}
 
 /**
  * Transaction の中で使う操作の実装。
@@ -84,7 +100,7 @@ class FirestoreTx implements Tx {
       kind: 'create',
       ref: this.ref(location),
       data: {
-        ...data,
+        ...withServerTime(data as Record<string, unknown>),
         tenantId: this.context.tenantId,
         caseId: location.caseId,
         version: 1,
@@ -114,7 +130,7 @@ class FirestoreTx implements Tx {
       kind: 'update',
       ref,
       data: {
-        ...(patch as Record<string, unknown>),
+        ...withServerTime(patch as Record<string, unknown>),
         version: current + 1,
         updatedAt: FieldValue.serverTimestamp(),
       },
@@ -277,6 +293,9 @@ export class FirestoreUnitOfWork implements UnitOfWork {
           caseId: event.caseId ?? null,
           type: event.type,
           payload: event.payload,
+          // 配送時に同意 Policy を評価するため、誰の操作かを残す。
+          // 要求本文の申告ではなく、認証済みの actor から取る。
+          initiatedByUserId: context.actor.userId,
           status: 'PENDING',
           attempts: 0,
           nextAttemptAt: FieldValue.serverTimestamp(),
