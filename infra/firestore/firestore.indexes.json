@@ -2,6 +2,18 @@
   "comment": "実際に発行する Query に対応する複合 index だけを登録する。将来のコレクション用に先回りして作らない。",
   "indexes": [
     {
+      "collectionGroup": "agentRuns", "queryScope": "COLLECTION_GROUP",
+      "fields": [{ "fieldPath": "tenantId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" }, { "fieldPath": "id", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "runInbox", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "targetId", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "proposals", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "agentRunId", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }]
+    },
+    {
       "collectionGroup": "documents", "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "inspection.status", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }]
     },

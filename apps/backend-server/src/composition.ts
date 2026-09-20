@@ -26,7 +26,7 @@ import { readAgentClientConfig } from './infrastructure/agent/http-agent-client.
 import { ScopedHttpAgentJobClient } from './infrastructure/agent/scoped-http-agent-client.js'
 import { readExecutionAuthorization } from './infrastructure/identity/execution-authorization.js'
 import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
-import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.js'
+import { createDocumentStorage } from './infrastructure/storage/cloud-object-storage.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
 import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
@@ -64,12 +64,12 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     database.read,
     database.uow,
   )
-  const storageRoot = env.DOCUMENT_STORAGE_ROOT
-  if (!storageRoot) {
+  const documentStorage = createDocumentStorage(env)
+  if (!documentStorage) {
     // 原本の保存先が無い状態で登録を受け付けると、成功に見えて原本が残らない。
     logger.warn('document storage is not configured', {
       effect: 'document APIs reject every request with FEATURE_NOT_CONNECTED',
-      required: ['DOCUMENT_STORAGE_ROOT'],
+      required: ['DOCUMENT_STORAGE_ROOT or DOCUMENT_STORAGE_BUCKET'],
     })
   }
 
@@ -86,11 +86,11 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     ...createBusinessServices(access, database.read, database.uow),
     caseService: new CaseService(access, database.read, database.uow),
     consentService,
-    documentService: storageRoot ? new DocumentService(
+    documentService: documentStorage ? new DocumentService(
       access,
       database.read,
       database.uow,
-      new LocalObjectStorage(storageRoot),
+      documentStorage,
       consentService,
       // 検査実装は方式決定後（#26）。未接続なので検査状態は PENDING のまま。
       null,

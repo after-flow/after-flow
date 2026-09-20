@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { dispatchAckSchema, dispatchSchema, INTERNAL_LIMITS, internalRoutes } from '@aftercare/internal-contracts'
+import { dispatchAckSchema, dispatchSchema, INTERNAL_LIMITS, internalRoutes, snapshotStatusSchema } from '@aftercare/internal-contracts'
 
 export function buildInternalOpenApiDocument() {
   const headers = [
@@ -35,6 +35,18 @@ export function buildInternalOpenApiDocument() {
     requestBody: { required: true, content: { 'application/json': { schema: z.toJSONSchema(dispatchSchema) } } },
     responses: Object.fromEntries([200, 202, 409].map(code => [String(code), { description: code === 409 ? 'Verified duplicate only' : 'Accepted',
       content: { 'application/json': { schema: z.toJSONSchema(dispatchAckSchema) } } }])),
+  } }
+  paths['/runs/{runId}/resume'] = paths['/runs/{runId}/dispatch'] && {
+    post: { ...(paths['/runs/{runId}/dispatch'] as { post: Record<string, unknown> }).post,
+      operationId: 'ai_resume', description: '同一Jobの重複排除とfresh context取得後に再開する。Snapshot参照はcontext.resumeで取得。実AI接続は別途検証。' },
+  }
+  paths['/runs/{runId}/snapshot-status'] = { get: {
+    operationId: 'ai_snapshot_status', servers: [{ url: 'https://ai-server.internal/internal/v1' }], security: [{ serviceIdentity: [] }],
+    description: 'runtime保存済みメタデータのみ。Snapshot本文は返さない。',
+    parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } },
+      ...['jobId', 'executionAttempt', 'waitRequestId'].map(name => ({ name, in: 'query', required: name !== 'waitRequestId', schema: { type: 'string' } })),
+      { name: 'X-Audience', in: 'header', required: true, schema: { type: 'string', const: 'ai-server' } }],
+    responses: { '200': { description: 'Saved runtime status', content: { 'application/json': { schema: z.toJSONSchema(snapshotStatusSchema) } } } },
   } }
   return { openapi: '3.1.0', info: { title: 'after-flow internal execution API', version: '1.0.0',
     description: `Request lifetime <= ${INTERNAL_LIMITS.requestSeconds}s; capability <= ${INTERNAL_LIMITS.authorizationSeconds}s; body <= ${INTERNAL_LIMITS.bodyBytes} bytes; client timeout <= ${INTERNAL_LIMITS.timeoutMs}ms. 429/5xx/transport errors retry; 409 requires explicit duplicate ACK. Credentials and business document bytes must not be logged.` },

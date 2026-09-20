@@ -5,6 +5,7 @@ import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { CaseLeaseEntity } from '../../domain/agent/case-lease.js'
 import { isLeaseExpired } from '../../domain/agent/case-lease.js'
 import { leaseLocation, assertLease } from '../agent/lease-service.js'
+import { createPendingWait } from '../agent/wait-requests.js'
 import type { CaseMember } from '../../domain/authorization/case-role.js'
 import { roleAllows } from '../../domain/authorization/case-role.js'
 import type { TenantMember } from '../authorization/case-access.js'
@@ -126,6 +127,7 @@ function versionLocation(caseId: string, proposalId: string, version: number): D
 
 function proposalContent(proposal: ProposalEntity): ProposalVersionEntity['content'] {
   return {
+    ...(proposal.actionId ? { actionId: proposal.actionId } : {}),
     ...(proposal.execution ? { execution: proposal.execution } : {}),
     kind: proposal.kind, source: proposal.source, agentRunId: proposal.agentRunId,
     title: proposal.title, summary: proposal.summary, proposalVersion: proposal.proposalVersion,
@@ -227,25 +229,41 @@ export class ProposalService {
     if (!applier) throw errors.featureNotConnected()
     applier.validate?.(input.payload)
     await this.assertBasisBelongsToCase(tx, caseId, input.basis)
-    const proposalId = fingerprintOf({ runId: run.id, jobId: run.currentJobId, proposalId: input.proposalId })
-    const approvalId = fingerprintOf({ proposalId, proposalVersion: 1 })
+    const proposalId = fingerprintOf({ runId: run.id, proposalId: input.proposalId })
+    const previous = await tx.get<ProposalEntity>(proposalLocation(caseId, proposalId))
+    if (previous?.status === 'APPLIED') {
+      if (previous.kind !== input.kind || previous.payloadHash !== hashPayload(input.payload)) throw errors.idempotencyKeyReused()
+      return { proposalId, approvalId: fingerprintOf({ proposalId, proposalVersion: previous.proposalVersion }),
+        proposalVersion: previous.proposalVersion, payloadHash: previous.payloadHash, waitRequestId: null, applicationStatus: 'APPLIED' as const }
+    }
+    if (previous && (previous.status === 'REJECTED' || previous.execution?.attemptId === run.currentAttemptId)) throw errors.conflict()
+    const proposalVersion = (previous?.proposalVersion ?? 0) + 1
+    if (previous) {
+      await preserveVersion(tx, caseId, proposalId, proposalContent(previous))
+      const oldId = fingerprintOf({ proposalId, proposalVersion: previous.proposalVersion })
+      const old = await tx.get<ApprovalEntity>(approvalLocation(caseId, oldId))
+      if (old?.status === 'PENDING') tx.update<ApprovalEntity>(approvalLocation(caseId, oldId), old.version, { status: 'EXPIRED' })
+    }
+    const approvalId = fingerprintOf({ proposalId, proposalVersion })
     const content: ProposalVersionEntity['content'] = {
       kind: input.kind, source: 'AI', agentRunId: run.id, title: input.title, summary: input.summary,
-      proposalVersion: 1, payload: input.payload, payloadHash: hashPayload(input.payload), basis: input.basis,
-      caseVersionAtProposal: input.caseVersion, assetDisposal: input.assetDisposal, supersedesProposalVersion: null,
+      actionId: input.proposalId, proposalVersion, payload: input.payload, payloadHash: hashPayload(input.payload), basis: input.basis,
+      caseVersionAtProposal: input.caseVersion, assetDisposal: input.assetDisposal, supersedesProposalVersion: previous?.proposalVersion ?? null,
       execution: { attemptId: run.currentAttemptId, jobId: run.currentJobId, fencingToken: input.fencingToken, contextSnapshotId: input.contextSnapshotId },
     }
     await preserveVersion(tx, caseId, proposalId, content)
-    tx.create<ProposalEntity>(proposalLocation(caseId, proposalId), { id: proposalId, ...content, status: 'AWAITING_APPROVAL' })
+    if (previous) tx.update<ProposalEntity>(proposalLocation(caseId, proposalId), previous.version, { ...content, status: 'AWAITING_APPROVAL' })
+    else tx.create<ProposalEntity>(proposalLocation(caseId, proposalId), { id: proposalId, ...content, status: 'AWAITING_APPROVAL' })
     tx.create<ApprovalEntity>(approvalLocation(caseId, approvalId), {
-      id: approvalId, proposalId, proposalVersion: 1, payloadHash: content.payloadHash, status: 'PENDING',
+      id: approvalId, proposalId, proposalVersion, payloadHash: content.payloadHash, status: 'PENDING',
       applicationStatus: 'NOT_APPLIED', applicationFailureReason: null, decidedByUserId: null, decidedAt: null,
       decisionNote: null, expiresAt: new Date(Date.now() + this.approvalTtlMs).toISOString(), assetDisposal: input.assetDisposal,
     })
-    tx.audit({ caseId, type: 'proposal.ai_submitted', target: { collection: collections.proposals.name, id: proposalId, version: 1 },
-      detail: { runId: run.id, proposalVersion: 1, fencingToken: input.fencingToken, approvalId } })
+    tx.audit({ caseId, type: 'proposal.ai_submitted', target: { collection: collections.proposals.name, id: proposalId, version: (previous?.version ?? 0) + 1 },
+      detail: { runId: run.id, proposalVersion, fencingToken: input.fencingToken, approvalId } })
     tx.outbox({ type: 'approval.requested', caseId, payload: { runId: run.id, proposalId, approvalId } })
-    return { proposalId, approvalId, proposalVersion: 1, payloadHash: content.payloadHash }
+    const wait = await createPendingWait(tx, current, `approval-${approvalId}`, { kind: 'APPROVAL', approvalId })
+    return { proposalId, approvalId, proposalVersion, payloadHash: content.payloadHash, waitRequestId: wait.waitRequestId, applicationStatus: 'NOT_APPLIED' as const }
   }
 
   /** 公開APIからの利用者提案。AI は認可済み内部APIを使う。 */
@@ -663,6 +681,7 @@ export class ProposalService {
         target: { collection: collections.approvals.name, id: approvalId, version: input.expectedVersion + 1 },
         detail: { proposalId: approval.proposalId },
       })
+      tx.outbox({ type: 'approval.rejected', caseId, payload: { approvalId, proposalId: approval.proposalId } })
     })
 
     return toApprovalView(await this.requireApproval(user.tenantId, caseId, approvalId))

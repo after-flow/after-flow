@@ -74,10 +74,27 @@ Proposalの内容・版・Case版・根拠を再検証し、現在のCase lease�
 業務Entity・Approval・Proposal・lease世代・監査・Outboxを原子的に確定します。
 実行provenanceの無い旧形式AI提案は適用せず、再作成を要求します。
 
+## 待機・再開
+
+提案応答の`waitRequestId`はApprovalと原子的に作成した待機要求です。AIはsuspend Snapshot保存後、
+`events`へ`{type:'WAITING',eventId,waitRequestId,snapshotId}`を送ります。明示的な待機は`wait-requests`へContext proofと条件を提出します。
+承認が先に届いてleaseが変わっていても、登録済みの待機完了だけは照合して記録できます。未完の待機要求がある間、最終resultは拒否します。
+
+workerは`GET /runs/:runId/snapshot-status?jobId=…&executionAttempt=…&waitRequestId=…`でAIの保存済み状態だけを照合します。
+AI providerはサービス認証/audienceを検証し、Run/Job/attempt/Waitに一致するメタデータを返します。本文は返しません。
+SnapshotとInboxの条件が揃うと、Backendが新attemptと一意なresume Jobを保存し、`POST /runs/:runId/resume`へ配送します。
+配送本文はdispatchと同じ最小契約です。AIは重複排除後に新contextを取得し、`content.resume`のSnapshot参照/前attempt/条件結果を照合して再開します。
+lease切れ復旧はCHECKPOINTとRETRYを区別し、3 attemptを超える自動復旧は要確認に止めます。
+
+`content.actions`は当該RunのProposal状態/Action IDを返します。Action IDはattemptを跨いで保持してください。
+同じ適用済みActionは再適用せずAPPLIEDを返します。未適用Actionの再試行は新しいProposal版とApprovalを作ります。
+WaitRequestが消費したInbox IDとresume Job IDは永続化され、重複イベントやworkerの再起動では再作成しません。
+同意撤回はBackendで取消し、controlからSTOPを返します。userIdを汎用イベントとしてAIへ転送しません。
+
 ## 未接続の範囲
 
-- WaitRequest/resume/reconcilerは #37。
-- controlイベントの外部配送は未接続でOutboxに保持。AIは各Step前にcontrolを照会する必要があります。
+- DOCUMENTS条件の再開と文書本文配送は#25-27の実検査接続まで無効です。
+- AIは各Step前にcontrolを照会する必要があります。Backend側の取消は実AIプロセスの強制停止の証明ではありません。
 - 実AI/Mastra/Orchと本番サービスアカウントの接続検証は未実施です。livenessはreadinessの証明ではありません。
 
 Fake AI HTTPとのconsumer契約、実HTTPでのBackend provider、Emulator保存経路をテストします。

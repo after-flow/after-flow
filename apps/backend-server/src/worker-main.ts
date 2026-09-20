@@ -2,7 +2,8 @@ import { pathToFileURL } from 'node:url'
 import { AccessService } from './application/authorization/case-access.js'
 import { ConsentService } from './application/consent/consent-service.js'
 import { OutboxDispatcher } from './application/agent/outbox-dispatcher.js'
-import { caseTaskHandler, runOutboxWorker } from './application/agent/outbox-worker.js'
+import { caseTaskHandler, combineLocalHandlers, runOutboxWorker } from './application/agent/outbox-worker.js'
+import { RunReconciler } from './application/agent/run-reconciler.js'
 import { TaskService } from './application/task/task-service.js'
 import { StoredInheritanceDecisionReader } from './application/decision/decision-service.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
@@ -40,16 +41,18 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   const unavailable: AgentJobClient = { deliver: async () => ({ status: 'RETRYABLE', reason: 'AI_NOT_CONNECTED' }) }
   const authorization = readExecutionAuthorization(env)
   const execution = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow))
-  const client = config && authorization ? new ScopedHttpAgentJobClient(config, execution, authorization) : unavailable
+  const scopedClient = config && authorization ? new ScopedHttpAgentJobClient(config, execution, authorization) : null
+  const client = scopedClient ?? unavailable
+  const reconciler = new RunReconciler(read, uow, execution, scopedClient ?? { status: async () => { throw new Error('AI_NOT_CONNECTED') } })
   // 実検査・内部context接続が揃うまでは、書類解析配送を有効化しない（#27/#36）。
   const guarded: AgentJobClient = { deliver: job => job.type === 'agent.document_analysis' || job.type.startsWith('document.')
     ? Promise.resolve({ status: 'RETRYABLE', reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' }) : client.deliver(job) }
-  const dispatcher = new OutboxDispatcher(db, guarded, consent, visibilityMs, caseTaskHandler(tasks))
+  const dispatcher = new OutboxDispatcher(db, guarded, consent, visibilityMs, combineLocalHandlers(caseTaskHandler(tasks), reconciler))
   const controller = new AbortController()
   const stop = () => controller.abort()
   process.once('SIGTERM', stop)
   process.once('SIGINT', stop)
-  try { await runOutboxWorker(dispatcher, { tenantIds, intervalMs, signal: controller.signal, once }) }
+  try { await runOutboxWorker(dispatcher, { tenantIds, intervalMs, signal: controller.signal, once, reconciler }) }
   finally {
     process.off('SIGTERM', stop)
     process.off('SIGINT', stop)

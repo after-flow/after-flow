@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { dispatchSchema } from '@aftercare/internal-contracts'
-import type { RunDispatch } from '@aftercare/internal-contracts'
+import type { RunDispatch, ExecutionSnapshotStatus } from '@aftercare/internal-contracts'
 
 /**
  * 独立した Fake AI HTTP サーバー。
@@ -19,6 +19,7 @@ export interface FakeAiServer {
   /** 重複排除して受理した eventId。 */
   accepted: Set<string>
   dispatches: RunDispatch[]
+  snapshots: Map<string, ExecutionSnapshotStatus>
   /** 次の応答を指定する。未指定なら 202。 */
   respondWith(status: number): void
   /** 応答を返さずに接続を切る。送信したか分からない状態を作る。 */
@@ -34,6 +35,7 @@ export async function startFakeAiServer(
   const received: FakeAiServer['received'] = []
   const accepted = new Set<string>()
   const dispatches: RunDispatch[] = []
+  const snapshots = new Map<string, ExecutionSnapshotStatus>()
   let nextStatus: number | null = null
   let dropNextRequest = false
   let held: { signal(id: string): void; wait: Promise<void>; status: number } | null = null
@@ -49,8 +51,16 @@ export async function startFakeAiServer(
       }
 
       const raw = JSON.parse(body || '{}')
+      const url = new URL(request.url!, 'http://fake')
+      if (request.method === 'GET' && url.pathname.endsWith('/snapshot-status')) {
+        const runId = url.pathname.split('/')[4]!
+        const status = snapshots.get(runId) ?? { runId, jobId: url.searchParams.get('jobId'), executionAttempt: url.searchParams.get('executionAttempt'),
+          waitRequestId: url.searchParams.get('waitRequestId'), state: 'MISSING', snapshotId: null }
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(status))
+        return
+      }
       const dispatch = options.protocol === 'scoped' ? dispatchSchema.safeParse(raw) : null
-      if (dispatch && (!dispatch.success || request.url !== `/internal/v1/runs/${dispatch.data.runId}/dispatch`)) {
+      if (dispatch && (!dispatch.success || !['dispatch', 'resume'].some(endpoint => request.url === `/internal/v1/runs/${dispatch.data.runId}/${endpoint}`))) {
         response.writeHead(400).end()
         return
       }
@@ -110,6 +120,7 @@ export async function startFakeAiServer(
     received,
     accepted,
     dispatches,
+    snapshots,
     countOf: (eventId) => received.filter((entry) => entry.eventId === eventId).length,
     respondWith: (status) => {
       nextStatus = status

@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const INTERNAL_LIMITS = { bodyBytes: 131072, timeoutMs: 10000, authorizationSeconds: 300, requestSeconds: 60 } as const
 export const internalId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
 export const operationSchema = z.enum(['case_planning', 'task_guidance', 'chat_reply', 'document_analysis'])
-export const scopeSchema = z.enum(['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'proposals'])
+export const scopeSchema = z.enum(['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'proposals', 'wait-requests'])
 export type InternalScope = z.infer<typeof scopeSchema>
 
 /** Backend が発行するcapability。AIへ署名鍵は渡さない。 */
@@ -48,11 +48,26 @@ const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), st
 export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema])
 export type InternalResult = z.infer<typeof internalResultSchema>
 export const heartbeatSchema = z.object({}).strict()
-export const eventSchema = z.object({
+const progressEventSchema = z.object({
   eventId: internalId, sequence: z.number().int().nonnegative(),
   phase: z.enum(['CONTEXT_FETCHED', 'PLANNING', 'GENERATING', 'VALIDATING']),
 }).strict()
+const waitingEventSchema = z.object({ eventId: internalId, type: z.literal('WAITING'), waitRequestId: internalId, snapshotId: internalId }).strict()
+export const eventSchema = z.union([progressEventSchema, waitingEventSchema])
 export type ProgressEvent = z.infer<typeof eventSchema>
+export const waitConditionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('APPROVAL'), approvalId: internalId }).strict(),
+  z.object({ kind: z.literal('DOCUMENTS'), taskId: internalId, requiredDocumentIds: z.array(internalId).min(1).max(20) }).strict(),
+])
+export type WaitCondition = z.infer<typeof waitConditionSchema>
+export const waitRequestSchema = contextProofSchema.extend({ waitRequestId: internalId, condition: waitConditionSchema }).strict()
+export type WaitRequestInput = z.infer<typeof waitRequestSchema>
+export const snapshotStatusSchema = z.object({
+  runId: internalId, jobId: internalId, executionAttempt: internalId, waitRequestId: internalId.nullable(),
+  state: z.enum(['MISSING', 'WAITING', 'RUNNING_CHECKPOINT', 'COMPLETED']), snapshotId: internalId.nullable(),
+}).strict().refine(value => !['WAITING', 'RUNNING_CHECKPOINT'].includes(value.state) || value.snapshotId !== null,
+  { message: 'Durable state requires snapshotId' })
+export type ExecutionSnapshotStatus = z.infer<typeof snapshotStatusSchema>
 export const aiProposalSchema = contextProofSchema.extend({
   proposalId: internalId,
   kind: z.enum(['TASK_PROPOSAL', 'ASSET_PROPOSAL', 'LIABILITY_PROPOSAL', 'CONTRACT_PROPOSAL', 'PERSON_PROPOSAL', 'DOCUMENT_REQUEST', 'ESCALATION_PROPOSAL', 'EVIDENCE_PROPOSAL']),
@@ -66,8 +81,11 @@ const outcomeSchema = z.object({ applied: z.boolean(), reason: z.string().nullab
 const controlSchema = z.object({ instruction: z.enum(['CONTINUE', 'STOP']), reason: z.string().nullable(), caseVersion: z.number().int().nullable() })
 
 export const internalRoutes = {
+  'wait-requests': { method: 'post', path: '/runs/:runId/wait-requests', scope: 'wait-requests', body: waitRequestSchema,
+    response: z.object({ waitRequestId: internalId, state: z.literal('PENDING_SNAPSHOT') }) },
   proposals: { method: 'post', path: '/runs/:runId/proposals', scope: 'proposals', body: aiProposalSchema,
-    response: z.object({ proposalId: internalId, approvalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string() }) },
+    response: z.object({ proposalId: internalId, approvalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string(),
+      waitRequestId: internalId.nullable(), applicationStatus: z.enum(['NOT_APPLIED', 'APPLIED']) }) },
   context: { method: 'get', path: '/runs/:runId/context', scope: 'context', response: artifactEnvelopeSchema },
   artifact: { method: 'get', path: '/runs/:runId/artifacts/:artifactId', scope: 'artifact', response: artifactEnvelopeSchema },
   control: { method: 'get', path: '/runs/:runId/control', scope: 'control', response: controlSchema },

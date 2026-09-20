@@ -12,6 +12,16 @@ import type { ConsentService } from '../consent/consent-service.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
 import type { DocLocation, Page, ReadRepository, UnitOfWork } from '../ports/persistence.js'
 import { releaseLease } from './lease-service.js'
+import type { WaitRequestEntity } from '../../domain/agent/wait-request.js'
+import { waitLocation } from './wait-requests.js'
+import type { Tx } from '../ports/persistence.js'
+
+async function cancelWait(tx: Tx, run: AgentRunEntity) {
+  if (!run.activeWaitRequestId || !run.caseId) return
+  const location = waitLocation(run.caseId, run.activeWaitRequestId)
+  const wait = await tx.require<WaitRequestEntity>(location)
+  tx.update<WaitRequestEntity>(location, wait.version, { state: 'CANCELLED' })
+}
 
 export interface AgentRunView {
   id: string
@@ -235,6 +245,7 @@ export class AgentRunService {
         // 取消後に届いた古い attempt の結果を受け付けないよう、世代を変える。
         currentAttemptId: randomUUID(),
       })
+      await cancelWait(tx, current)
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       tx.audit({
         caseId,
@@ -274,6 +285,7 @@ export class AgentRunService {
       const caseEntity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
       const jobId = randomUUID()
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
+      await cancelWait(tx, current)
       tx.update<AgentRunEntity>(runLocation(caseId, runId), expectedVersion, {
         status: 'QUEUED',
         attempt: current.attempt + 1,
@@ -283,6 +295,8 @@ export class AgentRunService {
         caseVersionAtAccept: caseEntity.caseVersion,
         progressSequence: -1,
         fencingToken: null,
+        activeWaitRequestId: null,
+        pendingResume: null,
         failureReason: null,
         waitingFor: null,
         finishedAt: null,

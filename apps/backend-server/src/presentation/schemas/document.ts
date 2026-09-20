@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { idSchema, isoDateTimeSchema, expectedVersionSchema, listQuerySchema } from './common.js'
+import { proposalResourceSchema, approvalResourceSchema } from './proposal.js'
+import { agentRunResourceSchema } from './agent.js'
 
 export const documentKindSchema = z.enum([
   'DEATH_CERTIFICATE',
@@ -18,6 +20,10 @@ const findingSchema = z.object({
 })
 
 export const documentResourceSchema = z.object({
+  extractionCandidates: z.array(proposalResourceSchema.pick({ id: true, proposalVersion: true, kind: true, title: true, payload: true, status: true, basis: true })),
+  proposalRefs: z.array(proposalResourceSchema.pick({ id: true, proposalVersion: true, kind: true, status: true, source: true })),
+  approvalRefs: z.array(approvalResourceSchema.pick({ id: true, proposalId: true, proposalVersion: true, status: true, applicationStatus: true })),
+  evidenceRefs: z.array(z.object({ id: z.string(), taskId: z.string(), label: z.string(), version: z.number().int() })),
   id: z.string(),
   caseId: z.string(),
   fileName: z.string(),
@@ -33,6 +39,7 @@ export const documentResourceSchema = z.object({
     findings: z.array(findingSchema),
   }),
   analysis: z.object({
+    run: agentRunResourceSchema.pick({ id: true, status: true, waiting: true, waitingFor: true, failureReason: true, version: true }).nullable(),
     state: z.enum(['NOT_REQUESTED', 'NOT_CONNECTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED']),
     agentRunId: z.string().nullable(),
     canRequest: z.boolean(),
