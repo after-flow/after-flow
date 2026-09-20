@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { assertSupportedDocument } from '../../domain/document/content-type.js'
 import type { DocumentEntity, DocumentKind } from '../../domain/document/document.js'
 import { isInspectionComplete } from '../../domain/document/inspection.js'
@@ -153,8 +153,8 @@ export class DocumentService {
     // 申告ではなく実体で形式を判定する。
     const contentType = assertSupportedDocument(input.declaredContentType, input.content)
     const sha256 = createHash('sha256').update(input.content).digest('hex')
-    const documentId = documentIdFrom(caseId, meta.idempotency.key)
-    const objectKey = objectKeyFor(user.tenantId, caseId, documentId)
+    const documentId = documentIdFrom(caseId, `${user.userId.length}:${user.userId}/${meta.idempotency.key}`)
+    const objectKey = `${objectKeyFor(user.tenantId, caseId, documentId)}/${randomUUID()}`
     const location = documentLocation(caseId, documentId)
 
     const alreadyStored = await this.uow.run(
@@ -163,13 +163,18 @@ export class DocumentService {
       async (tx) => {
         const existing = await tx.get<DocumentEntity>(location)
         if (existing) {
-          if (existing.sha256 !== sha256) {
+          if (existing.sha256 !== sha256 || existing.fileName !== input.fileName ||
+              existing.kind !== input.kind || existing.sizeBytes !== input.content.byteLength ||
+              existing.contentType !== contentType) {
             throw errors.idempotencyKeyReused({
               message: '同じキーで異なるファイルが送信されました。',
             })
           }
           // 保存済みなら何もしない。再送で原本が二重に増えない。
-          return existing.storageState === 'STORED'
+          if (existing.storageState === 'STORED' || existing.inspection.status === 'REJECTED') return true
+          // 各試行は別の原本キーを所有する。遅い旧試行は新試行を確定・削除できない。
+          tx.update<DocumentEntity>(location, existing.version, { objectKey, storageState: 'UPLOADING' })
+          return false
         }
         tx.create<DocumentEntity>(location, {
           id: documentId,
@@ -208,9 +213,9 @@ export class DocumentService {
         await this.storage.delete(objectKey)
       }
 
-      await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
+      const finalized = await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
         const current = await tx.require<DocumentEntity>(location)
-        if (current.storageState === 'STORED') return
+        if (current.storageState !== 'UPLOADING' || current.objectKey !== objectKey) return false
         tx.update<DocumentEntity>(location, current.version, {
           storageState: inspection.status === 'REJECTED' ? 'FAILED' : 'STORED',
           inspection,
@@ -227,7 +232,12 @@ export class DocumentService {
           caseId,
           payload: { caseId, documentId, inspectionStatus: inspection.status },
         })
+        return true
       })
+      if (!finalized) {
+        await this.storage.delete(objectKey)
+        throw errors.conflict({ message: '登録の試行が更新または回収されました。同じ要求を再送してください。' })
+      }
     }
 
     return this.toView(user, await this.requireDocument(user.tenantId, caseId, documentId))
@@ -326,6 +336,11 @@ export class DocumentService {
         internal: { reason: 'object missing for stored document', documentId },
       })
     }
+    if (object.contentType !== entity.contentType || object.content.byteLength !== entity.sizeBytes ||
+        createHash('sha256').update(object.content).digest('hex') !== entity.sha256) {
+      throw errors.internal({ message: '原本の整合性を確認できませんでした。' })
+    }
+    assertSupportedDocument(object.contentType, object.content)
     return { content: object.content, contentType: entity.contentType, fileName: entity.fileName }
   }
 
@@ -386,10 +401,10 @@ export class DocumentService {
 
     for (const entity of page.items) {
       if (Date.parse(entity.updatedAt) > threshold) continue
-      await this.storage.delete(entity.objectKey)
-      await this.uow.run(access.toWorkContext(null, null), async (tx) => {
+      const claimed = await this.uow.run(access.toWorkContext(null, null), async (tx) => {
         const current = await tx.require<DocumentEntity>(documentLocation(caseId, entity.id))
-        if (current.storageState !== 'UPLOADING') return
+        if (current.storageState !== 'UPLOADING' || current.version !== entity.version ||
+            current.objectKey !== entity.objectKey || Date.parse(current.updatedAt) > threshold) return false
         tx.update<DocumentEntity>(documentLocation(caseId, entity.id), current.version, {
           storageState: 'FAILED',
         })
@@ -399,8 +414,12 @@ export class DocumentService {
           target: { collection: collections.documents.name, id: entity.id, version: current.version + 1 },
           detail: { reason: 'upload did not complete' },
         })
+        return true
       })
-      reclaimed.push(entity.id)
+      if (claimed) {
+        await this.storage.delete(entity.objectKey)
+        reclaimed.push(entity.id)
+      }
     }
     return { reclaimed }
   }

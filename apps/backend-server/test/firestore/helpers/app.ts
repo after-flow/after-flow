@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -16,6 +17,7 @@ import {
   StoredInheritanceDecisionReader,
 } from '../../../src/application/decision/decision-service.js'
 import { MessageService } from '../../../src/application/chat/message-service.js'
+import { CaseOverviewService } from '../../../src/application/overview/overview-service.js'
 import { AgentResultIntake } from '../../../src/application/chat/result-intake.js'
 import { ProposalService } from '../../../src/application/proposal/proposal-service.js'
 import { taskProposalApplier } from '../../../src/application/proposal/task-applier.js'
@@ -100,6 +102,11 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
     proposalService: new ProposalService(access, readRepository(), unitOfWork(), [taskProposalApplier]),
     decisionService: new InheritanceDecisionService(access, readRepository(), unitOfWork()),
     messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService),
+    overviewService: new CaseOverviewService(
+      access,
+      readRepository(),
+      (options.connectedOperations ?? []).length > 0,
+    ),
   })
 
   const stubAuthentication = createMiddleware<AppEnv>(async (c, next) => {
@@ -151,7 +158,7 @@ export async function call(
   return { status: response.status, body: text ? (JSON.parse(text) as Json) : {} }
 }
 
-export function jsonRequest(method: string, body: unknown, idempotencyKey?: string): RequestInit {
+export function jsonRequest(method: string, body: unknown, idempotencyKey: string | null = randomUUID()): RequestInit {
   return {
     method,
     headers: {

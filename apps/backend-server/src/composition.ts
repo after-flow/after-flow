@@ -12,6 +12,7 @@ import {
   StoredInheritanceDecisionReader,
 } from './application/decision/decision-service.js'
 import { MessageService } from './application/chat/message-service.js'
+import { CaseOverviewService } from './application/overview/overview-service.js'
 import { AgentResultIntake } from './application/chat/result-intake.js'
 import { ProposalService } from './application/proposal/proposal-service.js'
 import { taskProposalApplier } from './application/proposal/task-applier.js'
@@ -76,17 +77,17 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   const routes = createPublicV1Routes({
     caseService: new CaseService(access, database.read, database.uow),
     consentService,
-    documentService: new DocumentService(
+    documentService: storageRoot ? new DocumentService(
       access,
       database.read,
       database.uow,
-      new LocalObjectStorage(storageRoot ?? ''),
+      new LocalObjectStorage(storageRoot),
       consentService,
       // 検査実装は方式決定後（#26）。未接続なので検査状態は PENDING のまま。
       null,
       // AI は未接続。解析は受け付けない。
       false,
-    ),
+    ) : null,
     // 放棄前ロックは保存済みの確定状況で判定する。未記録は未確定のまま。
     taskService: new TaskService(
       readRuleCatalog(env),
@@ -103,6 +104,11 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     proposalService: new ProposalService(access, database.read, database.uow, [taskProposalApplier]),
     decisionService: new InheritanceDecisionService(access, database.read, database.uow),
     messageService: new MessageService(access, database.read, database.uow, agentRunService),
+    overviewService: new CaseOverviewService(
+      access,
+      database.read,
+      connectedOperations(env).size > 0,
+    ),
   })
 
   // 認証済み利用者にだけ同意を要求する。未認証は先に 401 で止まる。
