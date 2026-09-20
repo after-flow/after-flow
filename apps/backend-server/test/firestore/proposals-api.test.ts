@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { INFRASTRUCTURE_COLLECTIONS, collections } from '../../src/domain/shared/collections.js'
 import type { CaseMember } from '../../src/domain/authorization/case-role.js'
-import { agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
+import { seedHeir, agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
 import type { Json } from './helpers/app.js'
 import { describeFirestore, firestore, newTenantId, unitOfWork, workContext } from './helpers/emulator.js'
 
@@ -37,7 +37,7 @@ async function setup(options: { personId?: string | null } = {}) {
   const caseId = created.body.data.id as string
 
   if (options.personId !== undefined && options.personId !== null) {
-    // Person 本体の登録は #13。ここでは membership との紐付けだけを用意する。
+    await seedHeir(tenantId, caseId, options.personId)
     await unitOfWork().run(workContext(tenantId), async (tx) => {
       const member = await tx.require<CaseMember>({
         collection: collections.caseMembers,
@@ -433,7 +433,8 @@ describeFirestore('承認と反映', () => {
 
 describeFirestore('本人の意思', () => {
   it('他人の入力は下書きや報告であって確定ではない', async () => {
-    const { app, caseId } = await setup()
+    const { app, caseId, tenantId } = await setup()
+    await seedHeir(tenantId, caseId, 'person-spouse')
     const recorded = await call(
       app,
       `/cases/${caseId}/inheritance-decisions/person-spouse`,
@@ -448,7 +449,8 @@ describeFirestore('本人の意思', () => {
   })
 
   it('紐付いていない利用者は本人として確定できない', async () => {
-    const { app, caseId } = await setup({ personId: 'person-self' })
+    const { app, caseId, tenantId } = await setup({ personId: 'person-self' })
+    await seedHeir(tenantId, caseId, 'person-spouse')
     await call(
       app,
       `/cases/${caseId}/inheritance-decisions/person-spouse`,

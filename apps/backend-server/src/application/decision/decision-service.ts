@@ -1,3 +1,5 @@
+import type { Person } from '../../domain/person/person.js'
+import type { EntityBase } from '../../domain/shared/entity.js'
 import type {
   DecisionState,
   InheritanceDecisionEntity,
@@ -9,7 +11,7 @@ import { errors } from '../../shared/app-error.js'
 import type { AccessService } from '../authorization/case-access.js'
 import type { CommandMeta } from '../case/case-service.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
-import type { DocLocation, ReadRepository, UnitOfWork } from '../ports/persistence.js'
+import type { DocLocation, ReadRepository, Tx, UnitOfWork } from '../ports/persistence.js'
 import { SERVER_TIME } from '../ports/persistence.js'
 import type { InheritanceDecisionReader } from '../task/task-service.js'
 
@@ -71,6 +73,7 @@ export class InheritanceDecisionService {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
 
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
+      await assertActiveHeir(tx, caseId, personId)
       const current = await tx.get<InheritanceDecisionEntity>(decisionLocation(caseId, personId))
 
       if (current?.state === 'CONFIRMED') {
@@ -130,6 +133,7 @@ export class InheritanceDecisionService {
     access.assertSelf(personId)
 
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
+      await assertActiveHeir(tx, caseId, personId)
       const current = await tx.require<InheritanceDecisionEntity>(decisionLocation(caseId, personId))
       tx.update<InheritanceDecisionEntity>(decisionLocation(caseId, personId), input.expectedVersion, {
         method: input.method,
@@ -191,10 +195,32 @@ export class StoredInheritanceDecisionReader implements InheritanceDecisionReade
   constructor(private readonly read: ReadRepository) {}
 
   async isConfirmed(tenantId: string, caseId: string): Promise<boolean> {
-    const page = await this.read.list<InheritanceDecisionEntity>(tenantId, collections.decisions, caseId, {
-      limit: 100,
-    })
-    if (page.items.length === 0) return false
-    return page.items.every(isDecisionConfirmed)
+    const heirs = await listActiveHeirs(this.read, tenantId, caseId)
+    if (heirs.length === 0) return false
+    const decisions = await Promise.all(heirs.map(person =>
+      this.read.get<InheritanceDecisionEntity>(tenantId, decisionLocation(caseId, person.id))))
+    return decisions.every(decision => decision !== null && isDecisionConfirmed(decision))
   }
+}
+
+async function assertActiveHeir(tx: Tx, caseId: string, personId: string): Promise<void> {
+  const person = await tx.require<Person & EntityBase>({ collection: collections.persons, caseId, id: personId })
+  if (person.excludedAt !== null || !person.isHeir) {
+    throw errors.preconditionFailed({ message: '対象は有効な相続人候補ではありません。' })
+  }
+}
+
+/** 一覧の最初のページだけで相続人を確定した扱いにしない。 */
+export async function listActiveHeirs(read: ReadRepository, tenantId: string, caseId: string): Promise<Person[]> {
+  const heirs: Person[] = []
+  let cursor: string | undefined
+  do {
+    const page = await read.list<Person & EntityBase>(tenantId, collections.persons, caseId, {
+      limit: 100, cursor,
+      where: [{ field: 'excludedAt', op: '==', value: null }, { field: 'isHeir', op: '==', value: true }],
+    })
+    heirs.push(...page.items)
+    cursor = page.nextCursor
+  } while (cursor)
+  return heirs
 }

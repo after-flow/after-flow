@@ -8,7 +8,7 @@ import type { ObjectStorage, StoredObject } from '../../src/application/ports/ob
 import { PLACEHOLDER_CATALOG } from '../../src/domain/consent/catalog.js'
 import { collections } from '../../src/domain/shared/collections.js'
 import { agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
-import { describeFirestore, newTenantId, readRepository, unitOfWork } from './helpers/emulator.js'
+import { describeFirestore, newTenantId, readRepository, unitOfWork, workContext } from './helpers/emulator.js'
 
 async function setup() {
   const tenantId = newTenantId()
@@ -101,4 +101,54 @@ describeFirestore('マージ前レビューの回帰検証', () => {
       (error: unknown) => (error as { code: string }).code === 'INTERNAL')
     assert.equal(current.sha256, createHash('sha256').update(input.content).digest('hex'))
   })
+  it('作成要求の再送は新しいIDを参照せず同じリソースを返す', async () => {
+    const { app, caseId } = await setup()
+    for (const [resource, body] of [
+      ['tasks', { title: '手続き', summary: '試験', stage: 'immediate', category: '試験' }],
+      ['proposals', { kind: 'TASK_PROPOSAL', title: '提案', payload: { title: '手続き', summary: '試験', stage: 'immediate', category: '試験' } }],
+      ['messages', { body: '試験の発言' }],
+    ] as const) {
+      const key = 'replay-create-' + resource
+      const first = await call(app, `/cases/${caseId}/${resource}`, jsonRequest('POST', body, key))
+      const replay = await call(app, `/cases/${caseId}/${resource}`, jsonRequest('POST', body, key))
+      assert.ok(first.status < 300, JSON.stringify(first.body))
+      assert.equal(replay.status, first.status, JSON.stringify(replay.body))
+      assert.deepEqual(replay.body.data, first.body.data)
+      if (resource === 'proposals') {
+        const path = `/cases/${caseId}/proposals/${first.body.data.id}/approval-requests`
+        const approval = await call(app, path, jsonRequest('POST', { expectedVersion: 1 }, 'replay-approval'))
+        const repeated = await call(app, path, jsonRequest('POST', { expectedVersion: 1 }, 'replay-approval'))
+        assert.equal(approval.status, 201, JSON.stringify(approval.body))
+        assert.deepEqual(repeated.body.data, approval.body.data)
+      }
+    }
+  })
+
+  it('Decision未登録の相続人も未確定とし、架空・除外済み人物の記録を拒否する', async () => {
+    const { app, user, caseId } = await setup()
+    const person = await call(app, `/cases/${caseId}/persons`, jsonRequest('POST', {
+      name: '相続人', relationship: '家族', isHeir: true,
+    }))
+    const personId = person.body.data.id as string
+    const overview = await call(app, `/cases/${caseId}/overview`)
+    assert.equal(overview.body.data.inheritanceDecision.unknown, false)
+    assert.equal(overview.body.data.inheritanceDecision.decided, false)
+    assert.equal(overview.body.data.inheritanceDecision.perHeir[0].personName, '相続人')
+    assert.equal((await call(app, `/cases/${caseId}/inheritance-decisions/absent`,
+      jsonRequest('POST', { method: null, state: 'DRAFT' }))).status, 404)
+    await call(app, `/cases/${caseId}/persons/${personId}/exclude`, jsonRequest('POST', { expectedVersion: 1 }))
+    assert.equal((await call(app, `/cases/${caseId}/inheritance-decisions/${personId}`,
+      jsonRequest('POST', { method: null, state: 'DRAFT' }))).status, 409)
+    // orphan Decision は確定していても、Person が無ければ制限を解除しない。
+    await unitOfWork().run(workContext(user.tenantId), async tx => {
+      tx.create<import('../../src/domain/decision/inheritance-decision.js').InheritanceDecisionEntity>(
+        { collection: collections.decisions, caseId, id: 'orphan' },
+        { id: 'orphan', personId: 'orphan', method: 'SIMPLE_ACCEPTANCE', state: 'CONFIRMED',
+          reportedByUserId: null, confirmedByUserId: user.userId, confirmedAt: null, note: null },
+      )
+    })
+    const { StoredInheritanceDecisionReader } = await import('../../src/application/decision/decision-service.js')
+    assert.equal(await new StoredInheritanceDecisionReader(readRepository()).isConfirmed(user.tenantId, caseId), false)
+  })
+
 })

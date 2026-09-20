@@ -110,7 +110,7 @@ export class AgentRunService {
     await this.consent.assertExternalAiAllowed(user)
 
     const runId = randomUUID()
-    await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
+    const storedId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const caseEntity = await tx.require<CaseEntity>({
         collection: collections.cases,
         caseId: null,
@@ -153,9 +153,10 @@ export class AgentRunService {
           targetId: input.targetId,
         },
       })
+      return runId
     })
 
-    return this.get(user, caseId, runId)
+    return this.get(user, caseId, storedId)
   }
 
   async get(user: AuthenticatedUser, caseId: string, runId: string): Promise<AgentRunView> {

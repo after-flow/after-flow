@@ -1,3 +1,5 @@
+import { listActiveHeirs } from '../decision/decision-service.js'
+import type { Person } from '../../domain/person/person.js'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import type { InheritanceDecisionEntity } from '../../domain/decision/inheritance-decision.js'
@@ -130,6 +132,7 @@ export class CaseOverviewService {
       upcomingDeadlines,
       unresolvedDeadlineCount,
       decisions,
+      heirs,
       runs,
       pendingApprovalCount,
       appliedApprovalCount,
@@ -145,6 +148,7 @@ export class CaseOverviewService {
           { field: 'dueDate', op: '==', value: null },
         ]),
         this.listAllDecisions(user.tenantId, caseId),
+        listActiveHeirs(this.read, user.tenantId, caseId),
         this.read.list<AgentRunEntity>(user.tenantId, collections.agentRuns, caseId, {
           limit: 10,
           orderBy: { field: 'createdAt', direction: 'desc' },
@@ -173,7 +177,7 @@ export class CaseOverviewService {
       unresolvedDeadlineCount,
       pendingApprovalCount,
       appliedApprovalCount,
-      inheritanceDecision: this.buildDecisionSummary(decisions),
+      inheritanceDecision: this.buildDecisionSummary(decisions, heirs),
       recentAgentRuns: runs.items.map(toAgentRunView),
       aiConnected: this.aiConnected,
     }
@@ -185,11 +189,11 @@ export class CaseOverviewService {
     caseId: string,
   ): Promise<{
     counts: Partial<Record<TaskStatus, number>>
-    byStage: Map<FlowStageId, { total: number; completed: number }>
+    byStage: Map<FlowStageId, { total: number; completed: number; notStarted: number }>
     total: number
   }> {
     const counts: Partial<Record<TaskStatus, number>> = {}
-    const byStage = new Map<FlowStageId, { total: number; completed: number }>()
+    const byStage = new Map<FlowStageId, { total: number; completed: number; notStarted: number }>()
 
     const [statusCounts, stageCounts] = await Promise.all([
       Promise.all(
@@ -202,7 +206,7 @@ export class CaseOverviewService {
       ),
       Promise.all(
         FLOW_STAGES.map(async (stage) => {
-          const [total, completed] = await Promise.all([
+          const [total, completed, notStarted] = await Promise.all([
             this.read.count(user.tenantId, collections.tasks, caseId, [
               { field: 'stage', op: '==', value: stage.id },
             ]),
@@ -210,8 +214,12 @@ export class CaseOverviewService {
               { field: 'stage', op: '==', value: stage.id },
               { field: 'status', op: '==', value: 'COMPLETED' },
             ]),
+            this.read.count(user.tenantId, collections.tasks, caseId, [
+              { field: 'stage', op: '==', value: stage.id },
+              { field: 'status', op: '==', value: 'NOT_STARTED' },
+            ]),
           ])
-          return { stage: stage.id, total, completed }
+          return { stage: stage.id, total, completed, notStarted }
         }),
       ),
     ])
@@ -223,7 +231,7 @@ export class CaseOverviewService {
       if (entry.count > 0) counts[entry.status] = entry.count
     }
     for (const entry of stageCounts) {
-      byStage.set(entry.stage, { total: entry.total, completed: entry.completed })
+      byStage.set(entry.stage, { total: entry.total, completed: entry.completed, notStarted: entry.notStarted })
     }
 
     return { counts, byStage, total }
@@ -251,17 +259,17 @@ export class CaseOverviewService {
   }
 
   private buildFlowStages(
-    byStage: Map<FlowStageId, { total: number; completed: number }>,
+    byStage: Map<FlowStageId, { total: number; completed: number; notStarted: number }>,
   ): FlowStageView[] {
     return FLOW_STAGES.map((stage) => {
-      const counts = byStage.get(stage.id) ?? { total: 0, completed: 0 }
+      const counts = byStage.get(stage.id) ?? { total: 0, completed: 0, notStarted: 0 }
       let state: FlowStageView['state']
       if (counts.total === 0) {
         // 対象の手続きが無い段階を完了にしない。
         state = 'NO_TASKS'
       } else if (counts.completed === counts.total) {
         state = 'COMPLETED'
-      } else if (counts.completed > 0) {
+      } else if (counts.notStarted < counts.total) {
         state = 'IN_PROGRESS'
       } else {
         state = 'NOT_STARTED'
@@ -284,15 +292,19 @@ export class CaseOverviewService {
    */
   private buildDecisionSummary(
     decisions: InheritanceDecisionEntity[],
+    heirs: Person[],
   ): CaseOverviewView['inheritanceDecision'] {
-    const perHeir: DecisionSummaryView[] = decisions.map((decision) => ({
-      personId: decision.personId,
-      // 氏名は Person の登録（#13）に依存する。未登録の間は null。
-      personName: null,
-      method: decision.method,
-      state: decision.state,
-      confirmed: isDecisionConfirmed(decision),
-    }))
+    const byPerson = new Map(decisions.map(decision => [decision.personId, decision]))
+    const perHeir: DecisionSummaryView[] = heirs.map(person => {
+      const decision = byPerson.get(person.id)
+      return {
+        personId: person.id,
+        personName: person.name,
+        method: decision?.method ?? null,
+        state: decision?.state ?? 'DRAFT',
+        confirmed: decision ? isDecisionConfirmed(decision) : false,
+      }
+    })
 
     return {
       decided: perHeir.length > 0 && perHeir.every((entry) => entry.confirmed),

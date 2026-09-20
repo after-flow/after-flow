@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createMiddleware } from 'hono/factory'
+import { createBusinessServices } from '../../../src/infrastructure/firestore/business-services.js'
 import { createApp } from '../../../src/app.js'
 import { AccessService } from '../../../src/application/authorization/case-access.js'
 import type { TenantMember } from '../../../src/application/authorization/case-access.js'
@@ -80,6 +81,7 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
   )
 
   const routes = createPublicV1Routes({
+    ...createBusinessServices(access, readRepository(), unitOfWork()),
     caseService: new CaseService(access, readRepository(), unitOfWork()),
     consentService,
     documentService: new DocumentService(
@@ -182,4 +184,17 @@ export async function agreeRequiredConsents(
   if (response.status !== 200) {
     throw new Error(`必須同意の記録に失敗した: ${JSON.stringify(response.body)}`)
   }
+}
+
+/** 関連する API の試験用に、既存 ID の有効な相続人候補を保存する。 */
+export async function seedHeir(tenantId: string, caseId: string, id: string) {
+  await unitOfWork().run(workContext(tenantId), async tx => {
+    tx.create<import('../../../src/domain/person/person.js').Person & import('../../../src/domain/shared/entity.js').EntityBase>(
+      { collection: collections.persons, caseId, id },
+      { id, name: id, nameKana: null, relationshipLabel: '家族', role: 'HEIR_CANDIDATE', isHeir: true,
+        dateOfBirth: null, specialCircumstance: null, contact: null, note: null,
+        excludedAt: null, excludedBy: null, exclusionReason: null,
+        createdBy: { kind: 'USER', id: 'user-owner' }, updatedBy: { kind: 'USER', id: 'user-owner' } },
+    )
+  })
 }

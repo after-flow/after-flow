@@ -181,7 +181,7 @@ export class ProposalService {
     const proposalId = randomUUID()
     const payloadHash = hashPayload(input.payload)
 
-    await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
+    const storedId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const caseEntity = await tx.require<CaseEntity>({
         collection: collections.cases,
         caseId: null,
@@ -212,9 +212,10 @@ export class ProposalService {
         target: { collection: collections.proposals.name, id: proposalId, version: 1 },
         detail: { kind: input.kind, source: input.source ?? 'USER', proposalVersion: 1 },
       })
+      return proposalId
     })
 
-    return toProposalView(await this.requireProposal(user.tenantId, caseId, proposalId))
+    return toProposalView(await this.requireProposal(user.tenantId, caseId, storedId))
   }
 
   /**
@@ -233,7 +234,7 @@ export class ProposalService {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
     const approvalId = randomUUID()
 
-    await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
+    const storedId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const proposal = await tx.require<ProposalEntity>(proposalLocation(caseId, proposalId))
       if (!canRequestApproval(proposal.status)) {
         throw errors.preconditionFailed({
@@ -266,9 +267,10 @@ export class ProposalService {
         target: { collection: collections.approvals.name, id: approvalId, version: 1 },
         detail: { proposalId, proposalVersion: proposal.proposalVersion },
       })
+      return approvalId
     })
 
-    return toApprovalView(await this.requireApproval(user.tenantId, caseId, approvalId))
+    return toApprovalView(await this.requireApproval(user.tenantId, caseId, storedId))
   }
 
   /**

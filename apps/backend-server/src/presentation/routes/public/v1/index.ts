@@ -18,6 +18,14 @@ import { createMessageRoutes, messageSpecs } from './messages.js'
 import { createOverviewRoutes, overviewSpecs } from './overview.js'
 import { createProposalRoutes, proposalSpecs } from './proposals.js'
 import { createTaskRoutes, taskSpecs } from './tasks.js'
+import type { PersonService } from '../../../../application/persons/person-service.js'
+import { personsSpecs, createPersonRoutes } from './persons.js'
+import type { EstateService } from '../../../../application/estate/estate-service.js'
+import { estateSpecs, createEstateRoutes } from './estate.js'
+import type { ContractService } from '../../../../application/contracts/contract-service.js'
+import { contractsSpecs, createContractRoutes } from './contracts.js'
+import type { InsightService } from '../../../../application/insights/insight-service.js'
+import { insightsSpecs, createInsightRoutes } from './insights.js'
 import { healthRoute, healthSpec } from './health.js'
 
 /**
@@ -28,6 +36,10 @@ import { healthRoute, healthSpec } from './health.js'
  */
 export const publicV1Specs: RouteSpec[] = [
   healthSpec,
+  ...Object.values(personsSpecs),
+  ...Object.values(estateSpecs),
+  ...Object.values(contractsSpecs),
+  ...Object.values(insightsSpecs),
   consentSpecs.getConsents,
   consentSpecs.agreeConsents,
   consentSpecs.revokeConsent,
@@ -74,6 +86,10 @@ export const publicV1Specs: RouteSpec[] = [
 ]
 
 export interface PublicRouteDependencies {
+  personService: PersonService
+  estateService: EstateService
+  contractService: ContractService
+  insightService: InsightService
   caseService: CaseService
   consentService: ConsentService
   documentService: DocumentService | null
@@ -109,6 +125,10 @@ export function createPublicV1Routes(
   }
   return [
     healthRoute,
+    ...createPersonRoutes(dependencies.personService),
+    ...createEstateRoutes(dependencies.estateService),
+    ...createContractRoutes(dependencies.contractService),
+    ...createInsightRoutes(dependencies.insightService),
     ...createConsentRoutes(dependencies.consentService),
     ...createCaseRoutes(dependencies.caseService),
     ...(dependencies.documentService

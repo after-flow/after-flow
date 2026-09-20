@@ -312,7 +312,7 @@ export class TaskService {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
     const taskId = randomUUID()
 
-    await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
+    const storedId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       tx.create<TaskEntity>(taskLocation(caseId, taskId), {
         id: taskId,
         title: input.title,
@@ -336,9 +336,10 @@ export class TaskService {
         target: { collection: collections.tasks.name, id: taskId, version: 1 },
         detail: { source: 'MANUAL' },
       })
+      return taskId
     })
 
-    return this.view(user, access, caseId, taskId)
+    return this.view(user, access, caseId, storedId)
   }
 
   async list(

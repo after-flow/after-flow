@@ -1,3 +1,4 @@
+import { fingerprintOf } from '../../shared/fingerprint.js'
 import { randomUUID } from 'node:crypto'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { MessageEntity } from '../../domain/message/message.js'
@@ -130,11 +131,11 @@ export class MessageService {
     meta: CommandMeta,
   ): Promise<{ message: MessageView; runId: string | null; runAccepted: boolean; reason: string | null }> {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
-    const messageId = randomUUID()
+    const generatedId = randomUUID()
 
-    await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
-      tx.create<MessageEntity>(messageLocation(caseId, messageId), {
-        id: messageId,
+    const messageId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
+      tx.create<MessageEntity>(messageLocation(caseId, generatedId), {
+        id: generatedId,
         role: 'user',
         body,
         agentRunId: null,
@@ -146,9 +147,10 @@ export class MessageService {
       tx.audit({
         caseId,
         type: 'message.posted',
-        target: { collection: collections.messages.name, id: messageId, version: 1 },
+        target: { collection: collections.messages.name, id: generatedId, version: 1 },
         detail: { role: 'user' },
       })
+      return generatedId
     })
 
     // 受付できない場合も発言は残す。送信が失敗したように見せない。
@@ -159,7 +161,9 @@ export class MessageService {
         user,
         caseId,
         { operation: 'chat_reply', targetType: 'MESSAGE', targetId: messageId },
-        { requestId: meta.requestId, idempotency: null },
+        { requestId: meta.requestId, idempotency: {
+          key: 'chat-run-' + messageId, fingerprint: fingerprintOf({ operation: 'chat_reply', caseId, messageId }),
+        } },
       )
       runId = run.id
       await this.attachReplyRun(user, caseId, messageId, run.id, meta)
@@ -187,6 +191,7 @@ export class MessageService {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
     await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
       const current = await tx.require<MessageEntity>(messageLocation(caseId, messageId))
+      if (current.replyRunId === runId) return
       tx.update<MessageEntity>(messageLocation(caseId, messageId), current.version, { replyRunId: runId })
     })
   }
@@ -206,11 +211,12 @@ export class MessageService {
       user,
       caseId,
       { operation: 'task_guidance', targetType: 'TASK', targetId: taskId },
-      { requestId: meta.requestId, idempotency: null },
+      meta,
     )
 
     await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
       const current = await tx.get<GuidanceEntity>(guidanceLocation(caseId, taskId))
+      if (current?.agentRunId === run.id) return
       const patch = {
         status: 'RESEARCHING' as const,
         agentRunId: run.id,

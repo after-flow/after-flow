@@ -1,4 +1,5 @@
 import type { Hono } from 'hono'
+import { createBusinessServices } from './infrastructure/firestore/business-services.js'
 import { createApp } from './app.js'
 import { AccessService } from './application/authorization/case-access.js'
 import { CaseService } from './application/case/case-service.js'
@@ -75,6 +76,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   )
 
   const routes = createPublicV1Routes({
+    ...createBusinessServices(access, database.read, database.uow),
     caseService: new CaseService(access, database.read, database.uow),
     consentService,
     documentService: storageRoot ? new DocumentService(

@@ -1,3 +1,4 @@
+import { seedHeir } from './helpers/app.js'
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import type { AgentRunEntity, AgentRunStatus } from '../../src/domain/agent/agent-run.js'
@@ -275,6 +276,8 @@ describeFirestore('案件の概要', () => {
 
   it('本人の確定と他人の報告を区別して返す', async () => {
     const { tenantId, userId, app, caseId } = await setup()
+    await seedHeir(tenantId, caseId, 'person-self')
+    await seedHeir(tenantId, caseId, 'person-spouse')
     await linkPerson(tenantId, caseId, userId, 'person-self')
 
     await call(
@@ -307,8 +310,7 @@ describeFirestore('案件の概要', () => {
     // 全員が確定していなければ解除しない。
     assert.equal(response.body.data.inheritanceDecision.decided, false)
     assert.equal(response.body.data.inheritanceDecision.unknown, false)
-    // 氏名の登録は関係者の実装に依存する。
-    assert.equal(self.personName, null)
+    assert.equal(self.personName, 'person-self')
   })
 
   it('AIが未接続であることを活動が無い理由として返す', async () => {
