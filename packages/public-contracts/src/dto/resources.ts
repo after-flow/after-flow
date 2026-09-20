@@ -604,7 +604,14 @@ export interface InsightEvidence {
   documentId?: string
   documentName?: string
   taskId?: string
+  /**
+   * 参照先の現在の状態。検出時点から変わった（STALE）／保管・除外された（UNAVAILABLE）根拠は
+   * 確定した事実として扱わない。省略時は CURRENT。
+   */
+  freshness?: EvidenceFreshness
 }
+
+export type EvidenceFreshness = 'CURRENT' | 'STALE' | 'UNAVAILABLE'
 
 export interface Insight {
   id: string
@@ -624,7 +631,20 @@ export interface Insight {
    * true のとき、フロントエンドは専門家への確認を促す注記を必ず表示する。
    */
   requiresProfessional: boolean
+  /** 閲覧者（actor）ごとの既読／非表示状態。内容は共有、状態は個人ごと */
   status: InsightStatus
+  statusUpdatedAt?: ISODateTime | null
+  /** 専門家確認に関する注記（AI本文とは区別する） */
+  professionalReviewNote?: string
+}
+
+/** 既読・非表示は閲覧者ごとの明示的な Command。NEW→ACKNOWLEDGED→DISMISSED の順で、DISMISSED から戻す操作は無い */
+export interface AcknowledgeInsightRequest {
+  note?: string
+}
+
+export interface DismissInsightRequest {
+  reason?: string
 }
 
 /* ---------- AI Activity / Chat ---------- */

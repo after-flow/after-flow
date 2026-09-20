@@ -1,9 +1,11 @@
 import { ContractService } from './application/contracts/contract-service.js'
 import { EstateService } from './application/estate/estate-service.js'
+import { InsightService } from './application/insights/insight-service.js'
 import { PersonService } from './application/persons/person-service.js'
 import type { CaseMembership } from './application/ports.js'
 import type { Benefit, Contract } from './domain/contract/contract.js'
 import type { Asset, Liability } from './domain/estate/estate-item.js'
+import type { Insight } from './domain/insight/insight.js'
 import type { Person, Relationship } from './domain/person/person.js'
 import {
   InMemoryAuditLog,
@@ -13,6 +15,12 @@ import {
   SystemClock,
   UuidIdGenerator,
 } from './infrastructure/memory/memory-adapters.js'
+import {
+  InMemoryAgentRunLookup,
+  InMemoryEvidenceResolver,
+  InMemoryInsightResultLedger,
+  InMemoryInsightViewStore,
+} from './infrastructure/memory/insight-adapters.js'
 import { InMemoryPersonReferences } from './infrastructure/memory/person-references.js'
 import {
   DevHeaderIdentityVerifier,
@@ -41,6 +49,10 @@ export interface Container {
   contracts: InMemoryCaseRepository<Contract>
   benefits: InMemoryCaseRepository<Benefit>
   contractService: ContractService
+  insights: InMemoryCaseRepository<Insight>
+  agentRuns: InMemoryAgentRunLookup
+  evidence: InMemoryEvidenceResolver
+  insightService: InsightService
 }
 
 export function parseDevMemberships(spec: string | undefined, tenantId: string): CaseMembership[] {
@@ -88,6 +100,9 @@ export function createContainer(env: AppEnv = process.env): Container {
   const liabilities = new InMemoryCaseRepository<Liability>()
   const contracts = new InMemoryCaseRepository<Contract>()
   const benefits = new InMemoryCaseRepository<Benefit>()
+  const insights = new InMemoryCaseRepository<Insight>()
+  const agentRuns = new InMemoryAgentRunLookup()
+  const evidence = new InMemoryEvidenceResolver()
 
   return {
     identity,
@@ -103,5 +118,16 @@ export function createContainer(env: AppEnv = process.env): Container {
     contracts,
     benefits,
     contractService: new ContractService({ ...shared, contracts, benefits }),
+    insights,
+    agentRuns,
+    evidence,
+    insightService: new InsightService({
+      ...shared,
+      insights,
+      views: new InMemoryInsightViewStore(),
+      runs: agentRuns,
+      evidence,
+      ledger: new InMemoryInsightResultLedger(),
+    }),
   }
 }

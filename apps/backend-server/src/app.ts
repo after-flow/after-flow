@@ -7,6 +7,7 @@ import { requireAuth } from './presentation/middleware/auth.js'
 import { contractRoutes } from './presentation/routes/public/v1/contracts.js'
 import { estateRoutes } from './presentation/routes/public/v1/estate.js'
 import { healthRoutes } from './presentation/routes/public/v1/health.js'
+import { insightRoutes } from './presentation/routes/public/v1/insights.js'
 import { personRoutes } from './presentation/routes/public/v1/persons.js'
 
 export function createApp(container: Container = createContainer()) {
@@ -28,6 +29,7 @@ export function createApp(container: Container = createContainer()) {
   caseScoped.route('/', personRoutes(container.personService))
   caseScoped.route('/', estateRoutes(container.estateService))
   caseScoped.route('/', contractRoutes(container.contractService))
+  caseScoped.route('/', insightRoutes(container.insightService))
   app.route('/api/v1/cases/:caseId', caseScoped)
 
   return app
