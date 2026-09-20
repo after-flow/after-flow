@@ -1,0 +1,153 @@
+import { createHash } from 'node:crypto'
+import { z } from 'zod'
+import { artifactEnvelopeSchema, contextProofSchema, internalId, operationSchema } from '@aftercare/internal-contracts'
+import type { ContextProof } from '@aftercare/internal-contracts'
+import { researchBriefSchema } from '../research/contracts.js'
+
+const fields = {
+  case: ['deceasedName', 'dateOfDeath', 'knownAt', 'municipality', 'status'],
+  task: ['title', 'summary', 'status', 'stage', 'category', 'submitTo', 'source', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal'],
+  message: ['role', 'body'],
+  persons: ['name', 'relationshipLabel', 'role', 'isHeir', 'specialCircumstance', 'excludedAt'],
+  relationships: ['fromPersonId', 'toPersonId', 'kind', 'excludedAt'],
+  assets: ['name', 'kind', 'institution', 'amount', 'confirmation'],
+  liabilities: ['name', 'kind', 'creditor', 'amount', 'confirmation'],
+  contracts: ['name', 'kind', 'provider', 'policyState', 'progressState'],
+  benefits: ['name', 'kind', 'provider', 'amount', 'progressState'],
+  deadlines: ['taskId', 'label', 'dueDate', 'startDate', 'confirmation', 'unresolvedReason', 'basis', 'basisLabel', 'jurisdiction', 'timezone', 'ruleId', 'ruleVersion', 'sourceUrl', 'sourceCheckedAt', 'extendable', 'critical'],
+  decisions: ['personId', 'method', 'state'],
+} as const
+type Group = keyof typeof fields | 'tasks'
+type FactState = 'confirmed' | 'user_reported' | 'extracted_candidate' | 'unknown'
+export interface ContextFact {
+  group: Group; entityId: string; entityVersion: number; field: string; value: unknown; state: FactState
+}
+export interface CoreContext {
+  operation: z.infer<typeof operationSchema>
+  proof: ContextProof
+  expiresAt: string
+  modelInput: {
+    facts: ContextFact[]
+    documents: { id: string; version: number; kind: string; contentAvailable: false }[]
+    limitations: string[]
+  }
+}
+
+export class ContextError extends Error {
+  constructor(readonly code: 'INVALID_CONTEXT' | 'EXPIRED_CONTEXT' | 'CONTEXT_TOO_LARGE' | 'CONTEXT_CHANGED' | 'PLANNING_HISTORY_UNAVAILABLE') {
+    super(code)
+  }
+}
+
+/** JSON hash format matches the publicized Backend artifact contract, not Backend source imports. */
+export function contentHash(content: unknown): string {
+  const canonical = (value: unknown): string => {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+    return `{${Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
+  }
+  return createHash('sha256').update(canonical(content)).digest('base64url')
+}
+
+const documentSchema = z.object({ id: internalId, version: z.number().int().positive(), kind: z.string().max(100), contentAvailable: z.literal(false) }).strict()
+const entityBase = z.object({ id: internalId, version: z.number().int().positive() })
+const contentSchema = z.object({
+  operation: operationSchema, case: z.record(z.string(), z.unknown()),
+  task: z.record(z.string(), z.unknown()).optional(), message: z.record(z.string(), z.unknown()).optional(),
+  persons: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  relationships: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  assets: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  liabilities: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  contracts: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  benefits: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  tasks: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  deadlines: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  decisions: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+  documents: z.array(documentSchema).max(100),
+  // Execution control metadata stays outside the LLM context, in the harness.
+  actions: z.array(z.unknown()).max(100).optional(), resume: z.unknown().optional(),
+}).strict()
+
+export function buildCoreContext(input: unknown, operation: CoreContext['operation'], options: { now?: number; maxBytes?: number } = {}): CoreContext {
+  const now = options.now ?? Date.now()
+  const maxBytes = options.maxBytes ?? 65536
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 131072) throw new ContextError('INVALID_CONTEXT')
+  try {
+    const artifact = artifactEnvelopeSchema.parse(input)
+    if (Date.parse(artifact.expiresAt) <= now) throw new ContextError('EXPIRED_CONTEXT')
+    if (contentHash(artifact.content) !== artifact.contentHash) throw new ContextError('INVALID_CONTEXT')
+    const content = contentSchema.parse(artifact.content)
+    if (content.operation !== operation || operation === 'document_analysis') throw new ContextError('INVALID_CONTEXT')
+    if ((operation === 'task_guidance' && !content.task) || (operation === 'chat_reply' && !content.message)) throw new ContextError('INVALID_CONTEXT')
+    const facts: ContextFact[] = []
+    for (const [group, value] of Object.entries(content)) {
+      if (['operation', 'documents', 'actions', 'resume'].includes(group)) continue
+      const allowedFields: readonly string[] = group === 'tasks' ? fields.task : fields[group as keyof typeof fields]
+      if (!allowedFields) throw new ContextError('INVALID_CONTEXT')
+      for (const entity of (Array.isArray(value) ? value : [value]) as Record<string, unknown>[]) {
+        const identity = entityBase.parse(entity)
+        if (Object.keys(entity).some(key => !['id', 'version', ...allowedFields].includes(key))) throw new ContextError('INVALID_CONTEXT')
+        for (const field of allowedFields) {
+          if (!(field in entity)) continue
+          facts.push({ group: group as Group, entityId: identity.id, entityVersion: identity.version,
+            field, value: entity[field], state: factState(group, field, entity) })
+        }
+      }
+    }
+    const modelInput = {
+      facts, documents: content.documents,
+      limitations: [
+        'Backendは訂正・却下の履歴と明示的な禁止事項をまだ配信していない。履歴が無いと判断しない。',
+        '未確認の財産・債務は出自が未配信のためunknown。本人申告や抽出候補と推定しない。',
+        '文書本文は配信されていない。contentAvailable:falseの文書を読んだと述べない。',
+      ],
+    }
+    if (Buffer.byteLength(JSON.stringify(modelInput)) > maxBytes) throw new ContextError('CONTEXT_TOO_LARGE')
+    return { operation, proof: contextProofSchema.parse(artifact), expiresAt: artifact.expiresAt, modelInput }
+  } catch (error) {
+    if (error instanceof ContextError) throw error
+    throw new ContextError('INVALID_CONTEXT')
+  }
+}
+
+function factState(group: string, field: string, entity: Record<string, unknown>): FactState {
+  if (entity[field] === null || entity[field] === undefined) return 'unknown'
+  if (group === 'case' || group === 'message') return 'user_reported'
+  if (group === 'decisions') return entity.state === 'CONFIRMED' ? 'confirmed' : entity.state === 'REPORTED' ? 'user_reported' : 'unknown'
+  if (group === 'deadlines') return entity.confirmation === 'CONFIRMED' ? 'confirmed' : 'unknown'
+  if (group === 'assets' || group === 'liabilities') {
+    const confirmation = z.object({ state: z.enum(['CONFIRMED', 'UNCONFIRMED']) }).safeParse(entity.confirmation)
+    return confirmation.success && confirmation.data.state === 'CONFIRMED' ? 'confirmed' : 'unknown'
+  }
+  return 'unknown'
+}
+
+export function assertContextFresh(previous: CoreContext, current: CoreContext, now = Date.now()): void {
+  if (Date.parse(current.expiresAt) <= now) throw new ContextError('EXPIRED_CONTEXT')
+  if (previous.operation !== current.operation || previous.proof.caseVersion !== current.proof.caseVersion || previous.proof.contentHash !== current.proof.contentHash) {
+    throw new ContextError('CONTEXT_CHANGED')
+  }
+}
+
+export const reviewedResearchScopeSchema = z.object({
+  id: internalId, version: z.string().min(1).max(40), reviewedAt: z.string().datetime(),
+  procedure: z.string().min(1).max(200), institution: z.string().min(1).max(200),
+  jurisdiction: z.string().min(1).max(200), municipality: z.string().min(1).max(200).nullable(),
+  sourceCatalogIds: z.array(internalId).min(1).max(20),
+  questions: z.array(z.object({ id: internalId, text: z.string().min(1).max(300) }).strict()).min(1).max(12),
+}).strict()
+
+/** Scope comes from reviewed configuration; none of these strings are copied from user messages. */
+export function buildResearchBrief(context: CoreContext, rawScope: z.infer<typeof reviewedResearchScopeSchema>) {
+  const scope = reviewedResearchScopeSchema.parse(rawScope)
+  const municipality = context.modelInput.facts.find(fact => fact.group === 'case' && fact.field === 'municipality')?.value
+  if (scope.municipality !== null && municipality !== scope.municipality) {
+    return { status: 'needs_input' as const, missing: ['対象の市区町村を確認してください。'] }
+  }
+  return { status: 'ready' as const, brief: researchBriefSchema.parse({
+    briefId: scope.id, procedure: scope.procedure, institution: scope.institution,
+    jurisdiction: scope.jurisdiction, sourceCatalogIds: scope.sourceCatalogIds, questions: scope.questions,
+  }) }
+}
