@@ -39,6 +39,7 @@ export type TaskBlockedReasonResource =
   | 'EVIDENCE_REQUIRED'
   | 'INHERITANCE_DECISION_REQUIRED'
   | 'INSUFFICIENT_ROLE'
+  | 'DEPENDENCY_NOT_COMPLETED'
 
 export type DeadlineConfirmationResource = 'CONFIRMED' | 'UNCONFIRMED'
 
@@ -97,6 +98,10 @@ export interface TaskResource {
   stage: FlowStageId
   category: string
   submitTo: string | null
+  /** 同じCaseに属する、除外されていない関係者のID。権限付与ではない。 */
+  assigneeId: string | null
+  dependencyTaskIds: string[]
+  escalation: { proposalId: string; reason: string; documents: { id: string; version: number }[]; contacted: false } | null
   source: 'MANUAL' | 'AI' | 'RULE_ENGINE'
   /** 完了に根拠の登録を要するか。 */
   evidenceRequired: boolean

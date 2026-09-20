@@ -24,6 +24,9 @@ export interface OutboxEvent {
   initiatedByUserId: string | null
   status: OutboxStatus
   attempts: number
+  /** 配送claimの世代。遅着した旧workerの応答で状態を戻さない。 */
+  claimId?: string
+  leaseExpiresAt?: string
   /** 次に配送を試みる時刻。再試行の間隔制御に使う。 */
   nextAttemptAt: string
   /** 直近の失敗理由。運用が原因を追えるようにする。 */

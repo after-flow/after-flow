@@ -1,0 +1,55 @@
+import { pathToFileURL } from 'node:url'
+import { AccessService } from './application/authorization/case-access.js'
+import { ConsentService } from './application/consent/consent-service.js'
+import { OutboxDispatcher } from './application/agent/outbox-dispatcher.js'
+import { caseTaskHandler, runOutboxWorker } from './application/agent/outbox-worker.js'
+import { TaskService } from './application/task/task-service.js'
+import { StoredInheritanceDecisionReader } from './application/decision/decision-service.js'
+import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
+import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
+import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
+import { assertValidId } from './infrastructure/firestore/paths.js'
+import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
+import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
+import { HttpAgentJobClient, readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
+import type { AgentJobClient } from './application/ports/agent-client.js'
+
+export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = false): Promise<void> {
+  const tenantIds = [...new Set((env.OUTBOX_TENANT_IDS ?? '').split(',').map(id => id.trim()).filter(Boolean))]
+  if (!tenantIds.length) throw new Error('OUTBOX_TENANT_IDS is required; no implicit global scan')
+  for (const id of tenantIds) assertValidId(id, 'tenantId')
+  const intervalMs = Number(env.OUTBOX_INTERVAL_MS || 5_000)
+  const visibilityMs = Number(env.OUTBOX_VISIBILITY_MS || 120_000)
+  if (!Number.isInteger(intervalMs) || intervalMs < 100 || intervalMs > 60_000) throw new Error('Invalid OUTBOX_INTERVAL_MS')
+  const config = readAgentClientConfig(env)
+  if (!Number.isInteger(visibilityMs) || visibilityMs < 1000 || visibilityMs > 3_600_000
+    || (config && (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0 || config.timeoutMs >= visibilityMs))) {
+    throw new Error('OUTBOX_VISIBILITY_MS must exceed the finite AI HTTP timeout')
+  }
+  const db = createFirestore(readFirestoreConfig(env))
+  const read = new FirestoreReadRepository(db)
+  const uow = new FirestoreUnitOfWork(db)
+  const access = new AccessService(read)
+  const consent = new ConsentService(readConsentCatalog(env), access, read, uow)
+  const tasks = new TaskService(readRuleCatalog(env), access, read, uow, new StoredInheritanceDecisionReader(read))
+  const unavailable: AgentJobClient = { deliver: async () => ({ status: 'RETRYABLE', reason: 'AI_NOT_CONNECTED' }) }
+  const client = config ? new HttpAgentJobClient(config) : unavailable
+  // 実検査・内部context接続が揃うまでは、書類解析配送を有効化しない（#27/#36）。
+  const guarded: AgentJobClient = { deliver: job => job.type === 'agent.document_analysis' || job.type.startsWith('document.')
+    ? Promise.resolve({ status: 'RETRYABLE', reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' }) : client.deliver(job) }
+  const dispatcher = new OutboxDispatcher(db, guarded, consent, visibilityMs, caseTaskHandler(tasks))
+  const controller = new AbortController()
+  const stop = () => controller.abort()
+  process.once('SIGTERM', stop)
+  process.once('SIGINT', stop)
+  try { await runOutboxWorker(dispatcher, { tenantIds, intervalMs, signal: controller.signal, once }) }
+  finally {
+    process.off('SIGTERM', stop)
+    process.off('SIGINT', stop)
+    await db.terminate()
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await startWorker(process.env, process.argv.includes('--once'))
+}

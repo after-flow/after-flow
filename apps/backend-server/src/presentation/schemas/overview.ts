@@ -24,6 +24,7 @@ const decisionSummarySchema = z.object({
 export const caseOverviewResourceSchema = z.object({
   case: caseResourceSchema,
   aggregatedAt: isoDateTimeSchema,
+  consistency: z.literal('SNAPSHOT'),
   caseVersion: z.number().int(),
   // 状態ごとの件数。0 件の状態は省く。すべての状態を必ず含めない。
   taskCounts: z.partialRecord(taskStatusSchema, z.number().int()),

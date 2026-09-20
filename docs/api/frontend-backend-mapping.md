@@ -151,7 +151,7 @@
 - IdPの実環境設定・セッション更新・招待UI。認証境界は [ADR-0001](../adr/0001-authentication-provider.md) に従う
 - Firestore のコレクション設計詳細・Emulator テスト → #5
 - AI 内部契約（Run 結果の schema、認証、Outbox）→ #10
-- Proposal kind ごとの payload、承認 Policy の閾値 → #11
+- Entity別Proposalのpayloadは [proposal-payloads.md](proposal-payloads.md)。AI提出・lease連携は #11 / #41
 - 書類検査・マイナンバー検知の提供条件 → #19
 - 期限計算の根拠（法令・自治体差）→ #9。本書は期限の値を定めない。
 
@@ -171,3 +171,21 @@
 | 進捗・ダッシュボード | overview の段階・件数が各 Command 後に一致する。AI 処理中は「受付済み」と表示され完了扱いにならない |
 | チャット | 送信は 202 で受け付けられ、回答が後から履歴に現れる。外部AI不可なら発言は残り `runAccepted: false` と理由が返る |
 | 気づき | 根拠のない結果は保存されず一覧に出ない。既読は本人にだけ反映され他メンバーは `NEW` のまま。`ACKNOWLEDGED → NEW` は 409。別 Case の Run に紐づく結果は拒否される |
+
+## 15. Backend補完契約（#9 / #15 / #17 / #38 / #40 / #42）
+
+- Task作成／PATCHに `assigneeId`（同一Caseの非除外Person）、`dependencyTaskIds`、`requiredDocuments` を追加。
+  公開入力からsourceを指定させない。循環は拒否し、先行Taskが未完了なら着手・準備完了・提出・外部待ち・完了を止める。
+  既存Taskの依存関係省略は空配列。完了済みTaskの必要書類／依存関係訂正は先にreopenが必要。
+  担当者の設定は権限付与ではない。書類要求の訂正は手動由来として記録する。
+- `overview.consistency` は `SNAPSHOT`。`aggregatedAt` は全クエリ・全ページで共有するDB読取時点。
+  `caseVersion` はCaseの業務版であり、集約全体の更新版やETagには使わない。
+  集約はライブクエリで、別の非同期read modelはない。操作後／再表示時は再取得する。
+  取得後に別要求が更新することはあるため、この表示をCommand認可や完了可否の代わりにしない。
+- 手順案内のRun・案内所有権・配送イベントは一括保存。再依頼は以前の出典や結果をRESEARCHINGの結果として使い回さない。
+  結果受領は保存Transaction内で取消・attemptを再検証し、古いRunは新しい案内を上書きできない。
+- 初期Taskと期限再評価の継続実行は [Outbox worker](../runbooks/outbox-worker.md)。AI非接続でも手動管理用の処理を継続する。
+- 提案の承認／適用は [Entity別payload](proposal-payloads.md) に従う。
+  専門家引継ぎはTaskの `escalation` に理由・資料の版・`contacted:false` を返し、連絡済みと表示させない。
+
+これらはBackend契約であり、MSW画面は変更していない。実フロント接続／実AI接続は未検証。

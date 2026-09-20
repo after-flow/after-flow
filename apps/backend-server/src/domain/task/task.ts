@@ -50,6 +50,10 @@ export interface TaskEntity extends EntityBase {
   category: string
   submitTo: string | null
   assigneeId: string | null
+  /** 同じCase内の先行Task。旧保存データの省略値は空配列。 */
+  dependencyTaskIds?: string[]
+  /** 承認済みの専門家引継ぎ資料。外部連絡を行った記録ではない。 */
+  escalation?: { proposalId: string; reason: string; documents: { id: string; version: number }[]; contacted: false } | null
   source: TaskSource
   /** 初期手続きの重複生成を防ぐための定義 ID。手動作成では null。 */
   procedureId: string | null

@@ -34,6 +34,8 @@ export const DEFAULT_APPROVAL_TTL_MS = 7 * 24 * 60 * 60 * 1000
  */
 export interface ProposalApplier {
   kind: ProposalKind
+  /** 提出・訂正時にも同じ型固有の検証を行う。承認後にpayloadを補正しない。 */
+  validate?(payload: Record<string, unknown>): void
   /**
    * 承認後の再検証と反映。
    *
@@ -178,6 +180,10 @@ export class ProposalService {
     meta: CommandMeta,
   ): Promise<ProposalView> {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
+    if ((input.source && input.source !== 'USER') || input.agentRunId) {
+      throw errors.forbidden({ details: { reason: 'SOURCE_NOT_ALLOWED' } })
+    }
+    this.appliers.get(input.kind)?.validate?.(input.payload)
     const proposalId = randomUUID()
     const payloadHash = hashPayload(input.payload)
 
@@ -299,6 +305,7 @@ export class ProposalService {
       }
 
       const nextVersion = proposal.proposalVersion + 1
+      this.appliers.get(proposal.kind)?.validate?.(payload)
       tx.update<ProposalEntity>(proposalLocation(caseId, proposalId), expectedVersion, {
         proposalVersion: nextVersion,
         payload,
@@ -391,11 +398,13 @@ export class ProposalService {
   ): Promise<void> {
     const staleProposalId = (cause as { internal?: { staleProposalId?: unknown } })?.internal
       ?.staleProposalId
+    const staleVersion = (cause as { internal?: { staleProposalEntityVersion?: unknown } })?.internal?.staleProposalEntityVersion
     if (typeof staleProposalId !== 'string') return
 
     await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
       const proposal = await tx.require<ProposalEntity>(proposalLocation(caseId, staleProposalId))
-      if (proposal.status === 'STALE') return
+      if (proposal.status === 'STALE' || isProposalFinal(proposal.status)
+        || (typeof staleVersion === 'number' && proposal.version !== staleVersion)) return
       tx.update<ProposalEntity>(proposalLocation(caseId, staleProposalId), proposal.version, {
         status: 'STALE',
       })
@@ -474,7 +483,7 @@ export class ProposalService {
             caseVersionAtProposal: proposal.caseVersionAtProposal,
             currentCaseVersion: caseEntity.caseVersion,
           },
-          internal: { staleProposalId: approval.proposalId },
+          internal: { staleProposalId: approval.proposalId, staleProposalEntityVersion: proposal.version },
         })
       }
       await this.assertBasisBelongsToCase(tx, caseId, proposal.basis)

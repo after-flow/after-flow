@@ -15,7 +15,7 @@ import type { AccessService } from '../authorization/case-access.js'
 import type { CaseResource } from '@aftercare/public-contracts'
 import { toCaseResource } from '../case/case-service.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
-import type { ReadRepository } from '../ports/persistence.js'
+import type { ReadRepository, SnapshotReader } from '../ports/persistence.js'
 import type { DeadlineView } from '../task/task-service.js'
 import { toDeadlineView } from '../task/task-service.js'
 
@@ -72,8 +72,9 @@ export interface DecisionSummaryView {
 
 export interface CaseOverviewView {
   case: CaseResource
-  /** 集計した時刻と対象の版。結果がいつ時点のものかを示す。 */
+  /** 全集計が共有するDB読取時点。caseVersionはCaseの業務版であり集約全体の版ではない。 */
   aggregatedAt: string
+  consistency: 'SNAPSHOT'
   caseVersion: number
   taskCounts: Partial<Record<TaskStatus, number>>
   totalTasks: number
@@ -113,14 +114,21 @@ function todayIso(): string {
 export class CaseOverviewService {
   constructor(
     private readonly access: AccessService,
-    private readonly read: ReadRepository,
+    private readonly read: SnapshotReader,
     /** AI が接続されているか。未接続なら活動が無いことの理由になる。 */
     private readonly aiConnected: boolean = false,
   ) {}
 
   async get(user: AuthenticatedUser, caseId: string): Promise<CaseOverviewView> {
     const access = await this.access.authorizeCase(user, caseId, 'case.read')
-    const caseEntity = await this.read.get<CaseEntity>(user.tenantId, {
+    return this.read.snapshot(user.tenantId, { collection: collections.cases, caseId: null, id: caseId },
+      (read, readAt) => this.getSnapshot(user, caseId, access, read, readAt))
+  }
+
+  private async getSnapshot(user: AuthenticatedUser, caseId: string,
+    access: Awaited<ReturnType<AccessService['authorizeCase']>>, read: ReadRepository,
+    readAt: string): Promise<CaseOverviewView> {
+    const caseEntity = await read.get<CaseEntity>(user.tenantId, {
       collection: collections.cases,
       caseId: null,
       id: caseId,
@@ -138,26 +146,26 @@ export class CaseOverviewService {
       appliedApprovalCount,
     ] =
       await Promise.all([
-        this.aggregateTasks(user, caseId),
-        this.read.list<DeadlineEntity>(user.tenantId, collections.deadlines, caseId, {
+        this.aggregateTasks(user, caseId, read),
+        read.list<DeadlineEntity>(user.tenantId, collections.deadlines, caseId, {
           limit: 10,
           where: [{ field: 'dueDate', op: '>=', value: '' }],
           orderBy: { field: 'dueDate', direction: 'asc' },
         }),
-        this.read.count(user.tenantId, collections.deadlines, caseId, [
+        read.count(user.tenantId, collections.deadlines, caseId, [
           { field: 'dueDate', op: '==', value: null },
         ]),
-        this.listAllDecisions(user.tenantId, caseId),
-        listActiveHeirs(this.read, user.tenantId, caseId),
-        this.read.list<AgentRunEntity>(user.tenantId, collections.agentRuns, caseId, {
+        this.listAllDecisions(user.tenantId, caseId, read),
+        listActiveHeirs(read, user.tenantId, caseId),
+        read.list<AgentRunEntity>(user.tenantId, collections.agentRuns, caseId, {
           limit: 10,
           orderBy: { field: 'createdAt', direction: 'desc' },
         }),
         // 件数は集計クエリで数える。1 ページ目の長さを件数にしない。
-        this.read.count(user.tenantId, collections.approvals, caseId, [
+        read.count(user.tenantId, collections.approvals, caseId, [
           { field: 'status', op: '==', value: 'PENDING' },
         ]),
-        this.read.count(user.tenantId, collections.approvals, caseId, [
+        read.count(user.tenantId, collections.approvals, caseId, [
           { field: 'applicationStatus', op: '==', value: 'APPLIED' },
         ]),
       ])
@@ -167,7 +175,8 @@ export class CaseOverviewService {
 
     return {
       case: toCaseResource(caseEntity, access),
-      aggregatedAt: new Date().toISOString(),
+      aggregatedAt: readAt,
+      consistency: 'SNAPSHOT',
       caseVersion: caseEntity.caseVersion,
       taskCounts: tasks.counts,
       totalTasks: tasks.total,
@@ -187,6 +196,7 @@ export class CaseOverviewService {
   private async aggregateTasks(
     user: AuthenticatedUser,
     caseId: string,
+    read: ReadRepository,
   ): Promise<{
     counts: Partial<Record<TaskStatus, number>>
     byStage: Map<FlowStageId, { total: number; completed: number; notStarted: number }>
@@ -199,7 +209,7 @@ export class CaseOverviewService {
       Promise.all(
         TASK_STATUSES.map(async (status) => ({
           status,
-          count: await this.read.count(user.tenantId, collections.tasks, caseId, [
+          count: await read.count(user.tenantId, collections.tasks, caseId, [
             { field: 'status', op: '==', value: status },
           ]),
         })),
@@ -207,14 +217,14 @@ export class CaseOverviewService {
       Promise.all(
         FLOW_STAGES.map(async (stage) => {
           const [total, completed, notStarted] = await Promise.all([
-            this.read.count(user.tenantId, collections.tasks, caseId, [
+            read.count(user.tenantId, collections.tasks, caseId, [
               { field: 'stage', op: '==', value: stage.id },
             ]),
-            this.read.count(user.tenantId, collections.tasks, caseId, [
+            read.count(user.tenantId, collections.tasks, caseId, [
               { field: 'stage', op: '==', value: stage.id },
               { field: 'status', op: '==', value: 'COMPLETED' },
             ]),
-            this.read.count(user.tenantId, collections.tasks, caseId, [
+            read.count(user.tenantId, collections.tasks, caseId, [
               { field: 'stage', op: '==', value: stage.id },
               { field: 'status', op: '==', value: 'NOT_STARTED' },
             ]),
@@ -240,12 +250,13 @@ export class CaseOverviewService {
   private async listAllDecisions(
     tenantId: string,
     caseId: string,
+    read: ReadRepository,
   ): Promise<InheritanceDecisionEntity[]> {
     const decisions: InheritanceDecisionEntity[] = []
     let cursor: string | undefined
 
     do {
-      const page = await this.read.list<InheritanceDecisionEntity>(
+      const page = await read.list<InheritanceDecisionEntity>(
         tenantId,
         collections.decisions,
         caseId,

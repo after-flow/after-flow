@@ -203,8 +203,8 @@ export class MessageService {
     taskId: string,
     meta: CommandMeta,
   ): Promise<{ guidance: GuidanceView; runId: string }> {
-    const access = await this.access.authorizeCase(user, caseId, 'case.write')
     // 対象の手続きが同じ案件にあることを確かめる。
+    await this.access.authorizeCase(user, caseId, 'case.write')
     await this.requireTask(user.tenantId, caseId, taskId)
 
     const run = await this.runs.accept(
@@ -214,43 +214,7 @@ export class MessageService {
       meta,
     )
 
-    await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
-      const current = await tx.get<GuidanceEntity>(guidanceLocation(caseId, taskId))
-      if (current?.agentRunId === run.id) return
-      const patch = {
-        status: 'RESEARCHING' as const,
-        agentRunId: run.id,
-        researchedBy: 'AI' as const,
-        failureReason: null,
-      }
-      if (!current) {
-        tx.create<GuidanceEntity>(guidanceLocation(caseId, taskId), {
-          id: taskId,
-          taskId,
-          ...patch,
-          target: null,
-          where: null,
-          bring: [],
-          steps: [],
-          formExampleUrl: null,
-          formExampleLabel: null,
-          note: null,
-          sources: [],
-          missing: [],
-          resultId: null,
-          attemptId: null,
-        })
-      } else {
-        tx.update<GuidanceEntity>(guidanceLocation(caseId, taskId), current.version, patch)
-      }
-      tx.audit({
-        caseId,
-        type: 'guidance.requested',
-        target: { collection: collections.guidance.name, id: taskId, version: (current?.version ?? 0) + 1 },
-        detail: { runId: run.id },
-      })
-    })
-
+    // Run、案内の所有権、配送Outboxは accept 内で原子的に保存する。
     return { guidance: await this.getGuidance(user, caseId, taskId), runId: run.id }
   }
 

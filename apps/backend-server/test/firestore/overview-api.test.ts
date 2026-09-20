@@ -3,11 +3,15 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import type { AgentRunEntity, AgentRunStatus } from '../../src/domain/agent/agent-run.js'
 import { collections } from '../../src/domain/shared/collections.js'
+import { CaseOverviewService } from '../../src/application/overview/overview-service.js'
+import { AccessService } from '../../src/application/authorization/case-access.js'
+import type { DocLocation, ReadRepository } from '../../src/application/ports/persistence.js'
+import { FirestoreReadRepository } from '../../src/infrastructure/firestore/read-repository.js'
 import type { CaseMember } from '../../src/domain/authorization/case-role.js'
 import type { RuleCatalog } from '../../src/domain/task/rule-engine.js'
 import { agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
 import type { Json, TestAppOptions } from './helpers/app.js'
-import { describeFirestore, newTenantId, unitOfWork, workContext } from './helpers/emulator.js'
+import { describeFirestore, firestore, newTenantId, unitOfWork, workContext } from './helpers/emulator.js'
 
 const caseBody = {
   deceasedName: '架空 太郎',
@@ -16,6 +20,38 @@ const caseBody = {
   ownerName: '架空 花子',
   relationshipToDeceased: '配偶者',
 }
+
+describeFirestore('集約のスナップショット整合性', () => {
+  it('読取時点の決定後に更新が確定しても全クエリは同じ時点を返す', async () => {
+    const { tenantId, userId, app, caseId } = await setup()
+    const task = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', {
+      title: '集計中に更新する架空Task', stage: 'immediate', category: '手動',
+    }))
+    const taskId = task.body.data.id as string
+    const before = await call(app, `/cases/${caseId}/overview`)
+    assert.equal(before.status, 200)
+    class InterleavedRead extends FirestoreReadRepository {
+      override snapshot<T>(tenant: string, anchor: DocLocation,
+        fn: (read: ReadRepository, readAt: string) => Promise<T>): Promise<T> {
+        return super.snapshot(tenant, anchor, async (read, readAt) => {
+          await firestore().doc(`tenants/${tenantId}/cases/${caseId}/tasks/${taskId}`)
+            .update({ status: 'COMPLETED', stage: 'closing', version: 2 })
+          return fn(read, readAt)
+        })
+      }
+    }
+    const read = new InterleavedRead(firestore())
+    const snapshot = await new CaseOverviewService(new AccessService(read), read)
+      .get({ tenantId, userId }, caseId)
+    assert.equal(snapshot.consistency, 'SNAPSHOT')
+    assert.deepEqual(snapshot.taskCounts, before.body.data.taskCounts)
+    assert.deepEqual(snapshot.flowStages, before.body.data.flowStages)
+    const after = await call(app, `/cases/${caseId}/overview`)
+    assert.equal(after.body.data.taskCounts.COMPLETED, 1)
+    assert.equal(after.body.data.flowStages.find((s: Json) => s.id === 'closing').completedTasks, 1)
+    assert.equal(after.body.data.caseVersion, snapshot.caseVersion, 'Task更新をCase版と混同しない')
+  })
+})
 
 /** 業務レビュー済みという前提の架空ルール。実際の法定期限ではない。 */
 const REVIEWED_CATALOG: RuleCatalog = {

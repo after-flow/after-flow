@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import type { createApp } from '../../src/app.js'
 import { PLACEHOLDER_CATALOG } from '../../src/domain/consent/catalog.js'
+import { AgentResultIntake } from '../../src/application/chat/result-intake.js'
+import type { UnitOfWork } from '../../src/application/ports/persistence.js'
 import { agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
 import type { Json } from './helpers/app.js'
-import { describeFirestore, firestore, newTenantId } from './helpers/emulator.js'
+import { describeFirestore, firestore, newTenantId, readRepository, unitOfWork } from './helpers/emulator.js'
 
 const SERVICE_TOKEN = 'test-backend-service-token'
 const CROSS_BORDER = PLACEHOLDER_CATALOG.documents.find((d) => d.kind === 'CROSS_BORDER_AI')!
@@ -468,5 +470,96 @@ describeFirestore('内部APIの認証と境界', () => {
       { method: 'POST' },
     )
     assert.equal(response.status, 404)
+  })
+})
+
+describeFirestore('結果受領の競合と案内再依頼', () => {
+  for (const kind of ['chat_reply', 'task_guidance'] as const) {
+    for (const change of ['cancel', 'retry'] as const) {
+      it(`${kind}: 事前検証後の${change}を保存Transactionで再検証する`, async () => {
+        const { tenantId, app, caseId, taskId } = await setup()
+        const requested = kind === 'chat_reply'
+          ? await call(app, `/cases/${caseId}/messages`, jsonRequest('POST', { body: '競合試験' }))
+          : await call(app, `/cases/${caseId}/tasks/${taskId}/guidance/requests`, jsonRequest('POST', {}))
+        const runId = (kind === 'chat_reply' ? requested.body.data.runId : requested.body.data.agentRunId) as string
+        const attemptId = await currentAttemptId(tenantId, caseId, runId)
+        const interleaved: UnitOfWork = {
+          async run(context, fn) {
+            // 外側のverifyRunが済み、保存Transactionに入る直前に別要求が確定する。
+            await firestore().doc(`tenants/${tenantId}/cases/${caseId}/agentRuns/${runId}`)
+              .update({ status: change === 'cancel' ? 'CANCELLED' : 'QUEUED',
+                currentAttemptId: 'new-attempt', version: 2 })
+            return unitOfWork().run(context, fn)
+          },
+        }
+        const intake = new AgentResultIntake(readRepository(), interleaved)
+        const envelope = { runId, attemptId, resultId: 'racing-result' }
+        await assert.rejects(
+          kind === 'chat_reply'
+            ? intake.submitChatReply(tenantId, caseId, { ...envelope, body: '遅着' })
+            : intake.submitGuidanceResult(tenantId, caseId, { ...envelope, status: 'COMPLETED' }),
+          (error: any) => error.details.reason === (change === 'cancel' ? 'RUN_ALREADY_FINISHED' : 'STALE_ATTEMPT'),
+        )
+        const run = await call(app, `/cases/${caseId}/agent-runs/${runId}`)
+        assert.notEqual(run.body.data.status, 'SUCCEEDED')
+        const replies = await call(app, `/cases/${caseId}/messages`)
+        assert.equal(replies.body.data.filter((m: Json) => m.role === 'assistant').length, 0)
+        const guidance = await call(app, `/cases/${caseId}/tasks/${taskId}/guidance`)
+        assert.notEqual(guidance.body.data.status, 'COMPLETED')
+      })
+    }
+  }
+
+  it('再依頼後に古いRunの結果と受付の再送が最新の案内を上書きしない', async () => {
+    const { tenantId, app, caseId, taskId } = await setup()
+    const path = `/cases/${caseId}/tasks/${taskId}/guidance/requests`
+    const firstRequest = jsonRequest('POST', {}, nextKey('first-guidance'))
+    const first = await call(app, path, firstRequest)
+    const oldRunId = first.body.data.agentRunId as string
+    const second = await call(app, path, jsonRequest('POST', {}))
+    const runId = second.body.data.agentRunId as string
+    const late = await submitResult(app, tenantId, caseId, {
+      kind: 'task_guidance', runId: oldRunId,
+      attemptId: await currentAttemptId(tenantId, caseId, oldRunId),
+      resultId: 'late-guidance', status: 'COMPLETED',
+    })
+    assert.equal(late.status, 409)
+    assert.equal(late.body.error.details.reason, 'GUIDANCE_SUPERSEDED')
+    await call(app, path, firstRequest)
+    const guidance = await call(app, `/cases/${caseId}/tasks/${taskId}/guidance`)
+    assert.equal(guidance.body.data.agentRunId, runId)
+    const result = await submitResult(app, tenantId, caseId, {
+      kind: 'task_guidance', runId, attemptId: await currentAttemptId(tenantId, caseId, runId),
+      resultId: 'current-guidance', status: 'COMPLETED',
+    })
+    assert.equal(result.body.data.applied, true)
+  })
+
+  it('部分結果からのretryと完了後の新しい依頼を受け付ける', async () => {
+    const { tenantId, app, caseId, taskId } = await setup()
+    const path = `/cases/${caseId}/tasks/${taskId}/guidance/requests`
+    const requested = await call(app, path, jsonRequest('POST', {}))
+    const runId = requested.body.data.agentRunId as string
+    await submitResult(app, tenantId, caseId, {
+      kind: 'task_guidance', runId, attemptId: await currentAttemptId(tenantId, caseId, runId),
+      resultId: 'partial', status: 'PARTIAL', steps: ['古い手順'],
+    })
+    const run = await call(app, `/cases/${caseId}/agent-runs/${runId}`)
+    const retried = await call(app, `/cases/${caseId}/agent-runs/${runId}/retry`,
+      jsonRequest('POST', { expectedVersion: run.body.data.version }))
+    assert.equal(retried.status, 202)
+    const result = await submitResult(app, tenantId, caseId, {
+      kind: 'task_guidance', runId, attemptId: await currentAttemptId(tenantId, caseId, runId),
+      resultId: 'retry-completed', status: 'COMPLETED', steps: ['新しい手順'],
+    })
+    assert.equal(result.body.data.applied, true)
+    const next = await call(app, path, jsonRequest('POST', {}))
+    assert.deepEqual(next.body.data.steps, [])
+    const nextId = next.body.data.agentRunId as string
+    const nextResult = await submitResult(app, tenantId, caseId, {
+      kind: 'task_guidance', runId: nextId, attemptId: await currentAttemptId(tenantId, caseId, nextId),
+      resultId: 'new-request-completed', status: 'COMPLETED',
+    })
+    assert.equal(nextResult.body.data.applied, true)
   })
 })

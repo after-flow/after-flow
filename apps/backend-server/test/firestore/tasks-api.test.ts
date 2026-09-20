@@ -9,6 +9,7 @@ import {
   call,
   jsonRequest,
   seedTenantMember,
+  seedHeir,
 } from './helpers/app.js'
 import type { Json, TestAppOptions } from './helpers/app.js'
 import { describeFirestore, firestore, newTenantId } from './helpers/emulator.js'
@@ -93,6 +94,93 @@ async function initialize(app: ReturnType<typeof buildApp>, caseId: string) {
   assert.equal(response.status, 200)
   return response
 }
+
+describeFirestore('Taskの担当者・必要書類・依存関係', () => {
+  const taskInput = { title: '架空の手動Task', stage: 'immediate', category: '手動' }
+
+  it('担当者・書類要求・先行Taskを保存し、先行Taskが完了するまで着手を拒否する', async () => {
+    const { tenantId, app, caseId } = await setup()
+    await seedHeir(tenantId, caseId, 'person-assignee')
+    const first = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', taskInput))
+    const firstId = first.body.data.id as string
+    const created = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', {
+      ...taskInput, assigneeId: 'person-assignee', dependencyTaskIds: [firstId],
+      requiredDocuments: [{ id: 'request-a', label: '架空の証明書', documentId: null }],
+    }))
+    assert.equal(created.status, 201, JSON.stringify(created.body))
+    const task = created.body.data
+    assert.equal(task.assigneeId, 'person-assignee')
+    assert.deepEqual(task.dependencyTaskIds, [firstId])
+    assert.equal(task.requiredDocuments[0].source, 'MANUAL')
+    assert.ok(task.blockedActions.some((action: Json) => action.action === 'start' && action.reason === 'DEPENDENCY_NOT_COMPLETED'))
+    const blocked = await call(app, `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'start', expectedVersion: 1 }))
+    assert.equal(blocked.status, 409)
+    await call(app, `/cases/${caseId}/tasks/${firstId}/commands`,
+      jsonRequest('POST', { command: 'complete', expectedVersion: 1 }))
+    const started = await call(app, `/cases/${caseId}/tasks/${task.id}/commands`,
+      jsonRequest('POST', { command: 'start', expectedVersion: 1 }))
+    assert.equal(started.status, 200, JSON.stringify(started.body))
+    const updated = await call(app, `/cases/${caseId}/tasks/${task.id}`, jsonRequest('PATCH', {
+      expectedVersion: started.body.data.version, assigneeId: null, dependencyTaskIds: [], requiredDocuments: [],
+    }))
+    assert.equal(updated.status, 200)
+    assert.equal(updated.body.data.assigneeId, null)
+    assert.deepEqual(updated.body.data.requiredDocuments, [])
+  })
+
+  it('間接的な循環と並行する相互依存を拒否する', async () => {
+    const { app, caseId } = await setup()
+    const a = (await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', taskInput))).body.data
+    const b = (await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', taskInput))).body.data
+    const responses = await Promise.all([
+      call(app, `/cases/${caseId}/tasks/${a.id}`, jsonRequest('PATCH', { expectedVersion: 1, dependencyTaskIds: [b.id] })),
+      call(app, `/cases/${caseId}/tasks/${b.id}`, jsonRequest('PATCH', { expectedVersion: 1, dependencyTaskIds: [a.id] })),
+    ])
+    assert.deepEqual(responses.map(r => r.status).sort(), [200, 409])
+    assert.equal(responses.find(r => r.status === 409)!.body.error.details.reason, 'DEPENDENCY_CYCLE')
+  })
+
+  it('別Caseの担当者・Task・書類およびsource偽装を拒否する', async () => {
+    const { tenantId, app, caseId } = await setup()
+    const other = await call(app, '/cases', jsonRequest('POST', caseBody))
+    const otherId = other.body.data.id as string
+    await seedHeir(tenantId, otherId, 'other-person')
+    const task = await call(app, `/cases/${otherId}/tasks`, jsonRequest('POST', taskInput))
+    for (const extra of [
+      { assigneeId: 'other-person' },
+      { dependencyTaskIds: [task.body.data.id] },
+      { requiredDocuments: [{ id: 'doc', label: '書類', documentId: 'other-document' }] },
+    ]) {
+      const response = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { ...taskInput, ...extra }))
+      assert.equal(response.status, 404)
+    }
+    const forged = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', {
+      ...taskInput, requiredDocuments: [{ id: 'doc', label: '書類', documentId: null, source: 'AI' }],
+    }))
+    assert.equal(forged.status, 400)
+  })
+
+  it('201件の期限を再評価し、再送で版を余分に増やさない', async () => {
+    const { tenantId, app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
+    await initialize(app, caseId)
+    const deadlines = firestore().collection(`tenants/${tenantId}/cases/${caseId}/deadlines`)
+    const original = (await deadlines.get()).docs[0]!.data()
+    const batch = firestore().batch()
+    for (let index = 0; index < 200; index++) {
+      const id = `extra-deadline-${index}`
+      batch.create(deadlines.doc(id), { ...original, id })
+    }
+    await batch.commit()
+    await firestore().doc(`tenants/${tenantId}/cases/${caseId}`).update({ knownAt: '2026-05-01' })
+    const response = await call(app, `/cases/${caseId}/deadlines/reevaluate`, jsonRequest('POST', {}))
+    assert.equal(response.status, 200)
+    assert.equal(response.body.data.updated.length, 201)
+    const next = await call(app, `/cases/${caseId}/deadlines/reevaluate`, jsonRequest('POST', {}))
+    assert.deepEqual(next.body.data.updated, [])
+    assert.ok((await deadlines.get()).docs.every(doc => doc.get('version') === 2))
+  })
+})
 
 async function findTask(
   app: ReturnType<typeof buildApp>,

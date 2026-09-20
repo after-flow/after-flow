@@ -22,6 +22,9 @@ import { CaseOverviewService } from '../../../src/application/overview/overview-
 import { AgentResultIntake } from '../../../src/application/chat/result-intake.js'
 import { ProposalService } from '../../../src/application/proposal/proposal-service.js'
 import { taskProposalApplier } from '../../../src/application/proposal/task-applier.js'
+import { entityProposalAppliers } from '../../../src/application/proposal/entity-appliers.js'
+import { taskActionProposalAppliers } from '../../../src/application/proposal/task-action-appliers.js'
+import type { ProposalApplier } from '../../../src/application/proposal/proposal-service.js'
 import { TaskService } from '../../../src/application/task/task-service.js'
 import { PLACEHOLDER_RULE_CATALOG } from '../../../src/domain/task/rule-catalog.js'
 import type { RuleCatalog } from '../../../src/domain/task/rule-engine.js'
@@ -42,6 +45,7 @@ import { readRepository, unitOfWork, workContext } from './emulator.js'
  * ここでは認証より後ろ、認可・同意・業務処理の経路を見る。
  */
 export interface TestAppOptions {
+  proposalAppliers?: ProposalApplier[]
   catalog?: ConsentCatalog
   /** false にすると必須同意の検査を外す。既定は本番と同じく有効。 */
   enforceConsent?: boolean
@@ -101,7 +105,7 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       options.decisions ?? new StoredInheritanceDecisionReader(readRepository()),
     ),
     agentRunService,
-    proposalService: new ProposalService(access, readRepository(), unitOfWork(), [taskProposalApplier]),
+    proposalService: new ProposalService(access, readRepository(), unitOfWork(), options.proposalAppliers ?? [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers]),
     decisionService: new InheritanceDecisionService(access, readRepository(), unitOfWork()),
     messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService),
     overviewService: new CaseOverviewService(

@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { Person } from '../../domain/person/person.js'
+import type { EntityBase } from '../../domain/shared/entity.js'
+import type { DocumentEntity } from '../../domain/document/document.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import type {
   DeadlineEntity,
@@ -35,7 +38,13 @@ export const UNDECIDED_INHERITANCE: InheritanceDecisionReader = {
   isConfirmed: async () => false,
 }
 
-export interface CreateTaskInput {
+interface TaskReferencesInput {
+  assigneeId?: string | null
+  dependencyTaskIds?: string[]
+  requiredDocuments?: { id: string; label: string; documentId: string | null }[]
+}
+
+export interface CreateTaskInput extends TaskReferencesInput {
   title: string
   summary: string
   stage: FlowStageId
@@ -45,7 +54,7 @@ export interface CreateTaskInput {
   assetDisposal?: boolean
 }
 
-export interface UpdateTaskInput {
+export interface UpdateTaskInput extends TaskReferencesInput {
   title?: string
   summary?: string
   submitTo?: string | null
@@ -79,6 +88,7 @@ export type TaskBlockedReason =
   | 'EVIDENCE_REQUIRED'
   | 'INHERITANCE_DECISION_REQUIRED'
   | 'INSUFFICIENT_ROLE'
+  | 'DEPENDENCY_NOT_COMPLETED'
 
 export interface TaskView {
   id: string
@@ -89,6 +99,9 @@ export interface TaskView {
   stage: FlowStageId
   category: string
   submitTo: string | null
+  assigneeId: string | null
+  dependencyTaskIds: string[]
+  escalation: NonNullable<TaskEntity['escalation']> | null
   source: TaskEntity['source']
   evidenceRequired: boolean
   assetDisposal: boolean
@@ -153,9 +166,8 @@ export class TaskService {
     meta: CommandMeta,
   ): Promise<{ created: string[] }> {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
-    const created: string[] = []
-
-    await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
+    const created = await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
+      const created: string[] = []
       const caseEntity = await tx.require<CaseEntity>({
         collection: collections.cases,
         caseId: null,
@@ -205,6 +217,7 @@ export class TaskService {
           detail: { count: created.length, placeholderRules: this.catalog.placeholder },
         })
       }
+      return created
     })
 
     return { created }
@@ -260,45 +273,51 @@ export class TaskService {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
     const updated: string[] = []
 
-    const page = await this.read.list<DeadlineEntity>(user.tenantId, collections.deadlines, caseId, {
-      limit: 200,
-    })
-
-    await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
-      const caseEntity = await tx.require<CaseEntity>({
-        collection: collections.cases,
-        caseId: null,
-        id: caseId,
+    let cursor: string | undefined
+    do {
+      const page = await this.read.list<DeadlineEntity>(user.tenantId, collections.deadlines, caseId, {
+        limit: 100, cursor, orderBy: { field: 'createdAt', direction: 'asc' },
       })
-      const dates: BasisDates = { dateOfDeath: caseEntity.dateOfDeath, knownAt: caseEntity.knownAt }
-
-      for (const stored of page.items) {
-        const rule = this.catalog.deadlineRules.find((candidate) => candidate.id === stored.ruleId)
-        if (!rule) continue
-        const computed = computeDeadline(rule, dates)
-        if (computed.dueDate === stored.dueDate && computed.startDate === stored.startDate) continue
-
-        const current = await tx.require<DeadlineEntity>(deadlineLocation(caseId, stored.id))
-        tx.update<DeadlineEntity>(deadlineLocation(caseId, stored.id), current.version, {
-          startDate: computed.startDate,
-          dueDate: computed.dueDate,
-          basisLabel: computed.basisLabel,
-          unresolvedReason: computed.unresolvedReason,
-          ruleVersion: rule.version,
-          confirmation: rule.reviewed ? 'CONFIRMED' : 'UNCONFIRMED',
+      const changed = await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
+        const changed: string[] = []
+        const caseEntity = await tx.require<CaseEntity>({
+          collection: collections.cases,
+          caseId: null,
+          id: caseId,
         })
-        updated.push(stored.id)
-      }
+        const dates: BasisDates = { dateOfDeath: caseEntity.dateOfDeath, knownAt: caseEntity.knownAt }
 
-      if (updated.length > 0) {
-        tx.audit({
-          caseId,
-          type: 'deadline.reevaluated',
-          target: { collection: collections.deadlines.name, id: caseId, version: null },
-          detail: { count: updated.length },
-        })
-      }
-    })
+        for (const stored of page.items) {
+          const rule = this.catalog.deadlineRules.find((candidate) => candidate.id === stored.ruleId)
+          if (!rule) continue
+          const computed = computeDeadline(rule, dates)
+          const current = await tx.require<DeadlineEntity>(deadlineLocation(caseId, stored.id))
+          if (computed.dueDate === current.dueDate && computed.startDate === current.startDate
+            && rule.version === current.ruleVersion && current.confirmation === (rule.reviewed ? 'CONFIRMED' : 'UNCONFIRMED')) continue
+          tx.update<DeadlineEntity>(deadlineLocation(caseId, stored.id), current.version, {
+            startDate: computed.startDate,
+            dueDate: computed.dueDate,
+            basisLabel: computed.basisLabel,
+            unresolvedReason: computed.unresolvedReason,
+            ruleVersion: rule.version,
+            confirmation: rule.reviewed ? 'CONFIRMED' : 'UNCONFIRMED',
+          })
+          changed.push(stored.id)
+        }
+
+        if (changed.length > 0) {
+          tx.audit({
+            caseId,
+            type: 'deadline.reevaluated',
+            target: { collection: collections.deadlines.name, id: caseId, version: null },
+            detail: { count: changed.length },
+          })
+        }
+        return changed
+      })
+      updated.push(...changed)
+      cursor = page.nextCursor
+    } while (cursor)
 
     return { updated }
   }
@@ -313,6 +332,7 @@ export class TaskService {
     const taskId = randomUUID()
 
     const storedId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
+      await this.validateReferences(tx, caseId, taskId, input)
       tx.create<TaskEntity>(taskLocation(caseId, taskId), {
         id: taskId,
         title: input.title,
@@ -321,10 +341,11 @@ export class TaskService {
         stage: input.stage,
         category: input.category,
         submitTo: input.submitTo ?? null,
-        assigneeId: null,
+        assigneeId: input.assigneeId ?? null,
+        dependencyTaskIds: input.dependencyTaskIds ?? [],
         source: 'MANUAL',
         procedureId: null,
-        requiredDocuments: [],
+        requiredDocuments: (input.requiredDocuments ?? []).map(ref => ({ ...ref, source: 'MANUAL' })),
         evidenceRequired: input.evidenceRequired ?? false,
         assetDisposal: input.assetDisposal ?? false,
         completionReportedBy: null,
@@ -376,7 +397,17 @@ export class TaskService {
 
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const current = await tx.require<TaskEntity>(taskLocation(caseId, taskId))
+      if (current.version !== expectedVersion) throw errors.conflict()
+      await this.validateReferences(tx, caseId, taskId, input)
       const patch: Partial<TaskEntity> = {}
+      if (input.assigneeId !== undefined) patch.assigneeId = input.assigneeId
+      if (input.dependencyTaskIds !== undefined) patch.dependencyTaskIds = input.dependencyTaskIds
+      if (input.requiredDocuments !== undefined) {
+        patch.requiredDocuments = input.requiredDocuments.map(ref => ({ ...ref, source: 'MANUAL' }))
+      }
+      if (current.status === 'COMPLETED' && (input.dependencyTaskIds || input.requiredDocuments)) {
+        throw errors.preconditionFailed({ details: { reason: 'REOPEN_REQUIRED' } })
+      }
       if (input.title !== undefined && input.title !== current.title) patch.title = input.title
       if (input.summary !== undefined && input.summary !== current.summary) patch.summary = input.summary
       if (input.submitTo !== undefined && (input.submitTo ?? null) !== current.submitTo) {
@@ -415,6 +446,15 @@ export class TaskService {
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const current = await tx.require<TaskEntity>(taskLocation(caseId, taskId))
 
+      if (this.requiresDependencies(command)) {
+        for (const id of current.dependencyTaskIds ?? []) {
+          const dependency = await tx.require<TaskEntity>(taskLocation(caseId, id))
+          if (dependency.status !== 'COMPLETED') {
+            throw errors.preconditionFailed({ details: { reason: 'DEPENDENCY_NOT_COMPLETED', taskId: id } })
+          }
+        }
+      }
+
       if (!isAllowedTransition(command, current.status)) {
         throw errors.preconditionFailed({
           message: 'いまの状態ではこの操作を実行できません。',
@@ -423,7 +463,7 @@ export class TaskService {
       }
 
       if (command === 'complete') {
-        await this.assertCompletable(user, caseId, current)
+        await this.assertCompletable(user, caseId, current, tx)
       }
       if (command !== 'complete' && current.assetDisposal) {
         // 放棄前ロック。財産処分に相当する手続きは着手も止める。
@@ -471,17 +511,23 @@ export class TaskService {
     user: AuthenticatedUser,
     caseId: string,
     task: TaskEntity,
+    tx: Tx,
   ): Promise<void> {
     if (task.assetDisposal) await this.assertInheritanceDecided(user, caseId)
     if (!task.evidenceRequired) return
 
     const evidences = await this.evidencesOf(user, caseId, task.id)
-    if (evidences.length === 0) {
-      throw errors.preconditionFailed({
-        message: 'この手続きの完了には根拠の登録が必要です。',
-        details: { reason: 'EVIDENCE_REQUIRED', taskId: task.id },
-      })
+    for (const evidence of evidences) {
+      const current = await tx.get<EvidenceEntity>(evidenceLocation(caseId, evidence.id))
+      if (!current || current.taskId !== task.id) continue
+      if (!current.documentId) return
+      const document = await tx.get<DocumentEntity>({ collection: collections.documents, caseId, id: current.documentId })
+      if (document && !document.archived && document.storageState === 'STORED') return
     }
+    throw errors.preconditionFailed({
+      message: 'この手続きの完了には利用可能な根拠の登録が必要です。',
+      details: { reason: 'EVIDENCE_REQUIRED', taskId: task.id },
+    })
   }
 
   private async assertInheritanceDecided(user: AuthenticatedUser, caseId: string): Promise<void> {
@@ -505,6 +551,7 @@ export class TaskService {
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       // 対象 Task が同じ Case にあることを確認する。
       await tx.require<TaskEntity>(taskLocation(caseId, taskId))
+      if (input.documentId) await this.assertDocument(tx, caseId, input.documentId)
       tx.create<EvidenceEntity>(evidenceLocation(caseId, evidenceId), {
         id: evidenceId,
         taskId,
@@ -571,7 +618,7 @@ export class TaskService {
     entity: TaskEntity,
   ): Promise<TaskView> {
     const today = todayInRuleTimezone()
-    const [evidences, deadlines, decided] = await Promise.all([
+    const [evidences, deadlines, decided, dependencies] = await Promise.all([
       this.evidencesOf(user, caseId, entity.id),
       this.read.list<DeadlineEntity>(user.tenantId, collections.deadlines, caseId, {
         limit: 10,
@@ -579,8 +626,16 @@ export class TaskService {
         orderBy: { field: 'createdAt', direction: 'asc' },
       }),
       this.decisions.isConfirmed(user.tenantId, caseId),
+      Promise.all((entity.dependencyTaskIds ?? []).map(id => this.read.get<TaskEntity>(user.tenantId, taskLocation(caseId, id)))),
     ])
 
+    const usableEvidence = (await Promise.all(evidences.map(async evidence => {
+      if (!evidence.documentId) return true
+      const document = await this.read.get<DocumentEntity>(user.tenantId, {
+        collection: collections.documents, caseId, id: evidence.documentId,
+      })
+      return document !== null && !document.archived && document.storageState === 'STORED'
+    }))).some(Boolean)
     const allowedActions: TaskCommand[] = []
     const blockedActions: { action: TaskCommand; reason: TaskBlockedReason }[] = []
 
@@ -593,11 +648,15 @@ export class TaskService {
         blockedActions.push({ action: command, reason: 'INSUFFICIENT_ROLE' })
         continue
       }
+      if (this.requiresDependencies(command) && dependencies.some(task => task?.status !== 'COMPLETED')) {
+        blockedActions.push({ action: command, reason: 'DEPENDENCY_NOT_COMPLETED' })
+        continue
+      }
       if (entity.assetDisposal && !decided) {
         blockedActions.push({ action: command, reason: 'INHERITANCE_DECISION_REQUIRED' })
         continue
       }
-      if (command === 'complete' && entity.evidenceRequired && evidences.length === 0) {
+      if (command === 'complete' && entity.evidenceRequired && !usableEvidence) {
         blockedActions.push({ action: command, reason: 'EVIDENCE_REQUIRED' })
         continue
       }
@@ -615,6 +674,9 @@ export class TaskService {
       stage: entity.stage,
       category: entity.category,
       submitTo: entity.submitTo,
+      assigneeId: entity.assigneeId,
+      dependencyTaskIds: entity.dependencyTaskIds ?? [],
+      escalation: entity.escalation ?? null,
       source: entity.source,
       evidenceRequired: entity.evidenceRequired,
       assetDisposal: entity.assetDisposal,
@@ -634,6 +696,44 @@ export class TaskService {
       version: entity.version,
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
+    }
+  }
+
+  private requiresDependencies(command: TaskCommand): boolean {
+    return ['start', 'markReady', 'reportSubmission', 'awaitExternal', 'complete'].includes(command)
+  }
+
+  private async assertDocument(tx: Tx, caseId: string, id: string): Promise<void> {
+    const document = await tx.require<DocumentEntity>({ collection: collections.documents, caseId, id })
+    if (document.archived || document.storageState !== 'STORED') {
+      throw errors.preconditionFailed({ details: { reason: 'DOCUMENT_UNAVAILABLE' } })
+    }
+  }
+
+  private async validateReferences(tx: Tx, caseId: string, taskId: string, input: TaskReferencesInput): Promise<void> {
+    if (input.assigneeId) {
+      const person = await tx.require<Person & EntityBase>({ collection: collections.persons, caseId, id: input.assigneeId })
+      if (person.excludedAt) throw errors.preconditionFailed({ details: { reason: 'ASSIGNEE_EXCLUDED' } })
+    }
+    if (input.requiredDocuments) {
+      if (new Set(input.requiredDocuments.map(ref => ref.id)).size !== input.requiredDocuments.length) {
+        throw errors.validationFailed({ details: { reason: 'DUPLICATE_DOCUMENT_REQUIREMENT' } })
+      }
+      for (const ref of input.requiredDocuments) if (ref.documentId) await this.assertDocument(tx, caseId, ref.documentId)
+    }
+    if (input.dependencyTaskIds) {
+      if (new Set(input.dependencyTaskIds).size !== input.dependencyTaskIds.length) throw errors.validationFailed()
+      const visited = new Set<string>()
+      const pending = [...input.dependencyTaskIds]
+      while (pending.length) {
+        const id = pending.pop()!
+        if (id === taskId) throw errors.preconditionFailed({ details: { reason: 'DEPENDENCY_CYCLE' } })
+        if (visited.has(id)) continue
+        visited.add(id)
+        if (visited.size > 200) throw errors.preconditionFailed({ details: { reason: 'DEPENDENCY_GRAPH_TOO_LARGE' } })
+        const dependency = await tx.require<TaskEntity>(taskLocation(caseId, id))
+        pending.push(...(dependency.dependencyTaskIds ?? []))
+      }
     }
   }
 }

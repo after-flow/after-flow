@@ -3,7 +3,7 @@ import { it } from 'node:test'
 import { INFRASTRUCTURE_COLLECTIONS, collections } from '../../src/domain/shared/collections.js'
 import type { CaseMember } from '../../src/domain/authorization/case-role.js'
 import { seedHeir, agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
-import type { Json } from './helpers/app.js'
+import type { Json, TestAppOptions } from './helpers/app.js'
 import { describeFirestore, firestore, newTenantId, unitOfWork, workContext } from './helpers/emulator.js'
 
 const caseBody = {
@@ -27,11 +27,11 @@ function nextKey(prefix: string): string {
   return `${prefix}-${String(keyCounter).padStart(8, '0')}`
 }
 
-async function setup(options: { personId?: string | null } = {}) {
+async function setup(options: TestAppOptions & { personId?: string | null } = {}) {
   const tenantId = newTenantId()
   const userId = 'user-owner'
   await seedTenantMember(tenantId, userId)
-  const app = buildApp(tenantId, userId)
+  const app = buildApp(tenantId, userId, options)
   await agreeRequiredConsents(app)
   const created = await call(app, '/cases', jsonRequest('POST', caseBody, nextKey('idem-case')))
   const caseId = created.body.data.id as string
@@ -82,6 +82,215 @@ async function requestApproval(
   assert.equal(response.status, 201, JSON.stringify(response.body))
   return response.body.data
 }
+
+describeFirestore('Entity別Proposal適用', () => {
+  const cases = [
+    { kind: 'ASSET_PROPOSAL', collection: 'assets', fields: {
+      name: '架空財産', kind: 'BANK', institution: '架空銀行', amount: 1234, taxAttention: false, note: null,
+    } },
+    { kind: 'LIABILITY_PROPOSAL', collection: 'liabilities', fields: {
+      name: '架空債務', kind: 'LOAN', creditor: '架空金融', amount: null, note: '未調査',
+    } },
+    { kind: 'CONTRACT_PROPOSAL', collection: 'contracts', fields: {
+      name: '架空契約', kind: 'UTILITY', provider: '架空電気', note: null,
+    } },
+    { kind: 'PERSON_PROPOSAL', collection: 'persons', fields: {
+      name: '架空関係者', nameKana: null, relationshipLabel: '家族', role: 'HEIR_CANDIDATE',
+      isHeir: true, dateOfBirth: null, specialCircumstance: null, contact: null, note: null,
+    } },
+  ]
+  async function submit(app: ReturnType<typeof buildApp>, caseId: string, kind: string, payload: unknown) {
+    const response = await call(app, `/cases/${caseId}/proposals`, jsonRequest('POST', { kind, title: '候補の確認', payload }))
+    assert.equal(response.status, 201, JSON.stringify(response.body))
+    return response.body.data
+  }
+  async function approve(app: ReturnType<typeof buildApp>, caseId: string, approval: Json) {
+    return call(app, `/cases/${caseId}/approvals/${approval.id}/approve`, jsonRequest('POST', {
+      expectedVersion: approval.version, proposalVersion: approval.proposalVersion, payloadHash: approval.payloadHash,
+    }))
+  }
+  for (const fixture of cases) {
+    it(`${fixture.kind}: 承認した全フィールドを同じ内容で作成・更新する`, async () => {
+      const { tenantId, app, caseId } = await setup()
+      const proposal = await submit(app, caseId, fixture.kind, { operation: 'CREATE', fields: fixture.fields })
+      const docs = firestore().collection(`tenants/${tenantId}/cases/${caseId}/${fixture.collection}`)
+      assert.equal((await docs.get()).size, 0, '提出は正式登録ではない')
+      const approval = await requestApproval(app, caseId, proposal)
+      const response = await approve(app, caseId, approval)
+      assert.equal(response.status, 200, JSON.stringify(response.body))
+      assert.equal(response.body.data.applicationStatus, 'APPLIED')
+      const document = (await docs.get()).docs[0]!
+      for (const [key, value] of Object.entries(fixture.fields)) assert.deepEqual(document.get(key), value)
+      if (fixture.collection === 'assets' || fixture.collection === 'liabilities') {
+        assert.equal(document.get('confirmation.state'), 'UNCONFIRMED')
+      }
+      if (fixture.collection === 'contracts') {
+        assert.equal(document.get('policyState.policy'), 'UNDECIDED')
+        assert.equal(document.get('progressState.progress'), 'NOT_STARTED')
+      }
+      const nextFields = { ...fixture.fields, name: '承認された訂正名' }
+      const revision = await submit(app, caseId, fixture.kind, {
+        operation: 'UPDATE', targetId: document.id, expectedVersion: 1, fields: nextFields,
+      })
+      const nextApproval = await requestApproval(app, caseId, revision)
+      assert.equal((await approve(app, caseId, nextApproval)).status, 200)
+      const updated = await document.ref.get()
+      for (const [key, value] of Object.entries(nextFields)) assert.deepEqual(updated.get(key), value)
+      assert.equal(updated.get('version'), 2)
+    })
+
+    it(`${fixture.kind}: 承認待ちに対象が更新されたら上書きしない`, async () => {
+      const { tenantId, app, caseId } = await setup()
+      const first = await submit(app, caseId, fixture.kind, { operation: 'CREATE', fields: fixture.fields })
+      await approve(app, caseId, await requestApproval(app, caseId, first))
+      const document = (await firestore().collection(`tenants/${tenantId}/cases/${caseId}/${fixture.collection}`).get()).docs[0]!
+      const next = await submit(app, caseId, fixture.kind, {
+        operation: 'UPDATE', targetId: document.id, expectedVersion: 1,
+        fields: { ...fixture.fields, name: '古い提案の名称' },
+      })
+      const approval = await requestApproval(app, caseId, next)
+      await document.ref.update({ version: 2, name: '利用者の新しい名称' })
+      const response = await approve(app, caseId, approval)
+      assert.equal(response.status, 409)
+      assert.equal(response.body.error.details.reason, 'TARGET_VERSION_CHANGED')
+      assert.equal((await document.ref.get()).get('name'), '利用者の新しい名称')
+      assert.equal((await call(app, `/cases/${caseId}/proposals/${next.id}`)).body.data.status, 'STALE')
+      assert.equal((await call(app, `/cases/${caseId}/approvals/${approval.id}`)).body.data.applicationStatus, 'NOT_APPLIED')
+    })
+  }
+
+  it('任意のsource・確認済み状態・契約方針の混入を受付時に拒否する', async () => {
+    const { app, caseId } = await setup()
+    const fixture = cases[0]!
+    for (const extra of [{ source: 'AI' }, { agentRunId: 'forged-run' }]) {
+      const result = await call(app, `/cases/${caseId}/proposals`, jsonRequest('POST', {
+        kind: fixture.kind, title: '偽装', payload: { operation: 'CREATE', fields: fixture.fields }, ...extra,
+      }))
+      assert.equal(result.status, 400)
+    }
+    const result = await call(app, `/cases/${caseId}/proposals`, jsonRequest('POST', {
+      kind: fixture.kind, title: '偽装', payload: { operation: 'CREATE', fields: { ...fixture.fields, confirmation: 'CONFIRMED' } },
+    }))
+    assert.equal(result.status, 400)
+    const contract = cases[2]!
+    const policy = await call(app, `/cases/${caseId}/proposals`, jsonRequest('POST', {
+      kind: contract.kind, title: '勝手な解約', payload: { operation: 'CREATE', fields: { ...contract.fields, policy: 'CANCEL' } },
+    }))
+    assert.equal(policy.status, 400)
+  })
+
+  it('保存済みAI提案fixtureの適用でも財産・債務を確認済みにしない（提出認証は#41）', async () => {
+    const { tenantId, app, caseId } = await setup()
+    for (const fixture of cases.slice(0, 2)) {
+      const proposal = await submit(app, caseId, fixture.kind, { operation: 'CREATE', fields: fixture.fields })
+      // 内部API接続の成功を模す試験ではない。Applierへの保存済み入力fixture。
+      await firestore().doc(`tenants/${tenantId}/cases/${caseId}/proposals/${proposal.id}`)
+        .update({ source: 'AI', agentRunId: 'fixture-run' })
+      assert.equal((await approve(app, caseId, await requestApproval(app, caseId, proposal))).status, 200)
+      const stored = (await firestore().collection(`tenants/${tenantId}/cases/${caseId}/${fixture.collection}`).get()).docs[0]!
+      assert.equal(stored.get('provenance.source'), 'AI')
+      assert.equal(stored.get('provenance.agentRunId'), 'fixture-run')
+      assert.equal(stored.get('provenance.proposalId'), proposal.id)
+      assert.equal(stored.get('confirmation.state'), 'UNCONFIRMED')
+    }
+  })
+})
+
+describeFirestore('書類要求・根拠・専門家引継ぎのProposal', () => {
+  async function prepare() {
+    const env = await setup()
+    const task = await call(env.app, `/cases/${env.caseId}/tasks`, jsonRequest('POST', {
+      title: '架空手続き', category: '手動', stage: 'immediate', evidenceRequired: true,
+    }))
+    const form = new FormData()
+    form.append('file', new File(['%PDF-1.4\n% synthetic only\n%%EOF'], 'synthetic.pdf', { type: 'application/pdf' }))
+    form.append('kind', 'OTHER')
+    const doc = await call(env.app, `/cases/${env.caseId}/documents`, {
+      method: 'POST', body: form, headers: { 'Idempotency-Key': nextKey('synthetic-doc') },
+    })
+    assert.equal(doc.status, 201, JSON.stringify(doc.body))
+    return { ...env, taskId: task.body.data.id as string, doc: { id: doc.body.data.id, version: doc.body.data.version } }
+  }
+  async function propose(app: ReturnType<typeof buildApp>, caseId: string, kind: string, payload: unknown) {
+    const proposal = await call(app, `/cases/${caseId}/proposals`, jsonRequest('POST', { kind, title: '架空の提案', payload }))
+    assert.equal(proposal.status, 201, JSON.stringify(proposal.body))
+    return requestApproval(app, caseId, proposal.body.data)
+  }
+  async function approve(app: ReturnType<typeof buildApp>, caseId: string, approval: Json) {
+    return call(app, `/cases/${caseId}/approvals/${approval.id}/approve`, jsonRequest('POST', {
+      expectedVersion: approval.version, proposalVersion: approval.proposalVersion, payloadHash: approval.payloadHash,
+    }))
+  }
+
+  it('承認した書類要求を追加し、書類待ちにする', async () => {
+    const { app, caseId, taskId } = await prepare()
+    await call(app, `/cases/${caseId}/tasks/${taskId}/commands`, jsonRequest('POST', { command: 'start', expectedVersion: 1 }))
+    const documents = [{ id: 'required-a', label: '確認した書類名' }]
+    const approval = await propose(app, caseId, 'DOCUMENT_REQUEST', { taskId, expectedTaskVersion: 2, documents })
+    assert.equal((await call(app, `/cases/${caseId}/tasks/${taskId}`)).body.data.requiredDocuments.length, 0)
+    assert.equal((await approve(app, caseId, approval)).status, 200)
+    const task = (await call(app, `/cases/${caseId}/tasks/${taskId}`)).body.data
+    assert.equal(task.status, 'WAITING_DOCUMENTS')
+    assert.deepEqual(task.requiredDocuments, [{ ...documents[0], documentId: null, source: 'MANUAL' }])
+  })
+
+  it('根拠の登録は承認後だけに行い、Taskを自動完了しない', async () => {
+    const { tenantId, app, caseId, taskId, doc } = await prepare()
+    const approval = await propose(app, caseId, 'EVIDENCE_PROPOSAL', {
+      taskId, expectedTaskVersion: 1, label: '確認した根拠', kind: 'NOTICE', note: '本人確認', document: doc,
+    })
+    assert.equal((await call(app, `/cases/${caseId}/tasks/${taskId}`)).body.data.evidences.length, 0)
+    assert.equal((await approve(app, caseId, approval)).status, 200)
+    const task = (await call(app, `/cases/${caseId}/tasks/${taskId}`)).body.data
+    assert.equal(task.status, 'NOT_STARTED')
+    assert.equal(task.evidences.length, 1)
+    assert.equal(task.evidences[0].label, '確認した根拠')
+    assert.equal(task.evidences[0].note, '本人確認')
+    await firestore().doc(`tenants/${tenantId}/cases/${caseId}/documents/${doc.id}`).update({ archived: true })
+    const unavailable = await call(app, `/cases/${caseId}/tasks/${taskId}`)
+    assert.equal(unavailable.body.data.allowedActions.includes('complete'), false)
+    const complete = await call(app, `/cases/${caseId}/tasks/${taskId}/commands`,
+      jsonRequest('POST', { command: 'complete', expectedVersion: task.version }))
+    assert.equal(complete.status, 409)
+    assert.equal(complete.body.error.details.reason, 'EVIDENCE_REQUIRED')
+  })
+
+  it('引継ぎの理由と資料の版を保存し、外部連絡は行わない', async () => {
+    const { app, caseId, taskId, doc } = await prepare()
+    const approval = await propose(app, caseId, 'ESCALATION_PROPOSAL', {
+      taskId, expectedTaskVersion: 1, reason: '専門家による確認が必要', documents: [doc],
+    })
+    assert.equal((await approve(app, caseId, approval)).status, 200)
+    const task = (await call(app, `/cases/${caseId}/tasks/${taskId}`)).body.data
+    assert.equal(task.status, 'ESCALATED')
+    assert.deepEqual(task.escalation.documents, [doc])
+    assert.equal(task.escalation.reason, '専門家による確認が必要')
+    assert.equal(task.escalation.contacted, false)
+  })
+
+  it('別CaseのTaskと書類、承認待ちに変更・archiveされた資料を拒否する', async () => {
+    const { tenantId, app, caseId, taskId, doc } = await prepare()
+    const other = (await call(app, '/cases', jsonRequest('POST', caseBody))).body.data.id as string
+    const otherTask = (await call(app, `/cases/${other}/tasks`, jsonRequest('POST', {
+      title: '別のTask', category: '手動', stage: 'immediate',
+    }))).body.data.id as string
+    for (const payload of [
+      { taskId: otherTask, document: doc },
+      { taskId, document: { id: 'foreign-document', version: 1 } },
+    ]) {
+      const approval = await propose(app, caseId, 'EVIDENCE_PROPOSAL', {
+        ...payload, expectedTaskVersion: 1, label: '越境を拒否', kind: 'NOTICE', note: null,
+      })
+      assert.equal((await approve(app, caseId, approval)).status, 404)
+    }
+    const approval = await propose(app, caseId, 'EVIDENCE_PROPOSAL', {
+      taskId, expectedTaskVersion: 1, label: '古い資料', kind: 'NOTICE', note: null, document: doc,
+    })
+    await firestore().doc(`tenants/${tenantId}/cases/${caseId}/documents/${doc.id}`).update({ archived: true, version: doc.version + 1 })
+    assert.equal((await approve(app, caseId, approval)).status, 409)
+    assert.equal((await call(app, `/cases/${caseId}/tasks/${taskId}`)).body.data.evidences.length, 0)
+  })
+})
 
 describeFirestore('提案の提出と訂正', () => {
   it('提出した提案は版1で検証済みになる', async () => {
@@ -316,13 +525,13 @@ describeFirestore('承認と反映', () => {
   })
 
   it('反映できない種類は理由付きで拒否する', async () => {
-    const { app, caseId } = await setup()
+    const { app, caseId } = await setup({ proposalAppliers: [] })
     const submitted = await call(
       app,
       `/cases/${caseId}/proposals`,
       jsonRequest(
         'POST',
-        { kind: 'ASSET_PROPOSAL', title: '財産の登録', payload: { name: '架空銀行' } },
+        { kind: 'DOCUMENT_REQUEST', title: '未接続の書類要求', payload: { name: '架空書類' } },
         nextKey('idem-proposal'),
       ),
     )
