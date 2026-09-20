@@ -46,10 +46,10 @@ function post(body: unknown, idempotencyKey: string): RequestInit {
   }
 }
 
-function patch(body: unknown): RequestInit {
+function patch(body: unknown, key = `patch-${Math.random()}`): RequestInit {
   return {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
     body: JSON.stringify(body),
   }
 }
