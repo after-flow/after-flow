@@ -272,10 +272,10 @@ aftercare/
 - 同一キー・同一payloadは既存結果を返し、同一キー・異なるpayloadは409。キーのscopeはtenant/actor/operationを含む。
 - 日時はAPI上でISO 8601。日付だけの期限は`YYYY-MM-DD`と管轄タイムゾーンを別管理する。
 - 成功は`{ data, meta: { requestId, nextCursor? } }`。失敗は`{ error: { code, message, retryable }, meta: { requestId } }`。
-- 400: 入力不正、401: 未認証、403/404: アクセス不可、409: 競合/無効遷移、413: サイズ超過、422: 業務条件不成立、429: 制限、503: 一時利用不可。
-- AI処理開始は202と`runId`、`status: queued`、状態取得URLを返す。受付を処理完了と表示しない。
+- 400: 入力不正、401: 未認証、403: role不足/同意不足、404: membershipなし/参照なし、409: 競合/業務条件不成立、413: サイズ超過、428: 必須条件欠落、429: 制限、501: 機能未接続、503: 一時利用不可。実装のコードとHTTP対応は `shared/app-error.ts` に集約する。
+- AI処理開始は202を返す。AgentRunは `id` と `status: QUEUED`、チャットは `{ message, runId, runAccepted, reason }`、案内は `agentRunId` を含むリソースを返す。受付を処理完了と表示しない。
 - サーバーが決める値（`status`, `confirmation`, `policy`, `progress`, `source`, `agentRunId`, `tenantId`, `caseId` 等）を更新bodyで受け取らない。schemaはstrictで、未知フィールドは400。
-- 既存フロントの呼び出しと公開APIの対応、移行方針、受入シナリオは [docs/api/frontend-backend-mapping.md](api/frontend-backend-mapping.md) を正とする。
+- 既存フロントの呼び出しと公開APIの対応、移行方針、受入シナリオは [対応表](api/frontend-backend-mapping.md) を参照する。実装済みHTTP契約の正本は route spec とそこから生成する [OpenAPI](api/public-openapi.yaml)。将来API一覧とは区別する。
 
 ### 6.2 公開API一覧
 
@@ -391,7 +391,7 @@ ContextとArtifactの応答には`caseVersion / contextSnapshotId / artifactVers
 2. **Command Handler**はUser/System/AI Proposalからの全業務変更を検証して確定する唯一の論理経路。
 3. **Firestore Transaction**は実際の並行更新を制御する。Backend ServerやAI Serverが複数インスタンスになっても、正式変更はBackendの同じ不変条件を通る。
 
-状態変更は`start/complete/confirm/policy/progress/acknowledge/exclude/archive`のような明示Commandで受け、PATCHは記述フィールドの訂正だけに限定する。Commandは`expectedVersion`、実行者、時刻、出所（`MANUAL` / `USER_REPORTED` / `AI`）を記録する。
+状態変更は`start/complete/confirm/policy/progress/acknowledge/exclude/archive`のような明示Commandで受け、PATCHは記述フィールドの訂正だけに限定する。版付きCommandは`expectedVersion`を要求し（新規作成・同意・本人の閲覧状態等はroute specに従う）、実行者、時刻、出所（`MANUAL` / `USER_REPORTED` / `AI`）を記録する。
 
 ユーザーの入力や承認をAgentの会話へ迂回させる必要はない。ユーザーの変更はCommand Handlerが直接受け付け、AIの古いContextからの提案をversion検証で拒否する。
 
@@ -443,7 +443,7 @@ Proposal状態は`submitted → validated → awaiting_approval → applied`。�
 
 Approvalは対象Proposal版/Action hash、approver権限、作成/失効時刻、決定時刻を持つ。承認後に送信先や資料が変わった場合は旧承認を流用せず再承認とする。却下した同一Proposalをそのまま再承認させない。
 
-AIの抽出候補（財産・契約・気づき）は正式な資産・債務・契約・給付・事実・法的判断へ自動昇格しない。候補は`source: 'AI'`の未確認情報として保持し、正式化は利用者の確認Commandか承認済みProposalの適用に限る。
+AIの抽出候補（財産・契約・気づき）は正式な資産・債務・契約・給付・事実・法的判断へ自動昇格しない。候補の正式化は承認済みProposalの適用に限る。現在接続されている適用AdapterはTaskのみ。公開APIの手動登録と、未接続の財産・契約AI適用を混同しない。
 
 MVPでは説明付きTask候補の作成など限定した低影響の変更だけ自動適用可。本人意思確定、重要な抽出事実の正式登録、準備資料の確定には人の確認を入れる。外部送信・解約・送金はMVP対象外。
 
@@ -666,7 +666,8 @@ tenants/{tenantId}
     assets/{assetId}                # 確認記録を含む
     liabilities/{liabilityId}
     insights/{insightId}
-      views/{userId}                # 閲覧者ごとの既読/非表示
+    insightViews/{viewId}           # Insight×閲覧者のハッシュID
+    insightResults/{resultKey}      # Run×resultIdの重複受領防止
     decisions/{decisionId}
     proposals/{proposalId}
     approvals/{approvalId}
