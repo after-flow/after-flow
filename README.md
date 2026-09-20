@@ -41,7 +41,7 @@ WEB_PORT=5174 BACKEND_PORT=8082 make up
 `.env` の作成は任意です。必要ならルートの `.env.example` を `.env` にコピーして編集してください。
 環境変数の変更後は `make up` を実行してください。Web、Backend、AIのソースはマウントされ、編集時に自動再読込されます。
 依存パッケージ、TypeScript設定、その他のイメージ内ファイルを変更した場合も `make up` で再ビルドします。
-Dockerfile／Composeはローカル開発用です。本番配信・デプロイ設定は今後追加します。
+`compose.yaml` はローカル開発用です。本番用の独立イメージ・Compose検証・Cloud Runへの配布手順は [CI/CD運用](docs/ci-cd.md) を参照してください。
 
 ## ローカルで起動
 
@@ -126,22 +126,28 @@ VITE_USE_MOCK=false VITE_API_PROXY=http://127.0.0.1:8080 pnpm dev:web
 ```sh
 pnpm typecheck
 pnpm lint                # Lintと依存境界の検証
+pnpm test                # CIポリシー・Frontend・Backend・AIのテスト
 pnpm build
 ```
 
 依存境界の検証は、WebからBackend／AI／内部契約への参照、サービス間の直接importを拒否します。
 既存UIの説明とBackendへの要件は [Web README](apps/web/README.md) を参照してください。
 
-## CI
+## CI/CD
 
-[GitHub Actions](.github/workflows/ci.yml) は `main` 向けPR、`main` へのpush、手動実行で動きます。
+[CI](.github/workflows/ci.yml) は全PR（依存ブランチ向けも含む）、`main` push、merge queue、手動実行が対象です。
 
-- **Quality**: 固定lockfileでインストールし、全workspaceの型・Lint・依存境界・本番ビルドを検証します。本番成果物にモックのService Workerが含まれないことも確認します。
-- **Docker smoke**: 3サービスのhealthyを待ち、Web配信、Backendの公開API、WebのAPIプロキシ、BackendからAIへの内部HTTP接続を確認します。AIのホストポート非公開とWebからのネットワーク分離も検証します。最後にログを表示し、コンテナを終了します。
+- **Quality**: 固定lockfile、型、Lint・依存境界、全workspaceのテスト、本番ビルドとモック除外を検証。
+- **Workflow lint / Dependency audit**: Actions・埋込みshellの検証、high以上の依存脆弱性を検出。週次監査とDependabot更新も実行。
+- **Docker smoke / Production containers**: 開発・本番の3サービス、SPA、API転送、非root起動、AIのポート非公開・ネットワーク分離をHTTPとコンテナ検査で確認。
+- **CI Gate**: 全ジョブ成功を要求する固定名の必須チェック。失敗・キャンセル・skipは通過させません。
 
-Nodeとpnpmのバージョンは `.node-version` と `package.json` を参照します。外部クラウドやLLMの資格情報は不要です。
-初期CIは型・ビルドと疎通の検証です。業務ロジック・契約の自動テストやブラウザーE2Eは、各機能の実装時に追加します。
-Lintの既存警告4件は現状どおり警告として扱います。
+`main` のCI成功後、[Release](.github/workflows/release.yml) がテスト済みイメージを再ビルドせずGHCRへ配布します。
+[Deploy Cloud Run](.github/workflows/deploy.yml) は環境・サービス・成功したCI runを指定して手動実行します。OIDC認証、環境承認、候補revisionの疎通確認、traffic切替と失敗時の復元を行います。
+
+**GitHub Environment・GCP/IAMの初期設定が必要です。** 現在のmainは生存確認APIのみで、認証・永続化・Mastra/Orchの本番稼働を保証するものではありません。
+設定値、必須チェック、リリース、切り戻し、未検証範囲は [CI/CD運用](docs/ci-cd.md) にまとめています。
+Nodeとpnpmは `.node-version` と `package.json` を参照します。CIには外部クラウドやLLMの資格情報は不要です。既存のLint警告は警告のままです。
 
 Docker起動後、同じ疎通チェックをローカルでも実行できます。
 
@@ -152,5 +158,12 @@ make down
 ```
 
 ポートや `COMPOSE_PROJECT_NAME` を変更した場合は、起動とチェックで同じ環境変数を指定してください。
+
+本番イメージの検証（開発用とは別プロジェクト・別イメージタグ）:
+
+```sh
+make production-check
+COMPOSE_FILE=compose.production.yaml docker compose down
+```
 
 導入時の公式資料: [Hono Node.js](https://hono.dev/docs/getting-started/nodejs)、[pnpm workspaces](https://pnpm.io/workspaces)、[Node.js releases](https://nodejs.org/en/about/previous-releases)。

@@ -13,6 +13,7 @@
     "dev:web": "pnpm --filter @aftercare/web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
+    "test": "node --test scripts/*.test.mjs && pnpm -r --if-present test",
     "lint": "oxlint apps packages scripts && pnpm check:boundaries",
     "check:boundaries": "node scripts/verify-boundaries.mjs"
   },

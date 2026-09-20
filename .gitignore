@@ -31,3 +31,7 @@ dist-ssr
 .env.*
 !.env.example
 *.tsbuildinfo
+gha-creds-*.json
+reports/
+images/
+*.bundle
