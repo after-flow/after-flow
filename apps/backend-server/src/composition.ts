@@ -4,7 +4,9 @@ import { AccessService } from './application/authorization/case-access.js'
 import { CaseService } from './application/case/case-service.js'
 import { ConsentService } from './application/consent/consent-service.js'
 import { DocumentService } from './application/document/document-service.js'
+import { TaskService } from './application/task/task-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
+import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
 import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
@@ -64,6 +66,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       // AI は未接続。解析は受け付けない。
       false,
     ),
+    taskService: new TaskService(readRuleCatalog(env), access, database.read, database.uow),
   })
 
   // 認証済み利用者にだけ同意を要求する。未認証は先に 401 で止まる。

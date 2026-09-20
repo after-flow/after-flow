@@ -8,6 +8,10 @@ import type { TenantMember } from '../../../src/application/authorization/case-a
 import { CaseService } from '../../../src/application/case/case-service.js'
 import { ConsentService } from '../../../src/application/consent/consent-service.js'
 import { DocumentService } from '../../../src/application/document/document-service.js'
+import type { InheritanceDecisionReader } from '../../../src/application/task/task-service.js'
+import { TaskService } from '../../../src/application/task/task-service.js'
+import { PLACEHOLDER_RULE_CATALOG } from '../../../src/domain/task/rule-catalog.js'
+import type { RuleCatalog } from '../../../src/domain/task/rule-engine.js'
 import { PLACEHOLDER_CATALOG } from '../../../src/domain/consent/catalog.js'
 import type { ConsentCatalog } from '../../../src/domain/consent/consent.js'
 import { collections } from '../../../src/domain/shared/collections.js'
@@ -33,6 +37,10 @@ export interface TestAppOptions {
   aiConnected?: boolean
   /** 原本の保存先。未指定ならテストごとに一時ディレクトリーを作る。 */
   storageRoot?: string
+  /** 期限ルールと初期手続きの定義。未指定なら業務レビュー未了の仮定義。 */
+  ruleCatalog?: RuleCatalog
+  /** 相続方法の確定状況。未指定なら未確定として扱う。 */
+  decisions?: InheritanceDecisionReader
 }
 
 export function buildApp(tenantId: string, userId: string, options: TestAppOptions = {}) {
@@ -57,6 +65,13 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       consentService,
       options.inspector ?? null,
       options.aiConnected ?? false,
+    ),
+    taskService: new TaskService(
+      options.ruleCatalog ?? PLACEHOLDER_RULE_CATALOG,
+      access,
+      readRepository(),
+      unitOfWork(),
+      ...(options.decisions ? [options.decisions] : []),
     ),
   })
 

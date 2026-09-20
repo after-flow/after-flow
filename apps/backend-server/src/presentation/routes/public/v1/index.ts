@@ -1,12 +1,14 @@
 import type { CaseService } from '../../../../application/case/case-service.js'
 import type { ConsentService } from '../../../../application/consent/consent-service.js'
 import type { DocumentService } from '../../../../application/document/document-service.js'
+import type { TaskService } from '../../../../application/task/task-service.js'
 import { errors } from '../../../../shared/app-error.js'
 import type { RegisteredRoute, RouteSpec } from '../../../http/route.js'
 import { defineRoute } from '../../../http/route.js'
 import { caseSpecs, createCaseRoutes } from './cases.js'
 import { consentSpecs, createConsentRoutes } from './consents.js'
 import { createDocumentRoutes, documentSpecs } from './documents.js'
+import { createTaskRoutes, taskSpecs } from './tasks.js'
 import { healthRoute, healthSpec } from './health.js'
 
 /**
@@ -29,12 +31,22 @@ export const publicV1Specs: RouteSpec[] = [
   documentSpecs.getDocument,
   documentSpecs.getDocumentContent,
   documentSpecs.archiveDocument,
+  taskSpecs.listTasks,
+  taskSpecs.createTask,
+  taskSpecs.initializeTasks,
+  taskSpecs.getTask,
+  taskSpecs.updateTask,
+  taskSpecs.runTaskCommand,
+  taskSpecs.createEvidence,
+  taskSpecs.listDeadlines,
+  taskSpecs.reevaluateDeadlines,
 ]
 
 export interface PublicRouteDependencies {
   caseService: CaseService
   consentService: ConsentService
   documentService: DocumentService
+  taskService: TaskService
 }
 
 /**
@@ -64,5 +76,6 @@ export function createPublicV1Routes(
     ...createConsentRoutes(dependencies.consentService),
     ...createCaseRoutes(dependencies.caseService),
     ...createDocumentRoutes(dependencies.documentService),
+    ...createTaskRoutes(dependencies.taskService),
   ]
 }

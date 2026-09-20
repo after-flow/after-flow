@@ -38,6 +38,9 @@ export const collections = {
   /** 利用者ごとの同意状態。Case には属さない。 */
   consents: tenantCollection('consents'),
   documents: caseCollection('documents'),
+  tasks: caseCollection('tasks'),
+  deadlines: caseCollection('deadlines'),
+  evidence: caseCollection('evidence'),
 } as const
 
 export type CollectionKey = keyof typeof collections

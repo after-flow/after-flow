@@ -4,14 +4,17 @@ import type {
   ApiFailure,
   CaseResource,
   ConsentStatusResource,
+  DeadlineResource,
   DocumentResource,
   ResponseMeta,
+  TaskResource,
 } from '@aftercare/public-contracts'
 import type { z } from 'zod'
 import { apiErrorBodySchema, apiErrorCodeSchema, apiFailureSchema, responseMetaSchema } from './common.js'
 import { caseResourceSchema } from './case.js'
 import { consentStatusResourceSchema } from './consent.js'
 import { documentResourceSchema } from './document.js'
+import { deadlineResourceSchema, taskResourceSchema } from './task.js'
 
 /**
  * Zod スキーマの出力型が公開契約の型と一致することを、型検査で保証する。
@@ -33,4 +36,8 @@ export type ConsentStatusMatches = Assert<
 >
 export type DocumentResourceMatches = Assert<
   Equals<z.infer<typeof documentResourceSchema>, DocumentResource>
+>
+export type TaskResourceMatches = Assert<Equals<z.infer<typeof taskResourceSchema>, TaskResource>>
+export type DeadlineResourceMatches = Assert<
+  Equals<z.infer<typeof deadlineResourceSchema>, DeadlineResource>
 >
