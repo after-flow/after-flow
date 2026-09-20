@@ -9,7 +9,7 @@ PR順序: [基盤 #78](https://github.com/mimish0778/after-flow/pull/78) → [�
 
 `@mastra/core@1.67.0`、Node.js 22.23.2、strict TypeScriptを固定する。
 通常のMastra Agent + Workflowを採用する。ベータのDurable Agentsは現時点では採用しない。
-通常Agentの呼出し自体に再起動耐性はない。Workflowの永続化・再開方式は #50 の検証後、#57 で実装する。
+通常Agentの呼出し自体に再起動耐性はない。WorkflowのFirestore保存・待機後の別プロセス再開を実装した。設計・制約は [ADR 0001](docs/adr/0001-runtime-storage.md)。HTTP Workerへの接続は #57 で実装する。
 Firestore runtime専用領域の要件を無断で別DBへ変更しない。利用可能な公式Storage Adapterと適合しない場合はADRで判断する。
 
 | 機能 | Mastra標準 | after-flow固有の責務 |
