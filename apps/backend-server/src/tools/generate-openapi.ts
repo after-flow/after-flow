@@ -2,7 +2,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
-import { buildOpenApiDocument } from '../presentation/openapi/document.js'
+import {
+  buildOpenApiDocument,
+  PUBLIC_API_BASE_PATH,
+  PUBLIC_API_VERSION,
+} from '../presentation/openapi/document.js'
 import { publicV1Specs } from '../presentation/routes/public/v1/index.js'
 import { buildInternalOpenApiDocument } from '../presentation/openapi/internal-document.js'
 
@@ -23,8 +27,8 @@ const { values } = parseArgs({
 const outputPath = path.resolve(process.cwd(), values.out ?? '../../docs/api/public-openapi.yaml')
 
 const document = buildOpenApiDocument(publicV1Specs, {
-  version: '0.1.0',
-  basePath: '/api/v1',
+  version: PUBLIC_API_VERSION,
+  basePath: PUBLIC_API_BASE_PATH,
 })
 
 const header = `# 自動生成ファイル。直接編集しない。\n# 生成: pnpm --filter @aftercare/backend-server openapi:generate\n`
