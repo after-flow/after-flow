@@ -8,6 +8,7 @@ import type { AppContext } from './presentation/http/context.js'
 import type { RegisteredRoute } from './presentation/http/route.js'
 import { registerRoutes } from './presentation/http/route.js'
 import { healthRoute } from './presentation/routes/public/v1/health.js'
+import { registerApiDocs } from './presentation/openapi/api-docs.js'
 
 export interface CreateAppOptions {
   routes?: RegisteredRoute[]
@@ -32,6 +33,8 @@ export interface CreateAppOptions {
    * ネットワークの分離は配備側の責務。
    */
   internalApp?: HonoApp<AppEnv>
+  /** ローカル開発用の公開APIテスト画面。内部APIは含めない。 */
+  apiDocs?: boolean
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -44,9 +47,12 @@ export function createApp(options: CreateAppOptions = {}) {
   app.onError(handleError)
   app.notFound(handleNotFound)
 
+  const routes = options.routes ?? [healthRoute]
+  if (options.apiDocs) registerApiDocs(app, routes.map((route) => route.spec))
+
   const v1 = new Hono<AppEnv>()
   if (options.authentication) v1.use('*', options.authentication)
-  registerRoutes(v1, options.routes ?? [healthRoute], {
+  registerRoutes(v1, routes, {
     ...(options.consentGate ? { consentGate: options.consentGate } : {}),
   })
   app.route('/api/v1', v1)

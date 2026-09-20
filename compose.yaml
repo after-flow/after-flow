@@ -39,6 +39,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       # 業務Firestoreの接続設定はBackendにだけ渡す。ai-serverには渡さない。
       # 既定では未設定。`make up-data` がEmulatorの宛先を入れる。
       FIRESTORE_EMULATOR_HOST: ${FIRESTORE_EMULATOR_HOST-}
