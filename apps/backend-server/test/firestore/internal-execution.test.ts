@@ -405,6 +405,12 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
     assert.equal((fresh.content.actions as any[])[0].status, 'APPLIED')
     assert.equal(typeof (fresh.content.actions as any[])[0].payloadHash, 'string')
     assert.match((fresh.content.actions as any[])[0].payloadHash, /^[A-Za-z0-9_-]{43}$/)
+    const history = fresh.content.planningHistory as any
+    assert.equal(history.complete, true)
+    assert.equal(history.proposals[0].status, 'APPLIED')
+    assert.equal(history.proposals[0].payloadHash, history.versions[0].payloadHash)
+    assert.equal(history.approvals[0].applicationStatus, 'APPLIED')
+    assert.equal('payload' in history.proposals[0], false)
     const repeated = await h.request(resumed, 'proposals', { ...input, ...proof(fresh) })
     assert.equal(repeated.status, 200, JSON.stringify(repeated.body))
     assert.equal(repeated.body.data.applicationStatus, 'APPLIED')

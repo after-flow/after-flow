@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { assertContextFresh, buildCoreContext, buildResearchBrief, contentHash, ContextError } from '../src/orchestration/context/builder.js'
+import { assertContextFresh, buildCoreContext, buildPlanningContext, buildResearchBrief, contentHash, ContextError } from '../src/orchestration/context/builder.js'
 
 function artifact(operation: 'case_planning' | 'task_guidance' = 'case_planning') {
   const content = {
@@ -121,4 +121,23 @@ test('message role is Backend metadata; only user message bodies are user report
     assert.equal(facts.find(f => f.field === 'role')?.state, 'confirmed')
     assert.equal(facts.find(f => f.field === 'body')?.state, role === 'user' ? 'user_reported' : 'unknown')
   }
+})
+
+
+test('planning requires complete versioned correction/rejection history, while guidance excludes it', () => {
+  const input = artifact()
+  assert.throws(() => buildPlanningContext(input), { code: 'PLANNING_HISTORY_UNAVAILABLE' })
+  const hash = contentHash({ title: '合成手続き' })
+  const history = { complete: true, proposals: [{ id: 'p1', actionId: 'a1', proposalVersion: 1, payloadHash: hash, status: 'REJECTED',
+    kind: 'TASK_PROPOSAL', source: 'AI', title: '合成提案', summary: 'fixture', targetTitle: '合成手続き', targetTaskId: null, assetDisposal: false, supersedesProposalVersion: null }],
+    versions: [{ proposalId: 'p1', proposalVersion: 1, payloadHash: hash, title: '合成提案', summary: 'fixture', targetTitle: '合成手続き', supersedesProposalVersion: null }],
+    approvals: [{ proposalId: 'p1', proposalVersion: 1, payloadHash: hash, status: 'REJECTED', applicationStatus: 'NOT_APPLIED', decisionNote: 'PRIVATE-REJECTION-NOTE', applicationFailureReason: null }] }
+  const content = { ...input.content, planningHistory: history }
+  const result = buildPlanningContext({ ...input, content, contentHash: contentHash(content) })
+  assert.equal(result.modelInput.planningHistory.proposals[0]?.status, 'REJECTED')
+  const incomplete = { ...content, planningHistory: { ...history, versions: [] } }
+  assert.throws(() => buildPlanningContext({ ...input, content: incomplete, contentHash: contentHash(incomplete) }))
+  const guidance = artifact('task_guidance')
+  const guidanceContent = { ...guidance.content, planningHistory: history }
+  assert.equal(JSON.stringify(buildCoreContext({ ...guidance, content: guidanceContent, contentHash: contentHash(guidanceContent) }, 'task_guidance').modelInput).includes('PRIVATE-REJECTION-NOTE'), false)
 })
