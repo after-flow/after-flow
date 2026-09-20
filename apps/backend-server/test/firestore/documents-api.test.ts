@@ -77,6 +77,49 @@ async function setup(options: TestAppOptions = {}) {
 }
 
 describeFirestore('原本の登録', () => {
+  it('保存済み候補・根拠・提案/承認とRun待機を再取得でき、ページ境界や別Caseで混線しない', async () => {
+    const { tenantId, app, caseId } = await setup()
+    const uploaded = await call(app, `/cases/${caseId}/documents`, withKey(uploadRequest(syntheticPdf()), 'links-document'))
+    assert.equal(uploaded.status, 201)
+    const document = uploaded.body.data
+    assert.deepEqual(document.extractionCandidates, [])
+    assert.equal(document.analysis.run, null)
+    const submitted = await call(app, `/cases/${caseId}/proposals`, jsonRequest('POST', {
+      kind: 'TASK_PROPOSAL', title: '書類に基づく手続き', payload: { title: '架空手続き', stage: 'immediate', category: '合成' },
+      basis: [{ type: 'DOCUMENT', id: document.id, version: document.version, label: '合成書類' }],
+    }))
+    assert.equal(submitted.status, 201, JSON.stringify(submitted.body))
+    const proposal = submitted.body.data
+    const approval = await call(app, `/cases/${caseId}/proposals/${proposal.id}/approval-requests`, jsonRequest('POST', { expectedVersion: proposal.version }))
+    assert.equal(approval.status, 201, JSON.stringify(approval.body))
+    const caseRef = firestore().doc(`tenants/${tenantId}/cases/${caseId}`)
+    const persisted = (await caseRef.collection('proposals').doc(proposal.id).get()).data()!
+    const base = { tenantId, caseId, version: 1, schemaVersion: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }
+    const batch = firestore().batch()
+    for (let i = 0; i < 101; i++) batch.set(caseRef.collection('proposals').doc(`unrelated-${i}`), { ...persisted, ...base, id: `unrelated-${i}`, basis: [] })
+    batch.set(caseRef.collection('proposals').doc('zzz-candidate'), { ...persisted, ...base, id: 'zzz-candidate', source: 'AI' })
+    batch.set(caseRef.collection('evidence').doc('evidence-ref'), { ...base, id: 'evidence-ref', taskId: 'task-ref', documentId: document.id,
+      label: '提出根拠', kind: 'RECEIPT', note: null, recordedBy: 'user-owner' })
+    batch.set(caseRef.collection('agentRuns').doc('document-run'), { ...base, id: 'document-run', operation: 'document_analysis', status: 'WAITING_DOCUMENT',
+      targetType: 'DOCUMENT', targetId: document.id, caseVersionAtAccept: 1, attempt: 1, currentAttemptId: 'attempt',
+      failureReason: null, waitingFor: '追加書類', startedAt: null, finishedAt: null, cancelRequestedBy: null })
+    batch.update(caseRef.collection('documents').doc(document.id), { agentRunId: 'document-run', analysisState: 'RUNNING' })
+    batch.set(firestore().doc(`tenants/${tenantId}/cases/other-case/proposals/foreign`), { ...persisted, ...base, id: 'foreign', caseId: 'other-case', source: 'AI' })
+    await batch.commit()
+    for (const path of [`/cases/${caseId}/documents/${document.id}`, `/cases/${caseId}/documents`]) {
+      const response = await call(app, path)
+      assert.equal(response.status, 200, JSON.stringify(response.body))
+      const view = Array.isArray(response.body.data) ? response.body.data[0] : response.body.data
+      assert.deepEqual(view.extractionCandidates.map((c: any) => c.id), ['zzz-candidate'])
+      assert.equal(view.proposalRefs.length, 2)
+      assert.equal(view.approvalRefs[0].applicationStatus, 'NOT_APPLIED')
+      assert.equal(view.evidenceRefs[0].id, 'evidence-ref')
+      assert.equal(view.analysis.run.waiting, true); assert.equal(view.analysis.run.status, 'WAITING_DOCUMENT')
+      assert.equal(view.inspection.status, 'PENDING'); assert.equal(view.analysis.canRequest, false)
+      assert.equal(JSON.stringify(view).includes('objectKey'), false)
+    }
+  })
+
   it('保存できた書類は STORED になり、検査は未実施のまま残る', async () => {
     const { app, caseId } = await setup()
     const content = syntheticPdf()
