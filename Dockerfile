@@ -10,6 +10,7 @@ COPY apps/web/package.json ./apps/web/package.json
 COPY apps/backend-server/package.json ./apps/backend-server/package.json
 COPY apps/ai-server/package.json ./apps/ai-server/package.json
 COPY packages/public-contracts/package.json ./packages/public-contracts/package.json
+COPY packages/internal-contracts/package.json ./packages/internal-contracts/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY . .

@@ -4,8 +4,8 @@
 
 ```text
 全PR / merge queue / main push
-  └─ CI: Quality × 4 + Workflow lint + Dependency audit
-         + Docker smoke + Production containers
+  └─ CI: Quality × 5 + Workflow lint + Dependency audit
+         + Firestore integration + Docker smoke + Production containers
        └─ CI Gate（すべて成功）
 main pushの成功のみ
   ├─ production-images artifact（テストしたイメージ、30日）
@@ -30,7 +30,9 @@ CI runの`event=push`、`head_branch=main`、workflow path、repositoryとhead_r
 | Quality (typecheck) | 全workspaceの型。テストも型検査対象 | `pnpm typecheck` |
 | Quality (lint) | Oxlint、workspace/import境界 | `pnpm lint` |
 | Quality (test) | CIリリース条件・traffic復元先・日付/金額・Backend/AI HTTP境界 | `pnpm test` |
+| Quality (openapi) | 生成済みOpenAPIと実装routeの一致 | `pnpm openapi:check` |
 | Quality (build) | 全workspace本番ビルド、mockServiceWorker除外 | `VITE_USE_MOCK=false pnpm build` |
+| Firestore integration | Emulator上の永続化・業務API・認可・版競合 | `pnpm test:firestore` |
 | Workflow lint | actionlintとrunner内ShellCheckでActions/shell検証 | `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7`、`"$(go env GOPATH)/bin/actionlint"` |
 | Dependency audit | lockfile全依存のhigh/critical脆弱性 | `pnpm audit --audit-level high` |
 | Docker smoke | 開発3サービス・MSW配信・公開/内部HTTP・AI分離 | `make up && node scripts/smoke-compose.mjs` |
@@ -41,9 +43,10 @@ CI runの`event=push`、`head_branch=main`、workflow path、repositoryとhead_r
 両方のComposeでAIポートは公開しません。本番ComposeはWebの4173だけをloopbackへ公開します。
 
 rootの`pnpm test`はCI補助コードのテスト後に、`test`スクリプトを持つ全workspaceを実行します。
-各アプリのtest runnerは`src`以下の`.test.ts/.test.tsx/.test.mjs`を再帰的に探し、0件の場合は失敗します。
-業務APIブランチのテストもマージ後に実行対象になります。`public-contracts`は現在型のみで、型検査・ビルドを実行します。
-Backend/AIの本番buildはテスト・test-supportを除外し、型検査では含めます。
+Web/AIのtest runnerは`src`以下の`.test.ts/.test.tsx/.test.mjs`を再帰的に探し、0件の場合は失敗します。
+Backendは既存の`test/**/*.test.ts`を実行します。Emulator依存のテストはこのジョブではskipし、別の必須Firestore integrationジョブで実行します。
+`public-contracts`は現在型のみで、型検査・ビルドを実行します。`internal-contracts`もBackendより先にbuildします。
+本番buildではBackendは`src`のみ、AIはテスト・test-supportを除外し、型検査ではテストも含めます。
 
 QualityログとComposeログを14日、main pushの本番イメージartifactを30日保存します。
 失敗時もログ収集・コンテナ停止を試みます。依存監査が通信障害で実行できない場合も成功扱いにはしません。
@@ -168,7 +171,7 @@ artifact期限切れ時は復元可能なCloud Run revisionを使用します。
 
 ## 検証範囲と残る前提
 
-- 本変更のローカル検証対象は型・Lint・テスト・build・actionlint/ShellCheck・開発/本番DockerのHTTP/分離チェックです。
+- 本変更のローカル検証対象は型・Lint・テスト・OpenAPI・Emulator統合テスト・build・actionlint/ShellCheck・開発/本番DockerのHTTP/分離チェックです。
 - GHCRへの実push、GitHub-hosted runner実行、OIDC/IAM、実Cloud Runへのdeploy/traffic切替は、接続後にstagingで検証が必要です。
 - ブラウザー操作のE2E、業務の成功シナリオ、DB migration、バックアップ復元、LLM呼出し、負荷試験はこのliveness検証に含みません。
-- 現在のmainの業務API・本番認証・永続化・Mastra/Orchは未実装です。liveness成功だけを根拠に実データ運用を開始しないでください。業務APIがマージされたら各機能のテスト・認証/永続化設定を追加します。
+- Backendの業務APIとFirestore Adapterは実装されていますが、認証Provider・本番データ接続・同意文書・ルールカタログなどの設定は別途必要です。Mastra/Orchは未接続です。liveness成功だけを根拠に実データ運用を開始しないでください。

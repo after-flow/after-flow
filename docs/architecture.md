@@ -272,8 +272,10 @@ aftercare/
 - 同一キー・同一payloadは既存結果を返し、同一キー・異なるpayloadは409。キーのscopeはtenant/actor/operationを含む。
 - 日時はAPI上でISO 8601。日付だけの期限は`YYYY-MM-DD`と管轄タイムゾーンを別管理する。
 - 成功は`{ data, meta: { requestId, nextCursor? } }`。失敗は`{ error: { code, message, retryable }, meta: { requestId } }`。
-- 400: 入力不正、401: 未認証、403/404: アクセス不可、409: 競合/無効遷移、413: サイズ超過、422: 業務条件不成立、429: 制限、503: 一時利用不可。
-- AI処理開始は202と`runId`、`status: queued`、状態取得URLを返す。受付を処理完了と表示しない。
+- 400: 入力不正、401: 未認証、403: role不足/同意不足、404: membershipなし/参照なし、409: 競合/業務条件不成立、413: サイズ超過、428: 必須条件欠落、429: 制限、501: 機能未接続、503: 一時利用不可。実装のコードとHTTP対応は `shared/app-error.ts` に集約する。
+- AI処理開始は202を返す。AgentRunは `id` と `status: QUEUED`、チャットは `{ message, runId, runAccepted, reason }`、案内は `agentRunId` を含むリソースを返す。受付を処理完了と表示しない。
+- サーバーが決める値（`status`, `confirmation`, `policy`, `progress`, `source`, `agentRunId`, `tenantId`, `caseId` 等）を更新bodyで受け取らない。schemaはstrictで、未知フィールドは400。
+- 既存フロントの呼び出しと公開APIの対応、移行方針、受入シナリオは [対応表](api/frontend-backend-mapping.md) を参照する。実装済みHTTP契約の正本は route spec とそこから生成する [OpenAPI](api/public-openapi.yaml)。将来API一覧とは区別する。
 
 ### 6.2 公開API一覧
 
@@ -285,7 +287,8 @@ aftercare/
 | GET / PATCH | `C` | 詳細/基本情報更新。状態変更は含めない | 必須 |
 | GET | `C/overview` | Task・期限・待機・承認の集約 | 必須 |
 | GET / POST | `C/persons`, `C/relationships` | 関係者・関係登録 | 必須 |
-| PATCH | `C/persons/:personId` | 関係者情報訂正 | 必須 |
+| PATCH | `C/persons/:personId`, `C/relationships/:relationshipId` | 関係者情報訂正 | 必須 |
+| POST | `C/persons/:personId/exclude` | 除外（削除ではない）。参照ありは409 | 必須 |
 | POST / GET | `C/documents` | multipart登録/一覧 | 必須 |
 | GET | `C/documents/:documentId`, `C/documents/:documentId/content` | メタデータ/認可済み配信 | 必須 |
 | POST | `C/documents/:documentId/archive` | 利用停止、根拠への影響記録 | 必須 |
@@ -307,7 +310,14 @@ aftercare/
 | POST / GET | `C/messages` | 案内質問の送信/回答取得 | 必須 |
 | GET | `C/audit-logs` | 許可された監査情報 | 必須 |
 | GET / POST | `C/contracts`, `C/benefits` | 保険契約・請求候補の最小情報 | 必須 |
-| GET / POST | `C/assets`, `C/liabilities` | 財産・債務の詳細管理 | 後 |
+| PATCH | `C/contracts/:contractId`, `C/benefits/:benefitId` | 記述情報の訂正。policy/progressは含めない | 必須 |
+| POST | `C/contracts/:contractId/policy`, `C/contracts/:contractId/progress`, `C/benefits/:benefitId/progress` | 方針・進捗Command（利用者申告） | 必須 |
+| GET / POST | `C/assets`, `C/liabilities` | 財産・債務の手動管理 | 必須 |
+| PATCH | `C/assets/:assetId`, `C/liabilities/:liabilityId` | 訂正。確認状態は含めない | 必須 |
+| POST | `C/assets/:assetId/confirm`, `C/liabilities/:liabilityId/confirm` | 確認Command（確認者・時刻・版を記録） | 必須 |
+| GET | `C/insights` | 根拠付き気づき一覧。statusは閲覧者ごと | 必須 |
+| POST | `C/insights/:insightId/acknowledge`, `C/insights/:insightId/dismiss` | 既読・非表示（閲覧者本人の状態） | 必須 |
+| GET / POST | `/api/v1/consents` | 同意状態と同意 | 必須 |
 | POST | `C/close`, `C/reopen` | Case終了/再開 | 後 |
 | GET | `C/agent-runs/:runId/events/stream` | 公開API経由SSE | 後 |
 
@@ -361,11 +371,12 @@ ContextとArtifactの応答には`caseVersion / contextSnapshotId / artifactVers
 | Entity | 役割 |
 |---|---|
 | Case | 案件、状況、基準日、管轄、caseVersion |
-| Person / Relationship | 関係者と確認済みの家族関係。未確認は未確認として保持 |
+| Person / Relationship | 関係者と確認済みの家族関係。未確認は未確認として保持。`isHeir`は利用者記録であり法定判定ではない。除外は削除ではなく状態 |
 | Document | 原本参照、版、hash、解析状態。抽出結果は別の候補情報 |
 | Task / Deadline | 実行すべき作業と根拠付き期限。依存関係を表現 |
-| Contract / Benefit | 契約情報と給付・請求対象。Assetと混同しない |
-| Asset / Liability | 財産・債務。MVPでは詳細な相続計算をしない |
+| Contract / Benefit | 契約情報と給付・請求対象。Assetと混同しない。方針（CONTINUE/TRANSFER/CANCEL）と進捗は利用者申告の記録で、外部での確認・実行とは区別する |
+| Asset / Liability | 財産・債務。金額はJPY最小単位整数、未設定はnull。確認記録（誰が・いつ・どの版を）を持ち、事実変更で無効化。MVPでは詳細な相続計算をしない |
+| Insight | AI結果から保存する根拠付き気づき。本文は共有、既読/非表示は閲覧者ごと。根拠の版と現在版の差をfreshnessとして表示 |
 | Decision | 本人意思。誰が、何を、いつ確定したか |
 | Proposal | AIが提出する変更案、根拠、対象version |
 | Approval | 特定のProposal/Action内容に対する承認 |
@@ -379,6 +390,8 @@ ContextとArtifactの応答には`caseVersion / contextSnapshotId / artifactVers
 1. **Primary Case Agent**はCase単位のAI判断とProposal作成を担当する。すべてのCaseで同じAgent定義を使うが、Contextと状態はCaseごとに分離する。
 2. **Command Handler**はUser/System/AI Proposalからの全業務変更を検証して確定する唯一の論理経路。
 3. **Firestore Transaction**は実際の並行更新を制御する。Backend ServerやAI Serverが複数インスタンスになっても、正式変更はBackendの同じ不変条件を通る。
+
+状態変更は`start/complete/confirm/policy/progress/acknowledge/exclude/archive`のような明示Commandで受け、PATCHは記述フィールドの訂正だけに限定する。版付きCommandは`expectedVersion`を要求し（新規作成・同意・本人の閲覧状態等はroute specに従う）、実行者、時刻、出所（`MANUAL` / `USER_REPORTED` / `AI`）を記録する。
 
 ユーザーの入力や承認をAgentの会話へ迂回させる必要はない。ユーザーの変更はCommand Handlerが直接受け付け、AIの古いContextからの提案をversion検証で拒否する。
 
@@ -429,6 +442,8 @@ tenant、actor、現在のlease token、idempotency scopeは信頼済み実行�
 Proposal状態は`submitted → validated → awaiting_approval → applied`。不要承認の場合は`validated → applied`。分岐として`rejected / stale / expired`を持つ。
 
 Approvalは対象Proposal版/Action hash、approver権限、作成/失効時刻、決定時刻を持つ。承認後に送信先や資料が変わった場合は旧承認を流用せず再承認とする。却下した同一Proposalをそのまま再承認させない。
+
+AIの抽出候補（財産・契約・気づき）は正式な資産・債務・契約・給付・事実・法的判断へ自動昇格しない。候補の正式化は承認済みProposalの適用に限る。Task、財産、債務、契約、関係者、書類要求、根拠、専門家引継ぎの適用Adapterを実装済み（[入力契約](api/proposal-payloads.md)）。AI由来Proposalの内部提出・lease連携も実装済み（[内部実行契約](api/internal-execution.md)）。公開APIの手動登録・Applier実装と、実AIへの接続完了を混同しない。
 
 MVPでは説明付きTask候補の作成など限定した低影響の変更だけ自動適用可。本人意思確定、重要な抽出事実の正式登録、準備資料の確定には人の確認を入れる。外部送信・解約・送金はMVP対象外。
 
@@ -648,8 +663,11 @@ tenants/{tenantId}
     deadlines/{deadlineId}
     contracts/{contractId}
     benefits/{benefitId}
-    assets/{assetId}                # 将来
-    liabilities/{liabilityId}       # 将来
+    assets/{assetId}                # 確認記録を含む
+    liabilities/{liabilityId}
+    insights/{insightId}
+    insightViews/{viewId}           # Insight×閲覧者のハッシュID
+    insightResults/{resultKey}      # Run×resultIdの重複受領防止
     decisions/{decisionId}
     proposals/{proposalId}
     approvals/{approvalId}
@@ -740,6 +758,7 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 ### 17.1 MVPに含める
 
 - 認証、Case membership、Case/関係者/最小契約情報の登録。
+- 既存フロント機能の範囲: 家族、財産・債務（手動）、契約・給付の方針/進捗、気づきの一覧と既読/非表示、承認、チャット、ダッシュボード（[対応表](api/frontend-backend-mapping.md)）。
 - 独立したHono Backend ServerとHono AI Server、双方向の認証済み内部API。
 - 原本アップロード、抽出候補、ユーザー確認、根拠参照。
 - 一つの保険請求準備PlaybookとPrimary Case Agent。
@@ -790,6 +809,8 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 - モデル障害時に同じSchema/権限でFallbackし、成功済みToolを重複実行しない。
 - 根拠のない完了報告や書類内の命令でTask完了・承認済みにできない。
 - 準備資料の完了が、保険金請求受付や受領完了として表示されない。
+- 状態変更（Task status、確認、方針、進捗、既読、除外、利用停止）がPATCHでは変更できず、Commandでのみ遷移し実行者・時刻・出所が残る。
+- 公開APIのbodyで`source`/`agentRunId`/`confirmation`等を送っても拒否され、AI候補が正式状態に自動昇格しない。
 - 指定Orch Routerを実利用した証跡と、その結果に対応する実行Routeが確認できる。
 
 テストはDomainの状態遷移/期限/承認、Backend ↔ AIのconsumer/provider contract、Firestore Emulatorの並行処理、Storage Adapterの契約、AI Server再起動/重複配送の統合、一本のE2Eを中心とする。E2Eでは両サービスを実HTTPで接続し、in-process adapterへ差し替えない。LLM Evalsは抽出の根拠一致、Task妥当性、重大項目欠落、引用の正確性、越権Tool要求の拒否を評価する。実人物の書類をテストfixtureに含めない。

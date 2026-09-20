@@ -657,6 +657,7 @@ function applyProposal(a: Approval) {
       institution: value('金融機関') || undefined,
       source: 'AI',
       confirmation: 'CONFIRMED',
+      version: 1,
     })
   }
 
