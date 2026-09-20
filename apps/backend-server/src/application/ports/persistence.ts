@@ -10,6 +10,15 @@ import type { NewOutboxEvent } from '../../domain/shared/outbox.js'
  * `infrastructure/firestore` にだけ置き、テストでも同じポートを使う。
  */
 
+/**
+ * サーバー時刻を入れる場所を示す印。
+ *
+ * Application が時計を持つと、保存された時刻が各プロセスの時計に
+ * 依存する。保存側がこの印をサーバー時刻へ置き換える。
+ * 配列の要素には使えない（保存側の制約）。時系列の正本は AuditEvent。
+ */
+export const SERVER_TIME = '__server_time__'
+
 /** 操作した主体。認証済みの情報からのみ組み立てる。 */
 export interface ActorRef {
   type: 'USER' | 'SYSTEM' | 'AI'
@@ -129,4 +138,16 @@ export interface ReadRepository {
     collection: CollectionDescriptor,
     options: ListGroupOptions,
   ): Promise<Page<T>>
+  /**
+   * 条件に一致する件数。
+   *
+   * 一覧の 1 ページ目を数えて全件とするのを避けるために使う。
+   * 表示のためだけに全文書を読み出さない。
+   */
+  count(
+    tenantId: string,
+    collection: CollectionDescriptor,
+    caseId: string | null,
+    where?: { field: string; op: '==' | '<' | '<=' | '>' | '>='; value: unknown }[],
+  ): Promise<number>
 }

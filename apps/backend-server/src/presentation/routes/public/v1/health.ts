@@ -22,6 +22,7 @@ export const healthSpec = {
     '公開サーバーが要求を受け付けられることだけを示す。依存サービスの疎通や業務機能の準備完了は意味しない。',
   tags: ['system'],
   auth: 'public',
+  consent: 'exempt',
   success: { status: 200, description: '稼働中', schema: successEnvelope(healthSchema) },
   failures: ['INTERNAL'],
 } satisfies RouteSpec
