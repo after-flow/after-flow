@@ -11,7 +11,8 @@ const SECRET_KEY = /(authorization|token|password|secret|credential|cookie|idemp
 function redact(value: unknown, depth = 0): unknown {
   if (depth > 4) return '[truncated]'
   if (Array.isArray(value)) return value.slice(0, 20).map((item) => redact(item, depth + 1))
-  if (value instanceof Error) return { name: value.name, message: value.message }
+  // SDK例外のmessage/name/stackには接続URLや入力が入る。分類だけを記録する。
+  if (value instanceof Error) return { type: 'Error' }
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, item]) => [

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { createApp, MAX_JSON_BODY_BYTES } from '../src/app.js'
-import { fixtureRoutes } from './helpers/fixture-routes.js'
+import { createApp } from '../src/app.js'
+import { DEFAULT_MAX_BODY_BYTES } from '../src/presentation/http/route.js'
+import { fixtureRoutes, stubAuthentication } from './helpers/fixture-routes.js'
 
-const app = createApp(fixtureRoutes)
+const app = createApp({ routes: fixtureRoutes, authentication: stubAuthentication })
 
 async function call(path: string, init: RequestInit = {}) {
   const response = await app.request(`http://localhost/api/v1${path}`, init)
@@ -75,6 +76,14 @@ describe('requestId の引き継ぎ', () => {
 })
 
 describe('入力検証', () => {
+  it('multipartにJSON専用の上限を適用しない', async () => {
+    const { response } = await call('/missing-upload-route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+      body: 'x'.repeat(DEFAULT_MAX_BODY_BYTES + 1),
+    })
+    assert.equal(response.status, 404)
+  })
   it('query が契約を満たさない場合は 400 と該当項目を返す', async () => {
     const { response, body } = await call('/cases/case-1/fixtures?limit=9999')
     assert.equal(response.status, 400)
@@ -135,7 +144,7 @@ describe('入力検証', () => {
     const { response, body } = await call('/cases/case-1/fixtures', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'idem-0000001' },
-      body: 'x'.repeat(MAX_JSON_BODY_BYTES + 1),
+      body: 'x'.repeat(DEFAULT_MAX_BODY_BYTES + 1),
     })
     assert.equal(response.status, 413)
     assert.equal(body?.error.code, 'PAYLOAD_TOO_LARGE')
@@ -225,5 +234,23 @@ describe('エラー応答', () => {
     assert.equal(appErrors.unavailable().retryable, true)
     assert.equal(appErrors.rateLimited().retryable, true)
     assert.equal(appErrors.internal().retryable, false)
+  })
+})
+
+describe('認証が必要な route の既定', () => {
+  it('認証 middleware が無い構成では 401 になる', async () => {
+    // 設定漏れが「誰でも通る API」ではなく「誰も通れない API」になることを確かめる。
+    const unconfigured = createApp({ routes: fixtureRoutes })
+    const response = await unconfigured.request('http://localhost/api/v1/cases/case-1/fixtures')
+    assert.equal(response.status, 401)
+    const body = (await response.json()) as Record<string, any>
+    assert.equal(body.error.code, 'UNAUTHENTICATED')
+    assert.equal(body.error.retryable, false)
+  })
+
+  it('公開 route は認証が無くても通る', async () => {
+    const unconfigured = createApp()
+    const response = await unconfigured.request('http://localhost/api/v1/health')
+    assert.equal(response.status, 200)
   })
 })

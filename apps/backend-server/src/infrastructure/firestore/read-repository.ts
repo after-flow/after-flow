@@ -2,6 +2,7 @@ import type { Firestore, Query } from '@google-cloud/firestore'
 import { FieldPath } from '@google-cloud/firestore'
 import type {
   DocLocation,
+  ListGroupOptions,
   ListOptions,
   Page,
   ReadRepository,
@@ -16,6 +17,7 @@ import {
   encodeCursorValue,
   queryFingerprint,
 } from './cursor.js'
+import { errors } from '../../shared/app-error.js'
 import { assertPathMatchesDocument, assertValidId, collectionPath, documentPath } from './paths.js'
 
 const DEFAULT_ORDER = { field: 'updatedAt', direction: 'desc' } as const
@@ -90,5 +92,76 @@ export class FirestoreReadRepository implements ReadRepository {
         id: last.id,
       }),
     }
+  }
+
+  async listGroup<T extends EntityBase>(
+    tenantId: string,
+    collection: CollectionDescriptor,
+    options: ListGroupOptions,
+  ): Promise<Page<T>> {
+    assertValidId(tenantId, 'tenantId')
+    if (collection.scope !== 'case') {
+      throw errors.internal({ internal: { reason: 'listGroup requires a case-scoped collection' } })
+    }
+    const order = options.orderBy ?? DEFAULT_ORDER
+    const where = options.where ?? []
+
+    const fingerprint = queryFingerprint({
+      group: collection.name,
+      order,
+      where,
+      tiebreak: options.tiebreakField,
+    })
+
+    // collection group query はデータベース全体に及ぶ。tenant の条件は必須。
+    let query: Query = this.firestore
+      .collectionGroup(collection.name)
+      .where('tenantId', '==', tenantId)
+    for (const clause of where) {
+      query = query.where(clause.field, clause.op, clause.value)
+    }
+    query = query.orderBy(order.field, order.direction)
+    query = query.orderBy(options.tiebreakField, order.direction)
+
+    if (options.cursor) {
+      const cursor = decodeCursor(options.cursor, fingerprint)
+      query = query.startAfter(...cursor.values.map(decodeCursorValue))
+    }
+
+    const snapshot = await query.limit(options.limit + 1).get()
+    const docs = snapshot.docs.slice(0, options.limit)
+    const items = docs.map((doc) => fromFirestoreDocument<T>(doc.data() as Record<string, unknown>))
+
+    if (snapshot.docs.length <= options.limit) return { items }
+
+    const last = docs[docs.length - 1]
+    if (!last) return { items }
+    return {
+      items,
+      nextCursor: encodeCursor({
+        fingerprint,
+        values: [
+          encodeCursorValue(last.get(order.field)),
+          encodeCursorValue(last.get(options.tiebreakField)),
+        ],
+        id: last.id,
+      }),
+    }
+  }
+
+  async count(
+    tenantId: string,
+    collection: CollectionDescriptor,
+    caseId: string | null,
+    where: { field: string; op: '==' | '<' | '<=' | '>' | '>='; value: unknown }[] = [],
+  ): Promise<number> {
+    assertValidId(tenantId, 'tenantId')
+    let query: Query = this.firestore.collection(collectionPath(tenantId, collection, caseId))
+    for (const clause of where) {
+      query = query.where(clause.field, clause.op, clause.value)
+    }
+    // 集計クエリを使う。件数のためだけに全文書を読み出さない。
+    const snapshot = await query.count().get()
+    return snapshot.data().count
   }
 }

@@ -1,11 +1,15 @@
 import type { Context } from 'hono'
+import type { AuthenticatedUser } from '../../application/ports/identity.js'
 
 /**
  * Hono の context に載せる値。
- * 認証済み actor は #6 でここへ追加する。
+ *
+ * `user` は認証 middleware が検証した結果だけを入れる。
+ * 要求本文から組み立てた値をここへ入れない。
  */
 export interface AppVariables {
   requestId: string
+  user?: AuthenticatedUser
 }
 
 export interface AppEnv {
