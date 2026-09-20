@@ -16,6 +16,9 @@ export interface BackendClientConfig {
   serviceToken: string
   audience?: string
   timeoutMs?: number
+  /** Local development only: requires an exact hostname allowlist as well. */
+  allowInsecureHttp?: boolean
+  insecureHttpAllowedHosts?: readonly string[]
 }
 
 /** One capability-bound client per execution attempt. Never place it in model context. */
@@ -30,6 +33,9 @@ export class BackendClient {
     const url = new URL(config.baseUrl)
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) {
       throw new Error('Backend URL must be an HTTP(S) origin')
+    }
+    if (url.protocol === 'http:' && (config.allowInsecureHttp !== true || !config.insecureHttpAllowedHosts?.includes(url.hostname))) {
+      throw new Error('Backend requires HTTPS unless HTTP and the exact hostname are explicitly allowed')
     }
     if (!config.serviceToken.trim() || /[\r\n]/.test(config.serviceToken)) throw new Error('Backend service credential is required')
     this.config = Object.freeze({ ...config })

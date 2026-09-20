@@ -80,3 +80,8 @@ fixtureモデルの成功は実LLMの回答品質・本番接続の成功を意�
 
 未接続: Backend内部HTTP、Orch、実Provider、検索/取得Adapter、Source Catalog、永続Workflow、累積予算、P-01の結果保存とP-02〜P-04の実行、品質/性能評価。
 HTTP・UI・Dockerの挙動は今回変更しない。Issue #55/#56/#59 やMVP全体は未完了のままとする。
+
+## レビュー対応: 内部通信と単体検証
+
+BackendClientはHTTPSを既定とします。ローカルDockerのHTTPには、信頼済みcomposition rootから`allowInsecureHttp: true`と`insecureHttpAllowedHosts: ['backend-server']`の両方を明示します。ホストは完全一致で照合し、モデル入力から変更させません。クラウド接続ではHTTPSを使用します。
+AI単体の`build`/`typecheck`も内部共有契約を先にbuildするため、clean checkoutで実行できます。テストは`src`のHTTP生存確認と`test`の基盤・内部HTTPの両方を実行します。

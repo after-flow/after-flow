@@ -3,13 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "files": ["dist"],
   "scripts": {
     "dev": "pnpm contracts:build && tsx watch src/main.ts",
     "contracts:build": "pnpm --filter @aftercare/internal-contracts build",
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm contracts:build && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "typecheck": "tsc --noEmit -p tsconfig.test.json",
-    "test": "pnpm contracts:build && node --import tsx --test \"test/**/*.test.ts\""
+    "typecheck": "pnpm contracts:build && tsc --noEmit -p tsconfig.test.json",
+    "test": "pnpm contracts:build && node ../../scripts/test-workspace.mjs && node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@aftercare/internal-contracts": "workspace:*",
