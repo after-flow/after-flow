@@ -1,0 +1,74 @@
+name: after-flow
+
+x-development: &development
+  build:
+    context: .
+    target: development
+  init: true
+
+services:
+  web:
+    <<: *development
+    image: after-flow-web:local
+    command: pnpm --filter @aftercare/web dev --host 0.0.0.0 --port 5173 --strictPort
+    ports:
+      - "127.0.0.1:${WEB_PORT:-5173}:5173"
+    environment:
+      VITE_USE_MOCK: ${VITE_USE_MOCK:-true}
+      VITE_API_BASE_URL: /api/v1
+      VITE_API_PROXY: http://backend-server:8080
+      VITE_WATCH_POLLING: "true"
+    volumes:
+      - ./apps/web/src:/workspace/apps/web/src:ro
+      - ./apps/web/public:/workspace/apps/web/public:ro
+      - ./apps/web/index.html:/workspace/apps/web/index.html:ro
+      - ./apps/web/vite.config.ts:/workspace/apps/web/vite.config.ts:ro
+      - ./packages/public-contracts/src:/workspace/packages/public-contracts/src:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    networks: [frontend]
+
+  backend-server:
+    <<: *development
+    image: after-flow-backend-server:local
+    command: pnpm --filter @aftercare/backend-server dev
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./apps/backend-server/src:/workspace/apps/backend-server/src:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    networks: [frontend, services]
+
+  ai-server:
+    <<: *development
+    image: after-flow-ai-server:local
+    command: pnpm --filter @aftercare/ai-server dev
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8081
+    volumes:
+      - ./apps/ai-server/src:/workspace/apps/ai-server/src:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/internal/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    networks: [services]
+
+networks:
+  frontend:
+  services:
+    internal: true
