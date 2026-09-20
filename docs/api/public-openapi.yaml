@@ -7367,6 +7367,180 @@ paths:
                   data:
                     type: object
                     properties:
+                      extractionCandidates:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            kind:
+                              type: string
+                              enum:
+                                - TASK_PROPOSAL
+                                - ASSET_PROPOSAL
+                                - LIABILITY_PROPOSAL
+                                - CONTRACT_PROPOSAL
+                                - PERSON_PROPOSAL
+                                - DOCUMENT_REQUEST
+                                - ESCALATION_PROPOSAL
+                                - EVIDENCE_PROPOSAL
+                            title:
+                              type: string
+                            payload:
+                              type: object
+                              additionalProperties: {}
+                            status:
+                              type: string
+                              enum:
+                                - SUBMITTED
+                                - VALIDATED
+                                - AWAITING_APPROVAL
+                                - APPLIED
+                                - REJECTED
+                                - STALE
+                                - EXPIRED
+                            basis:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  type:
+                                    type: string
+                                    enum:
+                                      - DOCUMENT
+                                      - TASK
+                                      - MESSAGE
+                                  id:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^[A-Za-z0-9_-]+$
+                                  version:
+                                    type: integer
+                                    minimum: 1
+                                    maximum: 9007199254740991
+                                  label:
+                                    type: string
+                                    maxLength: 120
+                                required:
+                                  - type
+                                  - id
+                                  - version
+                                  - label
+                                additionalProperties: false
+                          required:
+                            - id
+                            - proposalVersion
+                            - kind
+                            - title
+                            - payload
+                            - status
+                            - basis
+                          additionalProperties: false
+                      proposalRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            kind:
+                              type: string
+                              enum:
+                                - TASK_PROPOSAL
+                                - ASSET_PROPOSAL
+                                - LIABILITY_PROPOSAL
+                                - CONTRACT_PROPOSAL
+                                - PERSON_PROPOSAL
+                                - DOCUMENT_REQUEST
+                                - ESCALATION_PROPOSAL
+                                - EVIDENCE_PROPOSAL
+                            status:
+                              type: string
+                              enum:
+                                - SUBMITTED
+                                - VALIDATED
+                                - AWAITING_APPROVAL
+                                - APPLIED
+                                - REJECTED
+                                - STALE
+                                - EXPIRED
+                            source:
+                              type: string
+                              enum:
+                                - USER
+                                - SYSTEM
+                                - AI
+                          required:
+                            - id
+                            - proposalVersion
+                            - kind
+                            - status
+                            - source
+                          additionalProperties: false
+                      approvalRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalId:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            status:
+                              type: string
+                              enum:
+                                - PENDING
+                                - APPROVED
+                                - REJECTED
+                                - EXPIRED
+                            applicationStatus:
+                              type: string
+                              enum:
+                                - NOT_APPLIED
+                                - APPLIED
+                                - FAILED
+                          required:
+                            - id
+                            - proposalId
+                            - proposalVersion
+                            - status
+                            - applicationStatus
+                          additionalProperties: false
+                      evidenceRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            taskId:
+                              type: string
+                            label:
+                              type: string
+                            version:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - id
+                            - taskId
+                            - label
+                            - version
+                          additionalProperties: false
                       id:
                         type: string
                       caseId:
@@ -7444,6 +7618,44 @@ paths:
                       analysis:
                         type: object
                         properties:
+                          run:
+                            nullable: true
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              status:
+                                type: string
+                                enum:
+                                  - QUEUED
+                                  - RUNNING
+                                  - WAITING_DOCUMENT
+                                  - WAITING_APPROVAL
+                                  - RETRY_SCHEDULED
+                                  - NEEDS_ATTENTION
+                                  - SUCCEEDED
+                                  - FAILED
+                                  - CANCELLED
+                              waiting:
+                                type: boolean
+                              waitingFor:
+                                nullable: true
+                                type: string
+                              failureReason:
+                                nullable: true
+                                type: string
+                              version:
+                                type: integer
+                                minimum: -9007199254740991
+                                maximum: 9007199254740991
+                            required:
+                              - id
+                              - status
+                              - waiting
+                              - waitingFor
+                              - failureReason
+                              - version
+                            additionalProperties: false
                           state:
                             type: string
                             enum:
@@ -7467,6 +7679,7 @@ paths:
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
                         required:
+                          - run
                           - state
                           - agentRunId
                           - canRequest
@@ -7492,6 +7705,10 @@ paths:
                         format: date-time
                         pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                     required:
+                      - extractionCandidates
+                      - proposalRefs
+                      - approvalRefs
+                      - evidenceRefs
                       - id
                       - caseId
                       - fileName
@@ -7640,6 +7857,180 @@ paths:
                     items:
                       type: object
                       properties:
+                        extractionCandidates:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              proposalVersion:
+                                type: integer
+                                minimum: -9007199254740991
+                                maximum: 9007199254740991
+                              kind:
+                                type: string
+                                enum:
+                                  - TASK_PROPOSAL
+                                  - ASSET_PROPOSAL
+                                  - LIABILITY_PROPOSAL
+                                  - CONTRACT_PROPOSAL
+                                  - PERSON_PROPOSAL
+                                  - DOCUMENT_REQUEST
+                                  - ESCALATION_PROPOSAL
+                                  - EVIDENCE_PROPOSAL
+                              title:
+                                type: string
+                              payload:
+                                type: object
+                                additionalProperties: {}
+                              status:
+                                type: string
+                                enum:
+                                  - SUBMITTED
+                                  - VALIDATED
+                                  - AWAITING_APPROVAL
+                                  - APPLIED
+                                  - REJECTED
+                                  - STALE
+                                  - EXPIRED
+                              basis:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    type:
+                                      type: string
+                                      enum:
+                                        - DOCUMENT
+                                        - TASK
+                                        - MESSAGE
+                                    id:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 128
+                                      pattern: ^[A-Za-z0-9_-]+$
+                                    version:
+                                      type: integer
+                                      minimum: 1
+                                      maximum: 9007199254740991
+                                    label:
+                                      type: string
+                                      maxLength: 120
+                                  required:
+                                    - type
+                                    - id
+                                    - version
+                                    - label
+                                  additionalProperties: false
+                            required:
+                              - id
+                              - proposalVersion
+                              - kind
+                              - title
+                              - payload
+                              - status
+                              - basis
+                            additionalProperties: false
+                        proposalRefs:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              proposalVersion:
+                                type: integer
+                                minimum: -9007199254740991
+                                maximum: 9007199254740991
+                              kind:
+                                type: string
+                                enum:
+                                  - TASK_PROPOSAL
+                                  - ASSET_PROPOSAL
+                                  - LIABILITY_PROPOSAL
+                                  - CONTRACT_PROPOSAL
+                                  - PERSON_PROPOSAL
+                                  - DOCUMENT_REQUEST
+                                  - ESCALATION_PROPOSAL
+                                  - EVIDENCE_PROPOSAL
+                              status:
+                                type: string
+                                enum:
+                                  - SUBMITTED
+                                  - VALIDATED
+                                  - AWAITING_APPROVAL
+                                  - APPLIED
+                                  - REJECTED
+                                  - STALE
+                                  - EXPIRED
+                              source:
+                                type: string
+                                enum:
+                                  - USER
+                                  - SYSTEM
+                                  - AI
+                            required:
+                              - id
+                              - proposalVersion
+                              - kind
+                              - status
+                              - source
+                            additionalProperties: false
+                        approvalRefs:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              proposalId:
+                                type: string
+                              proposalVersion:
+                                type: integer
+                                minimum: -9007199254740991
+                                maximum: 9007199254740991
+                              status:
+                                type: string
+                                enum:
+                                  - PENDING
+                                  - APPROVED
+                                  - REJECTED
+                                  - EXPIRED
+                              applicationStatus:
+                                type: string
+                                enum:
+                                  - NOT_APPLIED
+                                  - APPLIED
+                                  - FAILED
+                            required:
+                              - id
+                              - proposalId
+                              - proposalVersion
+                              - status
+                              - applicationStatus
+                            additionalProperties: false
+                        evidenceRefs:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              taskId:
+                                type: string
+                              label:
+                                type: string
+                              version:
+                                type: integer
+                                minimum: -9007199254740991
+                                maximum: 9007199254740991
+                            required:
+                              - id
+                              - taskId
+                              - label
+                              - version
+                            additionalProperties: false
                         id:
                           type: string
                         caseId:
@@ -7717,6 +8108,44 @@ paths:
                         analysis:
                           type: object
                           properties:
+                            run:
+                              nullable: true
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                status:
+                                  type: string
+                                  enum:
+                                    - QUEUED
+                                    - RUNNING
+                                    - WAITING_DOCUMENT
+                                    - WAITING_APPROVAL
+                                    - RETRY_SCHEDULED
+                                    - NEEDS_ATTENTION
+                                    - SUCCEEDED
+                                    - FAILED
+                                    - CANCELLED
+                                waiting:
+                                  type: boolean
+                                waitingFor:
+                                  nullable: true
+                                  type: string
+                                failureReason:
+                                  nullable: true
+                                  type: string
+                                version:
+                                  type: integer
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - id
+                                - status
+                                - waiting
+                                - waitingFor
+                                - failureReason
+                                - version
+                              additionalProperties: false
                             state:
                               type: string
                               enum:
@@ -7740,6 +8169,7 @@ paths:
                                   - AI_NOT_CONNECTED
                                   - CONSENT_REQUIRED
                           required:
+                            - run
                             - state
                             - agentRunId
                             - canRequest
@@ -7765,6 +8195,10 @@ paths:
                           format: date-time
                           pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                       required:
+                        - extractionCandidates
+                        - proposalRefs
+                        - approvalRefs
+                        - evidenceRefs
                         - id
                         - caseId
                         - fileName
@@ -7870,6 +8304,180 @@ paths:
                   data:
                     type: object
                     properties:
+                      extractionCandidates:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            kind:
+                              type: string
+                              enum:
+                                - TASK_PROPOSAL
+                                - ASSET_PROPOSAL
+                                - LIABILITY_PROPOSAL
+                                - CONTRACT_PROPOSAL
+                                - PERSON_PROPOSAL
+                                - DOCUMENT_REQUEST
+                                - ESCALATION_PROPOSAL
+                                - EVIDENCE_PROPOSAL
+                            title:
+                              type: string
+                            payload:
+                              type: object
+                              additionalProperties: {}
+                            status:
+                              type: string
+                              enum:
+                                - SUBMITTED
+                                - VALIDATED
+                                - AWAITING_APPROVAL
+                                - APPLIED
+                                - REJECTED
+                                - STALE
+                                - EXPIRED
+                            basis:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  type:
+                                    type: string
+                                    enum:
+                                      - DOCUMENT
+                                      - TASK
+                                      - MESSAGE
+                                  id:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^[A-Za-z0-9_-]+$
+                                  version:
+                                    type: integer
+                                    minimum: 1
+                                    maximum: 9007199254740991
+                                  label:
+                                    type: string
+                                    maxLength: 120
+                                required:
+                                  - type
+                                  - id
+                                  - version
+                                  - label
+                                additionalProperties: false
+                          required:
+                            - id
+                            - proposalVersion
+                            - kind
+                            - title
+                            - payload
+                            - status
+                            - basis
+                          additionalProperties: false
+                      proposalRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            kind:
+                              type: string
+                              enum:
+                                - TASK_PROPOSAL
+                                - ASSET_PROPOSAL
+                                - LIABILITY_PROPOSAL
+                                - CONTRACT_PROPOSAL
+                                - PERSON_PROPOSAL
+                                - DOCUMENT_REQUEST
+                                - ESCALATION_PROPOSAL
+                                - EVIDENCE_PROPOSAL
+                            status:
+                              type: string
+                              enum:
+                                - SUBMITTED
+                                - VALIDATED
+                                - AWAITING_APPROVAL
+                                - APPLIED
+                                - REJECTED
+                                - STALE
+                                - EXPIRED
+                            source:
+                              type: string
+                              enum:
+                                - USER
+                                - SYSTEM
+                                - AI
+                          required:
+                            - id
+                            - proposalVersion
+                            - kind
+                            - status
+                            - source
+                          additionalProperties: false
+                      approvalRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalId:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            status:
+                              type: string
+                              enum:
+                                - PENDING
+                                - APPROVED
+                                - REJECTED
+                                - EXPIRED
+                            applicationStatus:
+                              type: string
+                              enum:
+                                - NOT_APPLIED
+                                - APPLIED
+                                - FAILED
+                          required:
+                            - id
+                            - proposalId
+                            - proposalVersion
+                            - status
+                            - applicationStatus
+                          additionalProperties: false
+                      evidenceRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            taskId:
+                              type: string
+                            label:
+                              type: string
+                            version:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - id
+                            - taskId
+                            - label
+                            - version
+                          additionalProperties: false
                       id:
                         type: string
                       caseId:
@@ -7947,6 +8555,44 @@ paths:
                       analysis:
                         type: object
                         properties:
+                          run:
+                            nullable: true
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              status:
+                                type: string
+                                enum:
+                                  - QUEUED
+                                  - RUNNING
+                                  - WAITING_DOCUMENT
+                                  - WAITING_APPROVAL
+                                  - RETRY_SCHEDULED
+                                  - NEEDS_ATTENTION
+                                  - SUCCEEDED
+                                  - FAILED
+                                  - CANCELLED
+                              waiting:
+                                type: boolean
+                              waitingFor:
+                                nullable: true
+                                type: string
+                              failureReason:
+                                nullable: true
+                                type: string
+                              version:
+                                type: integer
+                                minimum: -9007199254740991
+                                maximum: 9007199254740991
+                            required:
+                              - id
+                              - status
+                              - waiting
+                              - waitingFor
+                              - failureReason
+                              - version
+                            additionalProperties: false
                           state:
                             type: string
                             enum:
@@ -7970,6 +8616,7 @@ paths:
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
                         required:
+                          - run
                           - state
                           - agentRunId
                           - canRequest
@@ -7995,6 +8642,10 @@ paths:
                         format: date-time
                         pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                     required:
+                      - extractionCandidates
+                      - proposalRefs
+                      - approvalRefs
+                      - evidenceRefs
                       - id
                       - caseId
                       - fileName
@@ -8201,6 +8852,180 @@ paths:
                   data:
                     type: object
                     properties:
+                      extractionCandidates:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            kind:
+                              type: string
+                              enum:
+                                - TASK_PROPOSAL
+                                - ASSET_PROPOSAL
+                                - LIABILITY_PROPOSAL
+                                - CONTRACT_PROPOSAL
+                                - PERSON_PROPOSAL
+                                - DOCUMENT_REQUEST
+                                - ESCALATION_PROPOSAL
+                                - EVIDENCE_PROPOSAL
+                            title:
+                              type: string
+                            payload:
+                              type: object
+                              additionalProperties: {}
+                            status:
+                              type: string
+                              enum:
+                                - SUBMITTED
+                                - VALIDATED
+                                - AWAITING_APPROVAL
+                                - APPLIED
+                                - REJECTED
+                                - STALE
+                                - EXPIRED
+                            basis:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  type:
+                                    type: string
+                                    enum:
+                                      - DOCUMENT
+                                      - TASK
+                                      - MESSAGE
+                                  id:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^[A-Za-z0-9_-]+$
+                                  version:
+                                    type: integer
+                                    minimum: 1
+                                    maximum: 9007199254740991
+                                  label:
+                                    type: string
+                                    maxLength: 120
+                                required:
+                                  - type
+                                  - id
+                                  - version
+                                  - label
+                                additionalProperties: false
+                          required:
+                            - id
+                            - proposalVersion
+                            - kind
+                            - title
+                            - payload
+                            - status
+                            - basis
+                          additionalProperties: false
+                      proposalRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            kind:
+                              type: string
+                              enum:
+                                - TASK_PROPOSAL
+                                - ASSET_PROPOSAL
+                                - LIABILITY_PROPOSAL
+                                - CONTRACT_PROPOSAL
+                                - PERSON_PROPOSAL
+                                - DOCUMENT_REQUEST
+                                - ESCALATION_PROPOSAL
+                                - EVIDENCE_PROPOSAL
+                            status:
+                              type: string
+                              enum:
+                                - SUBMITTED
+                                - VALIDATED
+                                - AWAITING_APPROVAL
+                                - APPLIED
+                                - REJECTED
+                                - STALE
+                                - EXPIRED
+                            source:
+                              type: string
+                              enum:
+                                - USER
+                                - SYSTEM
+                                - AI
+                          required:
+                            - id
+                            - proposalVersion
+                            - kind
+                            - status
+                            - source
+                          additionalProperties: false
+                      approvalRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            proposalId:
+                              type: string
+                            proposalVersion:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            status:
+                              type: string
+                              enum:
+                                - PENDING
+                                - APPROVED
+                                - REJECTED
+                                - EXPIRED
+                            applicationStatus:
+                              type: string
+                              enum:
+                                - NOT_APPLIED
+                                - APPLIED
+                                - FAILED
+                          required:
+                            - id
+                            - proposalId
+                            - proposalVersion
+                            - status
+                            - applicationStatus
+                          additionalProperties: false
+                      evidenceRefs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            taskId:
+                              type: string
+                            label:
+                              type: string
+                            version:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - id
+                            - taskId
+                            - label
+                            - version
+                          additionalProperties: false
                       id:
                         type: string
                       caseId:
@@ -8278,6 +9103,44 @@ paths:
                       analysis:
                         type: object
                         properties:
+                          run:
+                            nullable: true
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              status:
+                                type: string
+                                enum:
+                                  - QUEUED
+                                  - RUNNING
+                                  - WAITING_DOCUMENT
+                                  - WAITING_APPROVAL
+                                  - RETRY_SCHEDULED
+                                  - NEEDS_ATTENTION
+                                  - SUCCEEDED
+                                  - FAILED
+                                  - CANCELLED
+                              waiting:
+                                type: boolean
+                              waitingFor:
+                                nullable: true
+                                type: string
+                              failureReason:
+                                nullable: true
+                                type: string
+                              version:
+                                type: integer
+                                minimum: -9007199254740991
+                                maximum: 9007199254740991
+                            required:
+                              - id
+                              - status
+                              - waiting
+                              - waitingFor
+                              - failureReason
+                              - version
+                            additionalProperties: false
                           state:
                             type: string
                             enum:
@@ -8301,6 +9164,7 @@ paths:
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
                         required:
+                          - run
                           - state
                           - agentRunId
                           - canRequest
@@ -8326,6 +9190,10 @@ paths:
                         format: date-time
                         pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                     required:
+                      - extractionCandidates
+                      - proposalRefs
+                      - approvalRefs
+                      - evidenceRefs
                       - id
                       - caseId
                       - fileName

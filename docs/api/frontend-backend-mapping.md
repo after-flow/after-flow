@@ -69,9 +69,13 @@
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
 | `GET /cases/:caseId/documents` | 書類一覧 | `GET C/documents` | 同一 | #8 |
-| `POST /cases/:caseId/documents`（multipart） | アップロード | `POST C/documents` multipart（`file`, `kind?`）→ 201 の書類リソース（`storageState: 'STORED'`）。検査状態は `inspection.status`、解析状態は `analysisState`。未接続の検査は `PENDING`、解析は `NOT_CONNECTED` | 同一 | #8 / #19 |
+| `POST /cases/:caseId/documents`（multipart） | アップロード | `POST C/documents` multipart（`file`, `kind`）→ 201 の書類リソース（`storageState: 'STORED'`）。検査状態は `inspection.status`、解析状態は `analysis.state`。未接続の検査は `PENDING`、解析未受付は `NOT_REQUESTED`、`analysis.canRequest:false`と理由を表示 | 同一 | #8 / #19 |
 | `GET /documents/:documentId` | 詳細 | `GET C/documents/:documentId`（メタデータ）、`GET C/documents/:documentId/content`（認可済み配信） | Case配下へ | #8 |
-| `DELETE /documents/:documentId` | 削除 | `POST C/documents/:documentId/archive` body `{ expectedVersion, reason? }`。物理削除はしない。根拠として参照する Insight / Evidence は `UNAVAILABLE` 表示に変わる | **Commandへ（archive）** | #8 |
+| `DELETE /documents/:documentId` | 削除 | `POST C/documents/:documentId/archive` body `{ expectedVersion }`。物理削除はしない。参照元で現在の利用可否を表示し、archive書類を新しい完了根拠にしない | **Commandへ（archive）** | #8 |
+
+書類一覧/詳細は`extractionCandidates`（保存済みAI Proposalの候補）、`proposalRefs` / `approvalRefs` / `evidenceRefs`と`analysis.run`を返す。
+候補があることをOCR/検査/正式適用の成功と同一視しない。Runの待機理由・失敗と承認の`applicationStatus`を分けて表示する。
+原本はBackend専用のLocal/GCS Adapterで保持し、WebへStorage設定/URLを返さない。[保存・検証境界](../runbooks/document-storage.md)。
 
 ## 6. 家族（関係者・関係性）
 
@@ -94,7 +98,7 @@
 | `PATCH /assets/:id` body `{ confirmation: 'CONFIRMED' }` | 「確認済みにする」 | `POST C/assets/:assetId/confirm` body `{ expectedVersion, note? }`。確認者・時刻・確認時の版を `confirmationRecord` に保持。名称・種別・機関・金額を変更すると UNCONFIRMED に戻る | **Commandへ** | #14 |
 | `GET / POST /cases/:caseId/liabilities`, `PATCH /liabilities/:id` | 債務 | assets と同型（`creditor`）。`POST C/liabilities/:liabilityId/confirm` | 同上 | #14 |
 
-公開登録は常に `MANUAL`。AI抽出候補の正式反映Adapterは未接続で、TASK以外のProposalを反映可能とは扱わない。評価・税計算・分割案は対象外。
+公開登録は常に `MANUAL`。AI候補の正式反映は型別Proposal Applierと人の承認・再検証を通す（#40/#41）。書類OCR・実AI抽出の接続は別で、候補を確認済み事実にしない。評価・税計算・分割案は対象外。
 
 ## 8. 契約・給付（保険金・年金）
 
