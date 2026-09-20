@@ -6,7 +6,8 @@
 ## 現在の実装範囲
 
 既存のReact + Viteフロントエンドを機能別に移し、画面、URL、モックAPI、ログイン状態の保存方式を維持しています。
-BackendとAIは独立したHonoプロセスとして起動します。現時点では生存確認APIのみで、業務API、認証、Firestore、Mastra、Orch Routerは未実装です。
+BackendとAIは独立したHonoプロセスとして起動します。Backendには業務API、認証・認可の境界、Firestore Adapterを実装しています。
+本番の認証Provider・クラウド接続は環境設定が必要で、Mastra・Orch Routerは未接続です。
 通常の開発起動では、これまでどおりMSWの架空データで全画面を操作できます。
 
 ## Dockerで起動
@@ -28,7 +29,7 @@ WebとBackendはループバックアドレスにのみ公開します。WebとA
 make ps                 # 3サービスの状態
 make logs               # ログ（Ctrl+Cで表示だけ終了）
 make logs SERVICE=web   # Webのみ
-make check              # Docker内で型・Lint・依存境界・本番ビルドを検証
+make check              # Docker内で型・Lint・テスト・OpenAPI・本番ビルドを検証
 make down               # このプロジェクトを停止
 ```
 
@@ -57,7 +58,7 @@ pnpm dev:web            # フロントエンドのみ
 サービス単位でも操作できます。
 
 ```sh
-pnpm --filter @aftercare/backend-server build
+pnpm --filter @aftercare/backend-server... build
 pnpm --filter @aftercare/backend-server start
 pnpm --filter @aftercare/ai-server build
 pnpm --filter @aftercare/ai-server start
