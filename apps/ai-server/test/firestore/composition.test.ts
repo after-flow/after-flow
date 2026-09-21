@@ -20,8 +20,8 @@ for (const mode of ['legacy', 'orca'] as const) test(`${mode} composition valida
     recordMetric: async () => assert.fail('no inference during bootstrap'), researchScope: async () => assert.fail('no execution during bootstrap'),
     catalogs: [{ id: 'catalog', version: 'v1', reviewedAt, expiresAt: expiry, reviewReference: 'synthetic', allowedHosts: ['official.example'],
       entries: [{ id: 'source', catalogId: 'catalog', title: '合成資料', issuer: '合成機関', url: 'https://official.example/procedure', keywords: ['必要書類'] }] }],
-    templates: [{ id: 'template', version: 'v1', reviewedAt, expiresAt: expiry, reviewReference: 'synthetic', sourceCatalogIds: ['catalog'],
-      task: { title: '合成手続き', summary: '', stage: 'government', category: 'fixture', submitTo: '合成機関', evidenceRequired: true, assetDisposal: false }, prerequisites: [], requiredDocuments: ['合成資料'] }],
+    templates: [{ id: 'template', version: 'v1', reviewedAt, expiresAt: expiry, reviewReference: 'synthetic', procedureId: 'kyoukaikenpo-burial-benefit', sourceCatalogIds: ['catalog'],
+      task: { title: '合成手続き', summary: '', stage: 'government', category: 'fixture', submitTo: '全国健康保険協会', evidenceRequired: true, assetDisposal: false }, prerequisites: [], requiredDocuments: ['合成資料'] }],
     maxSourceAgeMs: 60000, sourceTimeoutMs: 1000,
   }
   await assert.rejects(startConfiguredAiService({ ...config, models: new Map() }, { port: 0 }), /binding/)

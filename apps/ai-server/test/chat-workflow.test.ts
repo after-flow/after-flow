@@ -20,7 +20,7 @@ function setup() {
       result: async value => { reported.push(value); return { applied: true, reason: null } } },
     authorizeRoute: async () => ({ routeId: 'chat-reply/v1', evidenceId: 'fixture-orch-only' }),
     scope: { id: 'brief', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き', institution: '架空機関', jurisdiction: '架空市', municipality: '架空市',
-      taskTitles: ['架空手続き'], taskCategories: ['fixture'], sourceCatalogIds: ['catalog'], questions: [{ id: 'where', text: '提出先を確認する' }] },
+      sourceCatalogIds: ['catalog'], questions: [{ id: 'where', text: '提出先を確認する' }] },
     catalogs: [{ id: 'catalog', allowedHosts: ['official.example'] }], timeoutMs: 1000, maxSourceAgeMs: 60000,
     beforeTool: async () => {}, research: { search: async () => { throw new Error('Unexpected external lookup') }, read: async () => { throw new Error('Unexpected read') } },
   }

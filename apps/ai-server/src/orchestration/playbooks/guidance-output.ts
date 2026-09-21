@@ -176,7 +176,7 @@ export interface GuidanceDiagnostics {
 }
 
 export function guidanceResult(input: {
-  draft: GuidanceDraft; sources: readonly SourceDocument[]; research: ResearchEvidence; proof: ContextProof; resultId: string; target: string
+  draft: GuidanceDraft; sources: readonly SourceDocument[]; research: ResearchEvidence; proof: ContextProof; resultId: string; target: string | null
   /** 案件への適用で未確認の事項。省略時は確認不要として扱う。 */
   unresolved?: readonly string[]
   /** 主張と根拠の対応を検証する規則。省略時は引用の有無と数量だけを検証する。 */
