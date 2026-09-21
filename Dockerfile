@@ -42,7 +42,7 @@ COPY --from=backend-build --chown=node:node /opt/backend ./
 FROM runtime AS ai-production
 COPY --from=ai-build --chown=node:node /opt/ai ./
 
-FROM nginxinc/nginx-unprivileged:1.28.0-alpine@sha256:c97ff0bf7cbae369953c6da1232ec14ad9f971d66360c5698db0856a4cd657a0 AS web-production
+FROM nginxinc/nginx-unprivileged:1.31.6-alpine@sha256:b54ac358b83fc6c965793fd271839b4ea4cdb6e99895bb19618cbc2ca152d972 AS web-production
 ENV PORT=8080 BACKEND_ORIGIN=http://backend-server:8080 \
     NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
     NGINX_ENVSUBST_FILTER="^(PORT|BACKEND_ORIGIN|NGINX_LOCAL_RESOLVERS)$"
