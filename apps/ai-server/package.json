@@ -17,6 +17,7 @@
     "eval:fixture": "pnpm contracts:build && tsx eval/run.ts",
     "eval:compare": "tsx eval/compare.ts",
     "eval:live-guidance": "pnpm contracts:build && tsx eval/live-guidance.ts",
+    "eval:compare-skill-loading": "tsx eval/compare-skill-loading.ts",
     "smoke:orca": "pnpm contracts:build && tsx scripts/smoke-orca.ts",
     "reconcile:orca-cost": "tsx scripts/reconcile-orca-cost.ts"
   },

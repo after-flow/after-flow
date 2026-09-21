@@ -21,6 +21,7 @@
     "test:firestore": "pnpm --filter @aftercare/backend-server test:firestore && pnpm --filter @aftercare/ai-server test:firestore",
     "eval:ai": "pnpm --filter @aftercare/ai-server eval:fixture",
     "eval:ai:live": "pnpm --filter @aftercare/ai-server eval:live-guidance",
+    "eval:ai:skill-loading": "pnpm --filter @aftercare/ai-server eval:compare-skill-loading",
     "smoke:orca": "pnpm --filter @aftercare/ai-server smoke:orca"
   },
   "devDependencies": {

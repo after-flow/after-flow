@@ -7,7 +7,7 @@ import { contentHash } from '../src/orchestration/context/builder.js'
 import { readHackathonComposition } from '../src/infrastructure/execution/hackathon-config.js'
 import { createAuthorizedOrcaModels } from '../src/infrastructure/mastra/authorized-models.js'
 import type { ProviderMetric } from '../src/infrastructure/mastra/authorized-models.js'
-import { createProcedureGuidanceWorkflow } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
+import { createProcedureGuidanceWorkflowForEvaluation, guidanceSkillLoadingModeSchema } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
 import { inferenceReservation } from '../src/orchestration/models/policy.js'
 import { createOrcaModel } from '../src/infrastructure/orcarouter/models.js'
 import { readOrcaApiKey, readOrcaModelIds } from '../src/infrastructure/orcarouter/environment.js'
@@ -19,12 +19,14 @@ import { liveGuidanceCases, liveGuidanceDatasetVersion } from './live-guidance-d
 const { values } = parseArgs({ options: {
   'env-file': { type: 'string' }, repetitions: { type: 'string', default: '2' }, 'max-usd': { type: 'string' },
   cases: { type: 'string', default: String(liveGuidanceCases.length) },
+  'skill-loading': { type: 'string', default: 'staged' },
 }, strict: true, allowPositionals: false })
 const repetitions = Number(values.repetitions), caseLimit = Number(values.cases)
 const maxUsd = Number(values['max-usd'] ?? process.env.AI_LIVE_EVAL_MAX_USD)
+const skillLoading = guidanceSkillLoadingModeSchema.parse(values['skill-loading'])
 if (!Number.isInteger(repetitions) || repetitions < 2 || repetitions > 5 || !Number.isInteger(caseLimit) || caseLimit < 1 || caseLimit > liveGuidanceCases.length ||
     !Number.isFinite(maxUsd) || maxUsd <= 0 || maxUsd > 20) {
-  throw new Error('Usage: eval:live-guidance --max-usd <0..20> [--repetitions 2..5] [--cases 1..8] [--env-file path]')
+  throw new Error('Usage: eval:live-guidance --max-usd <0..20> [--repetitions 2..5] [--cases 1..8] [--skill-loading staged|legacy-all] [--env-file path]')
 }
 const envFile = values['env-file'] ?? new URL('../../../.env', import.meta.url)
 const apiKey = await readOrcaApiKey(envFile)
@@ -54,7 +56,7 @@ const maxRequestUsd = Math.max(...composition.policies.map(policy => inferenceRe
 const metrics: ProviderMetric[] = []
 let provisionalSpentUsd = 0
 const trials: Array<Record<string, unknown>> = []
-const reportPath = resolve('../../reports/ai-eval-live-guidance.json')
+const reportPath = resolve('../../reports', skillLoading === 'staged' ? 'ai-eval-live-guidance.json' : 'ai-eval-live-guidance-legacy-all.json')
 const startedAt = new Date().toISOString()
 
 for (let repetition = 1; repetition <= repetitions; repetition++) {
@@ -88,7 +90,7 @@ for (let repetition = 1; repetition <= repetitions; repetition++) {
     try {
       const [core, researchModel] = await Promise.all([authorize('core'), authorize('research')])
       const scope = await composition.researchScope(artifact)
-      const result = await (await createProcedureGuidanceWorkflow({
+      const result = await (await createProcedureGuidanceWorkflowForEvaluation({
         backend: { context: async () => artifact, control: async () => ({ instruction: 'CONTINUE', reason: null, caseVersion: 1 }),
           result: async input => { reported.current = input; return { applied: true, reason: null } } },
         models: { core: core.models, research: researchModel.models }, scope, catalogs: composition.catalogs, research, signal,
@@ -97,7 +99,7 @@ for (let repetition = 1; repetition <= repetitions; repetition++) {
         allowDraftDefinitions: composition.allowDraftDefinitions ?? false,
         budget: { charge, inferenceChargedByProviderAdapter: true,
           inference: { core: maxReservation('core'), research: maxReservation('research') } },
-      }).createRun()).start({ inputData: { resultId: randomUUID() } })
+      }, skillLoading).createRun()).start({ inputData: { resultId: randomUUID() } })
       workflowStatus = result.status
       if (result.status === 'failed') safeFailure = 'WORKFLOW_FAILED'
     } catch (error) {
@@ -131,6 +133,7 @@ function maxReservation(role: 'core' | 'research') {
 const durations = trials.map(trial => Number(trial.elapsedMs)).sort((a, b) => a - b)
 const percentile = (fraction: number) => durations[Math.max(0, Math.ceil(durations.length * fraction) - 1)] ?? null
 const report = { schemaVersion: 1, mode: 'live-orcarouter-task-guidance', datasetVersion: liveGuidanceDatasetVersion,
+  skillLoading, modelIds: composition.policies.map(policy => policy.modelId), caseIds: selected.map(item => item.id),
   startedAt, completedAt: new Date().toISOString(), caseCount: selected.length, repetitions, maxUsd, provisionalSpentUsd,
   passed: false,
   completionRate: trials.filter(trial => trial.workflowStatus === 'success').length / trials.length,
@@ -149,5 +152,6 @@ await mkdir(resolve('../../reports'), { recursive: true })
 await writeFile(`${reportPath}.tmp`, JSON.stringify(report, null, 2) + '\n', { mode: 0o600 })
 await rename(`${reportPath}.tmp`, reportPath)
 console.log(JSON.stringify({ report: reportPath, caseCount: report.caseCount, repetitions, passed: report.passed,
-  completionRate: report.completionRate, p50Ms: report.p50Ms, p95Ms: report.p95Ms, provisionalSpentUsd }))
+  skillLoading, completionRate: report.completionRate, p50Ms: report.p50Ms, p95Ms: report.p95Ms,
+  totalInputTokens: report.totalInputTokens, provisionalSpentUsd }))
 if (!report.passed) process.exitCode = 1

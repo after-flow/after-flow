@@ -43,6 +43,20 @@ pnpm --filter @aftercare/ai-server eval:live-guidance --max-usd 5 --repetitions 
 
 実行結果は同じ入力でも変動する。小規模なハッカソン受け入れであり、法的な正確性、全手続き、本番SLO、大規模費用予測を保証しない。現在の検索は外部Web検索ではなく、レビュー済みの協会けんぽ公式URLカタログ内のローカル検索と直接取得である。
 
+## 段階別Skill読み込みの比較
+
+本番Workflowは、計画・調査・回答の各段階に必要なSkillだけを読み込む。全Skillを常時読み込む旧方式は評価用entrypointだけで再現でき、dispatch入力や環境変数から本番動作を変更できない。
+
+```sh
+pnpm eval:ai:live --max-usd 5 --repetitions 2 --cases 8 --skill-loading legacy-all
+pnpm eval:ai:live --max-usd 5 --repetitions 2 --cases 8 --skill-loading staged
+pnpm eval:ai:skill-loading
+```
+
+比較コマンドはDataset、ケース、反復回数、モデルが一致し、両方式が同じ品質・安全ゲートを通過し、段階別読み込みの実測入力tokenが減った場合だけ成功する。品質は単一の確率的なスコアの大小ではなく、上記の受け入れゲートを両方式へ同一に適用して判定する。
+
+2026-09-22の比較（8ケース×2回、`openai/gpt-4.1`、fallback `google/gemini-2.5-flash`）では、両方式とも完了率100%、引用被覆率100%、禁止主張0%で合格した。入力tokenは旧方式376,714から段階別読み込み364,086へ12,628 token（3.35%）減った。平均必須事実再現率は旧方式50.0%、段階別読み込み35.7%で、両方とも受け入れ基準の33%以上だった。OrcaRouter応答上の暫定費用は合計1.515536 USDで、確定請求額ではない。
+
 ## 費用と障害の確認
 
 各Provider attemptはAI Runtime Firestoreの `provider_metrics` に本文なしで保存する。確定費用はOrcaRouterの請求画面またはレビュー済みexportからrequest IDと金額だけを取り出し、次の形式で照合する。
