@@ -3,10 +3,11 @@ import { test } from 'node:test'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { startConfiguredAiService } from '../../src/infrastructure/execution/composition.js'
 import type { AiServiceComposition } from '../../src/infrastructure/execution/composition.js'
+import { orcaSdkProvider } from '../../src/infrastructure/orcarouter/models.js'
 import { scriptedModel } from '../helpers/scripted-model.js'
 
 const options = { skip: !process.env.AI_RUNTIME_EMULATOR_HOST }
-test('composition validates reviewed bindings, owns HTTP/worker/storage and keeps unavailable operations closed', options, async () => {
+for (const mode of ['legacy', 'orca'] as const) test(`${mode} composition validates bindings, owns HTTP/worker/storage and keeps unavailable operations closed`, options, async () => {
   const expiry = new Date(Date.now() + 60000).toISOString(), reviewedAt = new Date(Date.now() - 60000).toISOString()
   const config: AiServiceComposition = {
     serviceToken: 'composition-fixture', backend: { baseUrl: 'https://backend.invalid', serviceToken: 'synthetic' }, runtimeEncryptionKey: randomBytes(32).toString('base64'),
@@ -24,9 +25,15 @@ test('composition validates reviewed bindings, owns HTTP/worker/storage and keep
     maxSourceAgeMs: 60000, sourceTimeoutMs: 1000,
   }
   await assert.rejects(startConfiguredAiService({ ...config, models: new Map() }, { port: 0 }), /binding/)
+  const { models: _models, orch: _orch, ...base } = config
+  const orca: AiServiceComposition = { ...base, orca: { apiKey: 'synthetic-unused-during-bootstrap' }, policies: base.policies.map((policy, index) => {
+    const modelId = index === 0 ? 'openai/gpt-4o-mini' : 'google/gemini-2.5-flash'
+    return { ...policy, modelId, sdkProvider: orcaSdkProvider(modelId) }
+  }) }
+  await assert.rejects(startConfiguredAiService({ ...orca, policies: base.policies }, { port: 0 }))
   const previousDatabase = process.env.AI_RUNTIME_DATABASE_ID
   process.env.AI_RUNTIME_DATABASE_ID = `ai-runtime-composition-${randomUUID()}`
-  const host = await startConfiguredAiService(config, { port: 0, shutdownMs: 10000 })
+  const host = await startConfiguredAiService(mode === 'orca' ? orca : config, { port: 0, shutdownMs: 10000 })
   try {
     const origin = `http://127.0.0.1:${host.port}/internal/v1`
     assert.equal((await fetch(`${origin}/health`)).status, 200)
