@@ -90,6 +90,8 @@ export interface TaskRequiredDocumentResource {
   label: string
   documentId: string | null
   source: 'MANUAL' | 'AI' | 'RULE_ENGINE'
+  /** 窓口で消し込む「用意できた」印。書類の紐付け（documentId）とは独立。 */
+  collected: boolean
 }
 
 export interface TaskResource {

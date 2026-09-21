@@ -48,7 +48,7 @@ export const UNDECIDED_INHERITANCE: InheritanceDecisionReader = {
 interface TaskReferencesInput {
   assigneeId?: string | null
   dependencyTaskIds?: string[]
-  requiredDocuments?: { id: string; label: string; documentId: string | null }[]
+  requiredDocuments?: { id: string; label: string; documentId: string | null; collected?: boolean }[]
 }
 
 export interface CreateTaskInput extends TaskReferencesInput {
@@ -331,13 +331,20 @@ export class TaskService {
       if (input.assigneeId !== undefined) patch.assigneeId = input.assigneeId
       if (input.dependencyTaskIds !== undefined) patch.dependencyTaskIds = input.dependencyTaskIds
       if (input.requiredDocuments !== undefined) {
-        patch.requiredDocuments = input.requiredDocuments.map(ref => ({ ...ref, source: 'MANUAL' }))
+        // 既にある項目は出所（規則・AI）を保ち、新しく足した項目だけ手動扱いにする
+        patch.requiredDocuments = input.requiredDocuments.map(ref => ({
+          ...ref,
+          collected: ref.collected ?? false,
+          source: current.requiredDocuments.find(existing => existing.id === ref.id)?.source ?? 'MANUAL',
+        }))
       }
       if (current.status === 'COMPLETED' && (input.dependencyTaskIds || input.requiredDocuments)) {
         throw errors.preconditionFailed({ details: { reason: 'REOPEN_REQUIRED' } })
       }
       if (input.title !== undefined && input.title !== current.title) patch.title = input.title
       if (input.summary !== undefined && input.summary !== current.summary) patch.summary = input.summary
+      // 利用者が直した名前・説明は、以後の洗い出しで規則の文言に戻さない
+      if (patch.title !== undefined || patch.summary !== undefined) patch.textSource = 'MANUAL'
       if (input.submitTo !== undefined && (input.submitTo ?? null) !== current.submitTo) {
         patch.submitTo = input.submitTo ?? null
         // 非 null を送ったときだけ具体化とみなし、以後の洗い出しで上書きしない。
@@ -636,7 +643,7 @@ export class TaskService {
       source: entity.source,
       evidenceRequired: entity.evidenceRequired,
       assetDisposal: entity.assetDisposal,
-      requiredDocuments: entity.requiredDocuments,
+      requiredDocuments: entity.requiredDocuments.map(ref => ({ ...ref, collected: ref.collected ?? false })),
       completionReportedBy: entity.completionReportedBy,
       completionReportedAt: entity.completionReportedAt,
       deadline: deadlineEntity ? toDeadlineView(deadlineEntity, today) : null,

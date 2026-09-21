@@ -16,6 +16,7 @@ export type RegistrationState =
   | { status: 'idle' | 'pending' }
   | { status: 'registered'; me: MeResource }
   | { status: 'inactive' }
+  | { status: 'email-unverified' }
   | { status: 'error' }
 
 interface AuthContextValue extends AuthState {
@@ -63,9 +64,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
         if (err instanceof ApiError && err.details?.reason === 'EMAIL_NOT_VERIFIED') {
-          // client.ts の `setEmailNotVerifiedHandler` が /verify-email へ送る。
-          // ここでは idle に戻し、メール確認後（auth.emailVerified の変化）に再試行できるようにする。
-          setRegistration({ status: 'idle' })
+          // メール確認後（reload() が auth.emailVerified の変化を購読者へ流す）に再試行する
+          setRegistration({ status: 'email-unverified' })
           registeringFor.current = null
           return
         }

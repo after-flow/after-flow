@@ -148,21 +148,24 @@ export function TasksScreen() {
           </div>
         )}
 
-        {list.length === 0 ? (
-          <Empty
-            title={
-              who != null
-                ? 'この担当の手続きはありません'
-                : tab === 'todo' ? 'やることはありません' : tab === 'waiting' ? '結果待ちの手続きはありません' : 'まだ済んだ手続きはありません'
-            }
-          >
-            {who != null ? '「担当」を「全員」にすると、すべての手続きが表示されます。' : tab === 'waiting' && '役所や金融機関に出し終えた手続きが、ここに並びます。'}
-          </Empty>
-        ) : tab === 'todo' ? (
-          <BucketedList tasks={list} all={visible} base={base} stalled={stalled} nameOf={nameOf} />
-        ) : (
-          <TaskTable tasks={list} all={visible} base={base} stalled={stalled} nameOf={nameOf} />
-        )}
+        {/* タブを切り替えたら中身を短くふわっと出し、切り替わったことを伝える */}
+        <div key={tab} className="animate-fade-in">
+          {list.length === 0 ? (
+            <Empty
+              title={
+                who != null
+                  ? 'この担当の手続きはありません'
+                  : tab === 'todo' ? 'やることはありません' : tab === 'waiting' ? '結果待ちの手続きはありません' : 'まだ済んだ手続きはありません'
+              }
+            >
+              {who != null ? '「担当」を「全員」にすると、すべての手続きが表示されます。' : tab === 'waiting' && '役所や金融機関に出し終えた手続きが、ここに並びます。'}
+            </Empty>
+          ) : tab === 'todo' ? (
+            <BucketedList tasks={list} all={visible} base={base} stalled={stalled} nameOf={nameOf} />
+          ) : (
+            <TaskTable tasks={list} all={visible} base={base} stalled={stalled} nameOf={nameOf} />
+          )}
+        </div>
       </div>
 
       {locked && hiddenCount > 0 && (

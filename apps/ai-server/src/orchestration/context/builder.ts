@@ -12,7 +12,7 @@ import { groundingRulesSchema } from '../playbooks/guidance-grounding.js'
 const fields = {
   case: ['dateOfDeath', 'knownAt', 'municipality', 'status'],
   profile: ['healthInsurance', 'pension', 'occupation', 'realEstate', 'car', 'mortgage'],
-  task: ['title', 'status', 'stage', 'category', 'submitTo', 'source', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal', 'conditional', 'procedureId'],
+  task: ['title', 'status', 'stage', 'category', 'submitTo', 'source', 'procedureId', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal', 'conditional'],
   message: ['role', 'body'],
   persons: ['name', 'relationshipLabel', 'role', 'isHeir', 'specialCircumstance', 'excludedAt'],
   relationships: ['fromPersonId', 'toPersonId', 'kind', 'excludedAt'],
@@ -252,9 +252,10 @@ export const reviewedResearchScopeSchema = z.object({
   id: internalId, version: z.string().min(1).max(40), reviewedAt: z.string().datetime(),
   procedure: z.string().min(1).max(200), institution: z.string().min(1).max(200),
   jurisdiction: z.string().min(1).max(200), municipality: z.string().min(1).max(200).nullable(),
-  /** この scope が対応する ProcedureDefinition。task_guidance では一致した scope だけを使う。chat / planning 用は省略または null。 */
-  procedureId: internalId.nullable().optional(),
+  /** この scope が対応する ProcedureDefinition。task_guidance では Task.procedureId が含まれる scope だけを使う。 */
+  procedureIds: z.array(internalId).min(1).max(20),
   sourceCatalogIds: z.array(internalId).min(1).max(20),
+  sourceCatalogVersions: z.record(internalId, z.string().min(1).max(100)),
   questions: z.array(z.object({ id: internalId, text: z.string().min(1).max(300) }).strict()).min(1).max(12),
   /** 一般案内とは別に、この案件への適用を確かめる事項（#162）。未指定は確認事項なし。 */
   applicabilityChecks: z.array(applicabilityCheckSchema).max(10).optional(),
@@ -293,7 +294,7 @@ export function buildProcedureResearchBrief(context: CoreContext, options: { sco
   if (definition.reviewStatus !== 'reviewed' && !options.allowDraftDefinitions) throw new ContextError('PROCEDURE_NOT_REVIEWED')
   if (missingRequired.length) return { status: 'needs_input' as const, missing: missingRequired.map(missingContextQuestion) }
   const scope = options.scope ? reviewedResearchScopeSchema.parse(options.scope) : null
-  if (scope && scope.procedureId === definition.id) {
+  if (scope && scope.procedureIds.includes(definition.id)) {
     const municipality = context.modelInput.facts.find(fact => fact.group === 'case' && fact.field === 'municipality')?.value
     if (scope.municipality !== null && municipality !== scope.municipality) return { status: 'needs_input' as const, missing: ['対象の市区町村を確認してください。'] }
     return { status: 'ready' as const, brief: scopeBrief(scope) }

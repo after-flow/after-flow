@@ -30,8 +30,8 @@ describe('PLACEHOLDER_RULE_CATALOG', () => {
     assert.doesNotThrow(() => assertRuleCatalogUsable(PLACEHOLDER_RULE_CATALOG))
   })
 
-  it('27手続き・17期限ルールを持つ', () => {
-    assert.equal(PLACEHOLDER_RULE_CATALOG.initialProcedures.length, 27)
+  it('28手続き・17期限ルールを持つ', () => {
+    assert.equal(PLACEHOLDER_RULE_CATALOG.initialProcedures.length, 28)
     assert.equal(PLACEHOLDER_RULE_CATALOG.deadlineRules.length, 17)
   })
 
@@ -104,7 +104,7 @@ describe('PLACEHOLDER_RULE_CATALOG', () => {
       (procedure) => procedure.applicability.default === 'no' && procedure.applicability.rules.length > 0,
     )
     assert.equal(noByDefault.length, 5)
-    assert.equal(PLACEHOLDER_RULE_CATALOG.initialProcedures.length - noByDefault.length, 22)
+    assert.equal(PLACEHOLDER_RULE_CATALOG.initialProcedures.length - noByDefault.length, 23)
   })
 
   it('targetDate は will-check / collect-family-register / estate-survey の3件だけに付く', () => {

@@ -72,6 +72,68 @@
   --color-state-red-soft: #fbeae8;
   --color-state-purple: #5f3a92;
   --color-state-purple-soft: #f0ebf9;
+
+  /*
+    動き。押した・開いた・出てきた、が分かるだけの短いものにとどめる（150〜240ms）。
+    何度も繰り返す動きや、目を引くための動きは使わない。
+    OS で動きを減らす設定にしている方には、下の prefers-reduced-motion でほぼ動かさない。
+  */
+  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-rise-in: rise-in 200ms var(--ease-out-soft);
+  --animate-pop-in: pop-in 180ms var(--ease-out-soft);
+  --animate-sheet-up: sheet-up 240ms var(--ease-out-soft);
+  --animate-dock-in: dock-in 220ms var(--ease-out-soft);
+  --animate-drawer-in: drawer-in 220ms var(--ease-out-soft);
+  --animate-check: check 240ms var(--ease-out-soft);
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  /* 下から少しだけ浮き上がる（お知らせ・開いた一覧・会話の吹き出し） */
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  /* 画面の中央に出すダイアログ */
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  /* スマホで下から出す窓・ダイアログ */
+  @keyframes sheet-up {
+    from {
+      transform: translateY(100%);
+    }
+  }
+  /* 右に出す相談の窓。端から全部すべらせると大げさなので、少しだけ動かす */
+  @keyframes dock-in {
+    from {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+  }
+  /* スマホのメニュー */
+  @keyframes drawer-in {
+    from {
+      transform: translateX(-100%);
+    }
+  }
+  /* 持ち物に印を付けたとき */
+  @keyframes check {
+    0% {
+      transform: scale(0.6);
+    }
+    60% {
+      transform: scale(1.15);
+    }
+  }
 }
 
 @layer base {
@@ -90,6 +152,17 @@
     font-feature-settings: 'palt' 1;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* 最後の行に1〜2文字だけ残る折り返し（「登録す／る」など）を避ける。対応していないブラウザではふつうに折り返す */
+    text-wrap: pretty;
+  }
+
+  /*
+    縦のスクロールバーがある画面と無い画面を行き来しても、中身が左右にずれないよう、バーを常に出しておく
+    （Windows など、バーが幅をとる環境で 15px ほどずれていた）。
+    scrollbar-gutter: stable は html では効かないブラウザがあったので使わない
+  */
+  html {
+    overflow-y: scroll;
   }
 
   :focus-visible {
@@ -104,10 +177,18 @@
     line-height: 1.45;
     font-weight: 700;
     letter-spacing: 0.01em;
+    /* 見出しは文節の切れ目で折り返す（「手続きとして／追加する」）。本文に使うと右端が不ぞろいになるので見出しだけ。
+       html の lang="ja" が前提で、対応していないブラウザではふつうに折り返す */
+    word-break: auto-phrase;
   }
 
   ::selection {
     background: var(--color-rd-primary-soft);
+  }
+
+  /* 「くわしく」などの開閉する部分は、開いた中身を短く浮き上がらせる */
+  details[open] > :not(summary) {
+    animation: var(--animate-rise-in);
   }
 
   @media (prefers-reduced-motion: reduce) {

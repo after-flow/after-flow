@@ -107,6 +107,27 @@ export const researchSynthesisSchema = z.object({
   conflicts: z.array(z.string().min(1).max(1000)).max(20),
 }).strict()
 
+/**
+ * Models occasionally return more evidence snippets than the contract allows.
+ * Keeping the first bounded set is safe because every retained quote is still
+ * verified against the retrieved section before it can support guidance.
+ * Unknown shapes and overlong text continue to fail closed.
+ */
+export function boundResearchSynthesis(input: unknown): unknown {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input
+  const value = input as Record<string, unknown>
+  return {
+    ...value,
+    answers: Array.isArray(value.answers) ? value.answers.slice(0, 12).map(answer => {
+      if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return answer
+      const item = answer as Record<string, unknown>
+      return { ...item, evidence: Array.isArray(item.evidence) ? item.evidence.slice(0, 5) : item.evidence }
+    }) : value.answers,
+    missing: Array.isArray(value.missing) ? value.missing.slice(0, 20) : value.missing,
+    conflicts: Array.isArray(value.conflicts) ? value.conflicts.slice(0, 20) : value.conflicts,
+  }
+}
+
 /** Harness-owned evidence. Null means started but not successfully validated. */
 export const researchEvidenceSchema = z.object({
   briefs: z.array(researchBriefSchema).max(2),
@@ -182,7 +203,7 @@ export function verifyQuote(evidence: EvidenceQuote, sources: ReadonlyMap<string
  * 案内の各項目はハーネスが検証済みの引用と照合する（guidance-grounding）。
  */
 export function finalizeResearchSynthesis(input: unknown, brief: ResearchBrief, sources: readonly SourceDocument[]): ResearchFindings {
-  const synthesized = researchSynthesisSchema.parse(input)
+  const synthesized = researchSynthesisSchema.parse(boundResearchSynthesis(input))
   const retrieved = new Map(sources.map(source => [source.id, source]))
   const applicability = `${brief.jurisdiction}の${brief.institution}が扱う${brief.procedure}`
   const questions = new Map(brief.questions.map(question => [question.id, question]))

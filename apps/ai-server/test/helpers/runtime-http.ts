@@ -22,7 +22,7 @@ const runtime = new DurableExecutionRuntime({ store, snapshots: new FirestoreWor
     budget: { charge: session.guard, inference: { core: { tokens: 10000, costMicros: 10000, maxOutputTokens: 1000 }, research: { tokens: 10000, costMicros: 10000, maxOutputTokens: 1000 } } },
     authorizeRoute: async () => ({ routeId: 'chat-reply/v1', evidenceId: 'synthetic-orch-only' }),
     scope: { id: 'brief', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き', institution: '架空機関', jurisdiction: '架空地域', municipality: null,
-      sourceCatalogIds: ['catalog'], questions: [{ id: 'where', text: '提出先を確認する' }] },
+      procedureIds: ['fixture-procedure'], sourceCatalogIds: ['catalog'], sourceCatalogVersions: { catalog: '1' }, questions: [{ id: 'where', text: '提出先を確認する' }] },
     catalogs: [{ id: 'catalog', allowedHosts: ['official.example'] }], timeoutMs: 1000, maxSourceAgeMs: 60000, beforeTool: () => session.guard(),
     research: { search: async () => { throw new Error('Unexpected fixture search') }, read: async () => { throw new Error('Unexpected fixture retrieval') } },
   }) }) },

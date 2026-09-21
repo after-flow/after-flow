@@ -7014,6 +7014,11 @@ paths:
                       municipality:
                         nullable: true
                         type: string
+                      funeralCompletedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                       ownerPersonId:
                         nullable: true
                         type: string
@@ -7069,6 +7074,7 @@ paths:
                       - ownerName
                       - relationshipToDeceased
                       - municipality
+                      - funeralCompletedAt
                       - ownerPersonId
                       - selfPersonId
                       - aiPlanningRestriction
@@ -7252,6 +7258,11 @@ paths:
                         municipality:
                           nullable: true
                           type: string
+                        funeralCompletedAt:
+                          nullable: true
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                         ownerPersonId:
                           nullable: true
                           type: string
@@ -7307,6 +7318,7 @@ paths:
                         - ownerName
                         - relationshipToDeceased
                         - municipality
+                        - funeralCompletedAt
                         - ownerPersonId
                         - selfPersonId
                         - aiPlanningRestriction
@@ -7468,6 +7480,11 @@ paths:
                       municipality:
                         nullable: true
                         type: string
+                      funeralCompletedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                       ownerPersonId:
                         nullable: true
                         type: string
@@ -7523,6 +7540,7 @@ paths:
                       - ownerName
                       - relationshipToDeceased
                       - municipality
+                      - funeralCompletedAt
                       - ownerPersonId
                       - selfPersonId
                       - aiPlanningRestriction
@@ -7704,6 +7722,11 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 50
+                funeralCompletedAt:
+                  nullable: true
+                  type: string
+                  format: date-time
+                  pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
               required:
                 - expectedVersion
               additionalProperties: false
@@ -7795,6 +7818,11 @@ paths:
                       municipality:
                         nullable: true
                         type: string
+                      funeralCompletedAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                       ownerPersonId:
                         nullable: true
                         type: string
@@ -7850,6 +7878,7 @@ paths:
                       - ownerName
                       - relationshipToDeceased
                       - municipality
+                      - funeralCompletedAt
                       - ownerPersonId
                       - selfPersonId
                       - aiPlanningRestriction
@@ -10045,11 +10074,14 @@ paths:
                                   - MANUAL
                                   - AI
                                   - RULE_ENGINE
+                              collected:
+                                type: boolean
                             required:
                               - id
                               - label
                               - documentId
                               - source
+                              - collected
                             additionalProperties: false
                         completionReportedBy:
                           nullable: true
@@ -10507,6 +10539,8 @@ paths:
                         minLength: 1
                         maxLength: 128
                         pattern: ^[A-Za-z0-9_-]+$
+                      collected:
+                        type: boolean
                     required:
                       - id
                       - label
@@ -10641,11 +10675,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -11259,11 +11296,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -11693,6 +11733,8 @@ paths:
                         minLength: 1
                         maxLength: 128
                         pattern: ^[A-Za-z0-9_-]+$
+                      collected:
+                        type: boolean
                     required:
                       - id
                       - label
@@ -11842,11 +11884,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -12398,11 +12443,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -12955,11 +13003,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -18560,6 +18611,11 @@ paths:
                           municipality:
                             nullable: true
                             type: string
+                          funeralCompletedAt:
+                            nullable: true
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
                           ownerPersonId:
                             nullable: true
                             type: string
@@ -18615,6 +18671,7 @@ paths:
                           - ownerName
                           - relationshipToDeceased
                           - municipality
+                          - funeralCompletedAt
                           - ownerPersonId
                           - selfPersonId
                           - aiPlanningRestriction

@@ -55,7 +55,7 @@ function pick(entity: EntityBase, fields: readonly string[]): Record<string, unk
   const values = entity as unknown as Record<string, unknown>
   return Object.fromEntries(['id', 'version', ...fields].filter(key => values[key] !== undefined).map(key => [key, values[key]]))
 }
-const taskFields = ['title', 'status', 'stage', 'category', 'submitTo', 'source', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal', 'conditional', 'procedureId']
+const taskFields = ['title', 'status', 'stage', 'category', 'submitTo', 'source', 'procedureId', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal', 'conditional']
 const contextCollections: [CollectionDescriptor, string[]][] = [
   [collections.persons, ['name', 'relationshipLabel', 'role', 'isHeir', 'specialCircumstance', 'excludedAt']],
   [collections.relationships, ['fromPersonId', 'toPersonId', 'kind', 'excludedAt']],

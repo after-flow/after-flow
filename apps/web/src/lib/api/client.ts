@@ -116,14 +116,27 @@ async function registerSelf(): Promise<void> {
   return registering
 }
 
-export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const method = options.method ?? 'GET'
-  const idempotencyKey =
-    (options.idempotent ?? isMutatingMethod(method)) ? crypto.randomUUID() : null
+function unavailable(status: number): ApiError {
+  // JSON でない失敗（nginx 502 等）は UNAVAILABLE 相当に正規化する
+  return new ApiError(
+    status,
+    { code: 'UNAVAILABLE', message: '通信に失敗しました。しばらくしてからもう一度お試しください。', retryable: true },
+    null,
+  )
+}
 
+/**
+ * 認証まわりの失敗を吸収して送る。成功しなかった場合は ApiError を投げる。
+ * `/me` 自身は再登録の対象にしない（無限ループになる）。
+ */
+async function sendWithRecovery(
+  path: string,
+  options: RequestOptions,
+  idempotencyKey: string | null,
+): Promise<{ res: Response; text: string }> {
   let { res, text } = await send(path, options, idempotencyKey)
 
-  if (res.status === 401 && path !== '/me') {
+  if (res.status === 401) {
     const port = await getAuthPort()
     const refreshed = await port.getToken(true)
     if (refreshed) {
@@ -155,65 +168,25 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (!res.ok) {
     const failure = isJsonError(text)
     if (failure) throw new ApiError(res.status, failure.error, failure.meta.requestId)
-    // JSON でない失敗（nginx 502 等）は UNAVAILABLE 相当に正規化する
-    throw new ApiError(
-      res.status,
-      { code: 'UNAVAILABLE', message: '通信に失敗しました。しばらくしてからもう一度お試しください。', retryable: true },
-      null,
-    )
+    throw unavailable(res.status)
   }
+  return { res, text }
+}
 
+function idempotencyKeyFor(options: RequestOptions): string | null {
+  const method = options.method ?? 'GET'
+  return (options.idempotent ?? isMutatingMethod(method)) ? crypto.randomUUID() : null
+}
+
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { res, text } = await sendWithRecovery(path, options, idempotencyKeyFor(options))
   if (res.status === 204 || !text) return undefined as T
   const success = JSON.parse(text) as ApiSuccess<T>
   return success.data
 }
 
 async function requestList<T>(path: string, options: RequestOptions = {}): Promise<Page<T>> {
-  const method = options.method ?? 'GET'
-  const idempotencyKey =
-    (options.idempotent ?? isMutatingMethod(method)) ? crypto.randomUUID() : null
-
-  let { res, text } = await send(path, options, idempotencyKey)
-
-  if (res.status === 401 && path !== '/me') {
-    const port = await getAuthPort()
-    const refreshed = await port.getToken(true)
-    if (refreshed) {
-      ;({ res, text } = await send(path, options, idempotencyKey))
-    }
-    if (res.status === 401) {
-      onUnauthorized?.()
-      const failure = isJsonError(text)
-      throw new ApiError(401, failure?.error ?? null, failure?.meta.requestId ?? null)
-    }
-  }
-
-  if (res.status === 403) {
-    const failure = isJsonError(text)
-    if (failure?.error.code === 'FORBIDDEN' && failure.error.details?.reason === 'NOT_REGISTERED') {
-      try {
-        await registerSelf()
-        ;({ res, text } = await send(path, options, idempotencyKey))
-      } catch {
-        /* 元の403をそのまま投げる */
-      }
-    }
-  }
-
-  if (res.status === 403 && isEmailNotVerified(isJsonError(text))) {
-    onEmailNotVerified?.()
-  }
-
-  if (!res.ok) {
-    const failure = isJsonError(text)
-    if (failure) throw new ApiError(res.status, failure.error, failure.meta.requestId)
-    throw new ApiError(
-      res.status,
-      { code: 'UNAVAILABLE', message: '通信に失敗しました。しばらくしてからもう一度お試しください。', retryable: true },
-      null,
-    )
-  }
-
+  const { text } = await sendWithRecovery(path, options, idempotencyKeyFor(options))
   const success = JSON.parse(text) as ApiSuccess<T[]>
   return { items: success.data, nextCursor: success.meta.nextCursor }
 }
@@ -221,22 +194,26 @@ async function requestList<T>(path: string, options: RequestOptions = {}): Promi
 /**
  * 書類の原本のように、JSON ではない中身を受け取る。
  * 認証ヘッダーが要るため <img src> に URL を直接渡せず、いったん Blob として受け取る。
+ * 401 は request() と同じく「強制更新 → 1回だけ再送 → それでも401ならサインアウト」。
  */
 export async function requestBlob(path: string, signal?: AbortSignal): Promise<Blob> {
   const port = await getAuthPort()
-  const headers: Record<string, string> = {}
-  const token = await port.getToken()
-  if (token) headers.Authorization = `Bearer ${token}`
-  const res = await fetch(`${BASE_URL}${path}`, { headers, signal })
+  const fetchWith = async (token: string | null) => {
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    return fetch(`${BASE_URL}${path}`, { headers, signal })
+  }
+  let res = await fetchWith(await port.getToken())
   if (res.status === 401) {
     const refreshed = await port.getToken(true)
-    if (refreshed) return requestBlob(path, signal)
-    onUnauthorized?.()
+    if (refreshed) res = await fetchWith(refreshed)
+    if (res.status === 401) onUnauthorized?.()
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     const failure = isJsonError(text)
-    throw new ApiError(res.status, failure?.error ?? null, failure?.meta.requestId ?? null)
+    if (failure) throw new ApiError(res.status, failure.error, failure.meta.requestId)
+    throw unavailable(res.status)
   }
   return res.blob()
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readHackathonComposition } from '../src/infrastructure/execution/hackathon-config.js'
+import { assertResearchScopeCatalogs } from '../src/infrastructure/execution/composition.js'
 
 const valid = (): NodeJS.ProcessEnv => ({
   AI_RUNTIME_MODE: 'hackathon',
@@ -28,6 +29,13 @@ test('hackathon composition binds two model families, fixed official sources and
   assert.equal(new Set(config.policies.map(policy => policy.sdkProvider)).size, 2)
   assert.deepEqual(config.catalogs[0]?.allowedHosts, ['www.kyoukaikenpo.or.jp'])
   assert.ok(config.catalogs[0]?.entries.every(entry => new URL(entry.url).hostname === 'www.kyoukaikenpo.or.jp'))
+  const restarted = readHackathonComposition(valid())!
+  assert.equal(restarted.catalogs[0]?.reviewedAt, config.catalogs[0]?.reviewedAt)
+  assert.equal(restarted.catalogs[0]?.expiresAt, config.catalogs[0]?.expiresAt)
+  assert.equal(restarted.policies[0]?.approvedAt, config.policies[0]?.approvedAt)
+  const scope = await config.researchScope({} as never)
+  assert.equal(assertResearchScopeCatalogs(scope, config.catalogs).procedureIds[0], 'kyoukaikenpo-burial-benefit')
+  assert.throws(() => assertResearchScopeCatalogs({ ...scope, sourceCatalogVersions: { [scope.sourceCatalogIds[0]!]: 'stale' } }, config.catalogs), /version mismatch/)
   const grant = await config.grant({} as never)
   assert.deepEqual(grant.providerPolicyIds, ['orca-core-primary', 'orca-core-fallback'])
   assert.deepEqual(grant.dataClasses, ['minimized_case', 'public_research'])

@@ -8,7 +8,7 @@ import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildProcedureResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
 import { GuidanceOutputContractError, guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
-import { finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
+import { boundResearchSynthesis, finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { completeGuidanceAction, createGuidanceWorkingState, guidancePlanDecisionSchema, guidanceResearchPlanDecisionSchema, guidanceWorkingStateSchema } from '../../../orchestration/working-state.js'
 import { createGuidanceAgents } from '../agents/guidance-agents.js'
 import { createResearchTools } from '../tools/research.js'
@@ -96,11 +96,12 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
           await deps.beforeTool(kind)
         },
       })
-      const { coreAgent } = createGuidanceAgents({
+      const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [selection.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
+        coreSkillIds: ['case-assessment'], researchSkillIds: [],
       })
-      const response = await generateStructured(() => coreAgent.generate(JSON.stringify({
+      const response = await generateStructured(() => agents.coreAgent.generate(JSON.stringify({
         goal: '対象手続きの案内を作るために、許可済みの公式調査が必要かを判断してください。内部思考や説明文は出力せず、有限のAction列だけを返してください。',
         context: modelInput,
         approvedBrief: selection.brief,
@@ -118,7 +119,8 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
         structuredOutput: { schema: guidanceResearchPlanDecisionSchema, errorStrategy: 'strict' },
       }), deps.signal)
       const decision = guidancePlanDecisionSchema.parse(response.object)
-      return { ...inputData, brief: selection.brief, workingState: createGuidanceWorkingState({ decision, brief: selection.brief, modelInput }) }
+      return { ...inputData, brief: selection.brief, workingState: createGuidanceWorkingState({ decision, brief: selection.brief, modelInput,
+        skills: agents.skillRefs.core.map(skill => ({ ...skill, phase: 'plan' as const })) }) }
     },
   })
   const research = createStep({
@@ -141,6 +143,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [inputData.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds, evidenceSources: tools.sources,
+        coreSkillIds: ['research-briefing'], researchSkillIds: ['official-source-research', 'evidence-reconciliation'],
       })
       const approvedResearchRequest = researchRequestSchema.parse({
         briefId: inputData.brief.briefId,
@@ -170,19 +173,21 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
           maxSteps: 1,
           toolChoice: 'none',
           abortSignal: deps.signal,
-          structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'strict' },
+          structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'warn' },
         })
-        findings = finalizeResearchSynthesis(repaired.object, inputData.brief, sources)
+        findings = finalizeResearchSynthesis(boundResearchSynthesis(repaired.object), inputData.brief, sources)
         research = researchEvidenceSchema.parse({ briefs: [inputData.brief], outcomes: [{ briefId: inputData.brief.briefId, findings }] })
       }
       if (!findings) throw new Error('Research Agent did not return validated findings')
       if (!sources.length) {
         const missing = findings.missing[0] ?? '確認できる公式資料が見つかりませんでした。'
-        const completed = completeGuidanceAction(inputData.workingState, 'REQUEST_RESEARCH', 'NEEDS_INPUT', research)
+        const completed = completeGuidanceAction(inputData.workingState, 'REQUEST_RESEARCH', 'NEEDS_INPUT', research,
+          [...agents.skillRefs.core, ...agents.skillRefs.research].map(skill => ({ ...skill, phase: 'research' as const })))
         const workingState = guidanceWorkingStateSchema.parse({ ...completed, unknowns: [...completed.unknowns, { id: 'official-source', question: missing }] })
         return { ...inputData, researchRequest, sources, research, workingState }
       }
-      const workingState = completeGuidanceAction(inputData.workingState, 'REQUEST_RESEARCH', 'GENERATE_GUIDANCE', research)
+      const workingState = completeGuidanceAction(inputData.workingState, 'REQUEST_RESEARCH', 'GENERATE_GUIDANCE', research,
+        [...agents.skillRefs.core, ...agents.skillRefs.research].map(skill => ({ ...skill, phase: 'research' as const })))
       return { ...inputData, researchRequest, sources, research, workingState }
     },
   })
@@ -202,9 +207,10 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
         maxSourceAgeMs: deps.maxSourceAgeMs, timeoutMs: deps.timeoutMs,
         beforeTool: async () => { throw new Error('Guidance generation cannot execute research tools') },
       })
-      const { coreAgent } = createGuidanceAgents({
+      const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [inputData.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
+        coreSkillIds: ['grounded-guidance'], researchSkillIds: [],
       })
       const findings = inputData.research.outcomes[0]?.findings
       if (!findings) throw new Error('Guidance generation requires a completed research action')
@@ -232,7 +238,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       let validationIssues: { path: PropertyKey[]; code: string; message: string }[] = []
       for (let attempt = 0; attempt < 2; attempt++) {
         if (attempt) await checkControl()
-        const response = await coreAgent.generate(JSON.stringify({
+        const response = await agents.coreAgent.generate(JSON.stringify({
           ...coreInput,
           ...(attempt ? { repair: {
             instruction: '前回の出力は契約に適合しませんでした。内容を省略せず、項目を分けて上限内のJSONを再生成してください。文字列を途中で切りません。',
@@ -248,7 +254,8 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       }
       if (!draft) throw new GuidanceOutputContractError()
       deps.signal.throwIfAborted()
-      return { ...inputData, draft, workingState: completeGuidanceAction(inputData.workingState, 'GENERATE_GUIDANCE', 'REPORT') }
+      return { ...inputData, draft, workingState: completeGuidanceAction(inputData.workingState, 'GENERATE_GUIDANCE', 'REPORT', undefined,
+        agents.skillRefs.core.map(skill => ({ ...skill, phase: 'generate' as const }))) }
     },
   })
   const report = createStep({
@@ -263,7 +270,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       // 表示名は Definition の title。Task の表示名は Context に来ない。
       const target = latest.procedure?.definition.title ?? null
       // 適用条件・grounding 規則は、この手続きに対応する審査済み scope のものだけを使う。
-      const scoped = latest.procedure && scope.procedureId === latest.procedure.definition.id
+      const scoped = latest.procedure && scope.procedureIds.includes(latest.procedure.definition.id)
       // 適用条件は最新のContextで判定する。モデルの自己申告では確認済みにしない（#162）。
       const unresolved = unresolvedApplicability(scoped ? scope.applicabilityChecks ?? [] : [], latest.modelInput.facts)
       const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target, unresolved,

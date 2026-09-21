@@ -34,6 +34,8 @@ export interface CaseResource {
   /** 申告された続柄。法的な相続人の認定ではない。 */
   relationshipToDeceased: string
   municipality: string | null
+  /** 葬儀・火葬が済んだと利用者が記録した日時。null は「まだ」。 */
+  funeralCompletedAt: ISODateTime | null
   /**
    * 作成者本人に対応する Person の ID。
    * 作成時に本人を Person として同時登録した場合だけ入る。それ以外は null。

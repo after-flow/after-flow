@@ -44,6 +44,7 @@ function guidanceArtifact(procedureId: string, extra: Record<string, unknown> = 
 const scope = {
   id: 'research-1', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き',
   institution: '架空機関', jurisdiction: '架空市', municipality: '架空市', sourceCatalogIds: ['catalog-1'],
+  procedureIds: ['fixture-procedure'], sourceCatalogVersions: { 'catalog-1': '1' },
   questions: [{ id: 'documents', text: '必要な書類は何ですか' }],
 }
 const draftAllowed = { allowDraftDefinitions: true, configuredCatalogIds: new Set(['catalog-1', 'kyoukaikenpo-burial-benefit']) }
@@ -148,7 +149,7 @@ test('kyoukaikenpo guidance carries no case values and uses the matching reviewe
   assert.deepEqual(facts(context), ['contracts.kind', 'contracts.policyState', 'contracts.provider', 'persons.relationshipLabel'])
   assert.ok(!JSON.stringify(context.modelInput).includes('架空市'))
   assert.ok(!JSON.stringify(context.modelInput).includes('PRIVATE'))
-  const matched = buildProcedureResearchBrief(context, { scope: { ...scope, procedureId: 'kyoukaikenpo-burial-benefit', municipality: null }, allowDraftDefinitions: false, configuredCatalogIds: new Set(['catalog-1']) })
+  const matched = buildProcedureResearchBrief(context, { scope: { ...scope, procedureIds: ['kyoukaikenpo-burial-benefit'], municipality: null }, allowDraftDefinitions: false, configuredCatalogIds: new Set(['catalog-1']) })
   assert.equal(matched.status, 'ready')
   if (matched.status !== 'ready') assert.fail()
   assert.equal(matched.brief.briefId, 'research-1')
@@ -235,6 +236,12 @@ test('research brief for chat and planning uses reviewed strings only, leaving c
   assert.ok(!serialized.includes('snapshot'))
   assert.equal(buildResearchBrief(context, { ...scope, municipality: '別の市' }).status, 'needs_input')
   assert.throws(() => buildResearchBrief(context, { ...scope, sourceCatalogIds: [] }))
+  const renamed = artifact('task_guidance')
+  if (!('task' in renamed.content)) assert.fail()
+  const renamedContent = { ...renamed.content, task: { ...renamed.content.task, title: '表示名を変更', category: '別カテゴリ', submitTo: '別表示' } }
+  assert.equal(buildResearchBrief(buildCoreContext({ ...renamed, content: renamedContent, contentHash: contentHash(renamedContent) }, 'task_guidance'), scope).status, 'ready')
+  const unknownContent = { ...renamed.content, task: { ...renamed.content.task, procedureId: 'unknown-procedure' } }
+  assert.equal(buildResearchBrief(buildCoreContext({ ...renamed, content: unknownContent, contentHash: contentHash(unknownContent) }, 'task_guidance'), scope).status, 'needs_input')
 })
 
 test('canonical hash is independent of object key order but preserves array order', () => {

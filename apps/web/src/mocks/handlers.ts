@@ -312,6 +312,7 @@ export const handlers = [
       deceasedNameKana: typeof body.deceasedNameKana === 'string' ? body.deceasedNameKana : null,
       dateOfDeath: String(body.dateOfDeath ?? ''),
       dateOfBirth: typeof body.dateOfBirth === 'string' ? body.dateOfBirth : null,
+      funeralCompletedAt: null,
       knownAt: typeof body.knownAt === 'string' ? body.knownAt : null,
       ownerName: String(body.ownerName ?? ''),
       relationshipToDeceased: String(body.relationshipToDeceased ?? ''),
@@ -365,6 +366,7 @@ export const handlers = [
     if ('municipality' in body) kase.municipality = typeof body.municipality === 'string' ? body.municipality : null
     if ('dateOfBirth' in body) kase.dateOfBirth = typeof body.dateOfBirth === 'string' ? body.dateOfBirth : null
     if ('knownAt' in body) kase.knownAt = typeof body.knownAt === 'string' ? body.knownAt : null
+    if ('funeralCompletedAt' in body) kase.funeralCompletedAt = typeof body.funeralCompletedAt === 'string' ? body.funeralCompletedAt : null
     kase.version += 1
     kase.caseVersion += 1
     kase.updatedAt = new Date().toISOString()
@@ -510,10 +512,11 @@ export const handlers = [
     if ('submitTo' in body) t.submitTo = typeof body.submitTo === 'string' ? body.submitTo : null
     if ('assigneeId' in body) t.assigneeId = typeof body.assigneeId === 'string' ? body.assigneeId : null
     if (Array.isArray(body.requiredDocuments)) {
-      t.requiredDocuments = (body.requiredDocuments as { id: string; label: string; documentId: string | null }[]).map((r) => ({
+      t.requiredDocuments = (body.requiredDocuments as { id: string; label: string; documentId: string | null; collected?: boolean }[]).map((r) => ({
         id: r.id,
         label: r.label,
         documentId: r.documentId,
+        collected: r.collected ?? false,
         source: t.requiredDocuments.find((x) => x.id === r.id)?.source ?? 'MANUAL',
       }))
     }

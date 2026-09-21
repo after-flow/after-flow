@@ -23,9 +23,14 @@ export function canonicalDeadlineId(caseId: string, taskId: string): string {
   return initialTaskId(caseId, `deadline:${taskId}`)
 }
 
-/** submitTo の出所。legacy（submitToSource 欠落）は submitTo が null なら RULE、非 null なら MANUAL。 */
-export function effectiveSubmitToSource(task: Pick<TaskEntity, 'submitToSource' | 'submitTo'>): 'RULE' | 'RESEARCH' | 'MANUAL' {
-  return task.submitToSource ?? (task.submitTo === null ? 'RULE' : 'MANUAL')
+/** submitTo の出所。legacy（submitToSource 欠落）は規則由来の Task なら RULE、それ以外は MANUAL。 */
+export function effectiveSubmitToSource(task: Pick<TaskEntity, 'submitToSource' | 'source'>): 'RULE' | 'RESEARCH' | 'MANUAL' {
+  return task.submitToSource ?? (task.source === 'RULE_ENGINE' ? 'RULE' : 'MANUAL')
+}
+
+/** 名前・説明の出所。利用者が直したもの（MANUAL）は洗い出しで戻さない。 */
+export function effectiveTextSource(task: Pick<TaskEntity, 'textSource' | 'source'>): 'RULE' | 'MANUAL' {
+  return task.textSource ?? (task.source === 'RULE_ENGINE' ? 'RULE' : 'MANUAL')
 }
 
 export interface ExistingTask {
@@ -225,6 +230,7 @@ export function planProcedureSync(catalog: RuleCatalog, facts: ProcedureFacts, s
         completionReportedAt: null,
         conditional: resolved.include === 'maybe',
         submitToSource: 'RULE',
+        textSource: 'RULE',
       }
       const deadline = resolved.deadlineRuleId
         ? buildDeadlineFacts(ruleOf(catalog, resolved.deadlineRuleId), dates, {
@@ -236,8 +242,10 @@ export function planProcedureSync(catalog: RuleCatalog, facts: ProcedureFacts, s
       plan.summary.created.push(procedure.id)
     } else {
       const patch: EntityPatch<TaskEntity> = {}
-      if (resolved.title !== existing.task.title) patch.title = resolved.title
-      if (resolved.summary !== existing.task.summary) patch.summary = resolved.summary
+      if (effectiveTextSource(existing.task) === 'RULE') {
+        if (resolved.title !== existing.task.title) patch.title = resolved.title
+        if (resolved.summary !== existing.task.summary) patch.summary = resolved.summary
+      }
       const conditionalDesired = resolved.include === 'maybe'
       if ((existing.task.conditional ?? false) !== conditionalDesired) patch.conditional = conditionalDesired
       if (effectiveSubmitToSource(existing.task) === 'RULE' && existing.task.submitTo !== resolved.submitTo) {

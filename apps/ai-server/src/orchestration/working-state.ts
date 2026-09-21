@@ -51,6 +51,11 @@ const evidenceLedgerEntrySchema = z.object({
   questionId: z.string().min(1).max(128), sourceId: z.string().min(1).max(128),
   sectionId: z.string().regex(/^s\d{1,3}$/), quote: z.string().min(2).max(200),
 }).strict()
+const skillUseSchema = z.object({
+  phase: z.enum(['plan', 'research', 'generate']), role: z.enum(['core', 'research']),
+  id: z.string().min(1).max(128), version: z.string().min(1).max(40), hash: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict()
+export type GuidanceSkillUse = z.infer<typeof skillUseSchema>
 
 /**
  * Durable, reviewable execution state. It contains decisions and evidence references only;
@@ -62,6 +67,7 @@ export const guidanceWorkingStateSchema = z.object({
   knownFacts: z.array(knownFactSchema).max(20),
   unknowns: z.array(z.object({ id: z.string().min(1).max(128), question: z.string().min(1).max(300) }).strict()).max(20),
   evidence: z.array(evidenceLedgerEntrySchema).max(60),
+  skills: z.array(skillUseSchema).max(12).default([]),
   completedActions: z.array(guidanceActionSchema.exclude(['DONE'])).max(4),
   currentStep: z.number().int().min(0).max(4),
   nextAction: guidanceActionSchema,
@@ -81,6 +87,7 @@ export function createGuidanceWorkingState(input: {
   brief: ResearchBrief | null
   modelInput: MinimizedModelInput
   missing?: readonly string[]
+  skills?: readonly GuidanceSkillUse[]
 }): GuidanceWorkingState {
   const decision = guidancePlanDecisionSchema.parse(input.decision)
   if (decision.nextAction === 'REQUEST_RESEARCH') {
@@ -98,7 +105,7 @@ export function createGuidanceWorkingState(input: {
     goal: '確認済みの公式資料に基づいて対象手続きの案内を作成し、未確認事項を明示する。',
     plan: decision.plan,
     knownFacts: input.modelInput.data.map(fact => ({ key: `${fact.group}.${fact.field}`, value: String(fact.value).slice(0, 300), state: fact.state })),
-    unknowns, evidence: [], completedActions: [], currentStep: 0,
+    unknowns, evidence: [], skills: input.skills ?? [], completedActions: [], currentStep: 0,
     nextAction: decision.nextAction, replanCount: 0,
   })
 }
@@ -108,6 +115,7 @@ export function completeGuidanceAction(
   completed: Exclude<GuidanceAction, 'DONE'>,
   nextAction: GuidanceAction,
   research?: ResearchEvidence,
+  skills: readonly GuidanceSkillUse[] = [],
 ): GuidanceWorkingState {
   const state = guidanceWorkingStateSchema.parse(stateInput)
   if (state.nextAction !== completed || state.completedActions.includes(completed)) {
@@ -128,6 +136,7 @@ export function completeGuidanceAction(
   return guidanceWorkingStateSchema.parse({
     ...state,
     evidence,
+    skills: [...state.skills, ...skills],
     unknowns,
     completedActions: [...state.completedActions, completed],
     currentStep: state.currentStep + 1,

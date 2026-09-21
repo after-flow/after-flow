@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useApprovals, useCaseOverview, useInsights, useTasks } from '@/lib/api/queries'
 import type { ApprovalResource, Insight } from '@aftercare/public-contracts'
@@ -11,6 +11,8 @@ import { useLock } from '@/kit/domain'
 import { UploadDialog } from '@/screens/parts/UploadDialog'
 import { useAnalysisWatcher } from './useAnalysisWatcher'
 import { Tour, TourPrompt, markTourSeen, tourSeen } from './Tour'
+import { ChatDockContext, type ChatDock } from './chatDock'
+import { CHAT_DOCK_WIDTH, ChatDockPanel } from './ChatDockPanel'
 
 /**
  * 画面の枠（バクラク型）。
@@ -28,15 +30,17 @@ type NavItem = {
   icon: IconName
   end?: boolean
   badge?: 'tasks' | 'reviews'
+  /** 画面を移らず、相談の窓を開く（to は窓を使わないときの画面） */
+  opensChat?: boolean
 }
 
 const NAV: { title?: string; items: NavItem[] }[] = [
   {
     items: [
-      { to: '', label: 'ホーム', icon: 'home', end: true },
+      // ホーム（ケースを開いたときの画面）は手続きの流れ
+      { to: '', label: '手続きの流れ', icon: 'path', end: true },
       { to: 'tasks', label: 'やること', icon: 'checklist', badge: 'tasks' },
       { to: 'approvals', label: 'AIからの確認', icon: 'seal', badge: 'reviews' },
-      { to: 'flow', label: '手続きの流れ', icon: 'path' },
     ],
   },
   {
@@ -49,7 +53,7 @@ const NAV: { title?: string; items: NavItem[] }[] = [
   },
   {
     title: 'サポート',
-    items: [{ to: 'chat', label: 'AIに相談', icon: 'chat' }],
+    items: [{ to: 'chat', label: 'AIに相談', icon: 'chat', opensChat: true }],
   },
 ]
 
@@ -83,10 +87,10 @@ export function AppShell() {
   useAnalysisWatcher(caseId)
   const logout = useLogout()
   const location = useLocation()
-  // ドロワーは開いた画面でだけ開いている。画面を移れば自然に閉じる
+  // ドロワーは開いたときの移動の間だけ開いている。画面を移れば（同じ画面のメニューをもう一度押しても）自然に閉じる
   const [drawerAt, setDrawerAt] = useState<string | null>(null)
-  const drawer = drawerAt === location.pathname
-  const setDrawer = (open: boolean) => setDrawerAt(open ? location.pathname : null)
+  const drawer = drawerAt === location.key
+  const setDrawer = (open: boolean) => setDrawerAt(open ? location.key : null)
   const [upload, setUpload] = useState(false)
   const navigate = useNavigate()
   const [tourOpen, setTourOpen] = useState(false)
@@ -95,13 +99,76 @@ export function AppShell() {
   const startTour = () => {
     setAskTour(false)
     setDrawerAt(null)
-    // 最初のステップは「まずはこれ」を指すので、ホームで始める
+    // 最初のステップはホーム（手続きの流れ）の「いまここ」を指すので、ホームで始める
     if (location.pathname !== `/cases/${caseId}`) navigate(`/cases/${caseId}`)
     setTourOpen(true)
   }
 
   const base = `/cases/${caseId}`
   const c = overview.data?.case
+
+  /*
+    AIに相談の窓。画面を移っても開いたままにし、書きかけの質問もここで持つ
+    （窓と「AIに相談」の画面のどちらで書いても同じ文が続く）。
+  */
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatInput, setChatInput] = useState('')
+  const [pendingFocus, setPendingFocus] = useState(false)
+  const lastDraft = useRef('')
+  // 閉じたら、開く前にいた場所（押したボタンなど）へフォーカスを戻す
+  const opener = useRef<HTMLElement | null>(null)
+  const openChat = useCallback((draft?: string) => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setDrawerAt(null)
+    setChatOpen(true)
+    const prev = lastDraft.current
+    if (draft == null) {
+      // 手続きを決めずに開いたとき（サイドバーなど）は、前の手続きの書き出しが手つかずで残っていれば消す。
+      // 利用者が書き足した文は消さない
+      lastDraft.current = ''
+      setChatInput((cur) => (prev !== '' && cur === prev ? '' : cur))
+      return
+    }
+    // 利用者が書いた文は消さない。空か、前の書き出しのままのときだけ差し替える
+    lastDraft.current = draft
+    setChatInput((cur) => (cur.trim() === '' || cur === prev ? draft : cur))
+    setPendingFocus(true)
+  }, [])
+  const closeChat = useCallback(() => {
+    setChatOpen(false)
+    /*
+      開いたボタンが、画面を移った・メニューを閉じたなどで消えていたら、サイドバーの「AIに相談」へ戻す
+      （何もしないとフォーカスがページの先頭に飛び、キーボードや読み上げで使う方が場所を見失う）。
+      サイドバーが隠れている狭い画面では focus() しても何も起きないので、そのままにする
+    */
+    const target = opener.current?.isConnected
+      ? opener.current
+      : document.querySelector<HTMLElement>('aside [data-tour="nav-chat"]')
+    target?.focus()
+  }, [])
+  const focusHandled = useCallback(() => setPendingFocus(false), [])
+  // ケースを切り替えても枠は作り直されない。別の方のケースに、書きかけの質問や開いた窓を持ち越さない
+  const [chatCaseId, setChatCaseId] = useState(caseId)
+  if (chatCaseId !== caseId) {
+    setChatCaseId(caseId)
+    setChatOpen(false)
+    setChatInput('')
+  }
+  const chatDock = useMemo<ChatDock>(
+    () => ({
+      isOpen: chatOpen,
+      open: openChat,
+      close: closeChat,
+      input: chatInput,
+      setInput: setChatInput,
+      pendingFocus,
+      focusHandled,
+    }),
+    [chatOpen, openChat, closeChat, chatInput, pendingFocus, focusHandled],
+  )
+  // 「AIに相談」の画面にいるあいだは、同じ会話を窓にも出さない
+  const onChatScreen = location.pathname === `${base}/chat`
+  const dockShown = chatOpen && !onChatScreen && caseId !== ''
 
   const sidebar = (
     <div className="flex h-full flex-col">
@@ -153,6 +220,29 @@ export function AppShell() {
             <ul className="flex flex-col gap-0.5">
               {sec.items.map((item) => {
                 const n = item.badge ? counts[item.badge] : 0
+                if (item.opensChat) {
+                  const active = dockShown || onChatScreen
+                  return (
+                    <li key={item.to}>
+                      <button
+                        type="button"
+                        data-tour={`nav-${item.to}`}
+                        aria-pressed={onChatScreen ? undefined : dockShown}
+                        aria-current={onChatScreen ? 'page' : undefined}
+                        // 「AIに相談」の画面にいるときは、ほかのメニューで今の画面を押したときと同じく、メニューを閉じるだけにする
+                        onClick={() => (dockShown ? closeChat() : onChatScreen ? setDrawerAt(null) : openChat())}
+                        className={`relative flex h-10 w-full cursor-pointer items-center transition-colors duration-150 gap-2.5 rounded-md px-2.5 text-left text-[0.97rem] font-bold ${
+                          active
+                            ? 'bg-rd-primary-soft text-rd-primary-text before:absolute before:top-2 before:bottom-2 before:-left-3 before:w-[3px] before:rounded-r before:bg-rd-primary'
+                            : 'text-rd-text-2 hover:bg-rd-shade hover:text-rd-text'
+                        }`}
+                      >
+                        <Icon name={item.icon} size={18} />
+                        <span className="flex-1">{item.label}</span>
+                      </button>
+                    </li>
+                  )
+                }
                 return (
                   <li key={item.to}>
                     <NavLink
@@ -160,7 +250,7 @@ export function AppShell() {
                       end={item.end}
                       data-tour={item.to ? `nav-${item.to}` : undefined}
                       className={({ isActive }) =>
-                        `relative flex h-10 items-center gap-2.5 rounded-md px-2.5 text-[0.97rem] font-bold ${
+                        `relative flex h-10 items-center gap-2.5 rounded-md px-2.5 transition-colors duration-150 text-[0.97rem] font-bold ${
                           isActive
                             ? 'bg-rd-primary-soft text-rd-primary-text before:absolute before:top-2 before:bottom-2 before:-left-3 before:w-[3px] before:rounded-r before:bg-rd-primary'
                             : 'text-rd-text-2 hover:bg-rd-shade hover:text-rd-text'
@@ -221,75 +311,93 @@ export function AppShell() {
   )
 
   return (
-    <div className="flex min-h-dvh bg-rd-bg leading-normal text-rd-text">
-      <a href="#main" className="visually-hidden focus:not-sr-only">
-        本文へスキップ
-      </a>
+    <ChatDockContext.Provider value={chatDock}>
+      <div
+        className="flex min-h-dvh bg-rd-bg leading-normal text-rd-text"
+        // 窓を横に固定したとき、本文の下に固定したボタンがその分だけ右を空けるための幅（xl 以上で使う）
+        style={dockShown ? ({ '--chat-dock-w': CHAT_DOCK_WIDTH } as CSSProperties) : undefined}
+      >
+        <a href="#main" className="visually-hidden focus:not-sr-only">
+          本文へスキップ
+        </a>
 
-      {/* 広い画面：常設サイドバー */}
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 border-r border-rd-border bg-rd-card lg:block">
-        {sidebar}
-      </aside>
+        {/* 広い画面：常設サイドバー */}
+        <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 border-r border-rd-border bg-rd-card lg:block">
+          {sidebar}
+        </aside>
 
-      {/* 狭い画面：ドロワー */}
-      {drawer && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <button
-            type="button"
-            aria-label="メニューを閉じる"
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setDrawer(false)}
-          />
-          <aside className="absolute inset-y-0 left-0 w-64 bg-rd-card shadow-xl">{sidebar}</aside>
+        {/* 狭い画面：ドロワー */}
+        {drawer && (
+          <div className="fixed inset-0 z-40 lg:hidden">
+            <button
+              type="button"
+              aria-label="メニューを閉じる"
+              className="absolute inset-0 animate-fade-in bg-black/40"
+              onClick={() => setDrawer(false)}
+            />
+            <aside className="absolute inset-y-0 left-0 w-64 animate-drawer-in bg-rd-card shadow-xl">{sidebar}</aside>
+          </div>
+        )}
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-rd-border bg-rd-card px-3 lg:hidden">
+            <button
+              type="button"
+              aria-label="メニューを開く"
+              data-tour="menu"
+              onClick={() => setDrawer(true)}
+              className="relative grid h-10 w-10 place-items-center rounded-md hover:bg-rd-shade"
+            >
+              <Icon name="menu" size={22} />
+              {counts.tasks + counts.reviews > 0 && (
+                <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-rd-danger" />
+              )}
+            </button>
+            <span className="min-w-0 flex-1 truncate text-[0.97rem] font-bold">
+              {c ? `故 ${c.deceasedName} 様` : 'after-flow'}
+            </span>
+            <button
+              type="button"
+              data-tour="upload"
+              onClick={() => setUpload(true)}
+              className="flex h-9 items-center gap-1 rounded-md bg-rd-primary px-3 text-[0.9rem] font-bold text-white"
+            >
+              <Icon name="upload" size={15} />
+              追加
+            </button>
+          </header>
+
+          {/*
+            @container：本文の幅で2列にするかを決める画面（手続きの画面）のため。相談の窓を横に固定すると本文が狭くなる。
+            スマホで窓を下に出しているあいだは、本文の最後まで窓の上へスクロールできるよう下を空ける
+          */}
+          <main id="main" className={`@container min-w-0 flex-1 ${dockShown ? 'pb-[65dvh] sm:pb-0' : ''}`}>
+            {/*
+              画面を移ったら、中身を短くふわっと出す（どこかが変わったと分かる程度）。
+              透明度だけを動かす。transform を使うと、中の position: fixed（手続きの画面の下のボタンなど）の位置がずれる
+            */}
+            <div key={location.pathname} className="animate-fade-in">
+              <Outlet />
+            </div>
+          </main>
         </div>
-      )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-rd-border bg-rd-card px-3 lg:hidden">
-          <button
-            type="button"
-            aria-label="メニューを開く"
-            data-tour="menu"
-            onClick={() => setDrawer(true)}
-            className="relative grid h-10 w-10 place-items-center rounded-md hover:bg-rd-shade"
-          >
-            <Icon name="menu" size={22} />
-            {counts.tasks + counts.reviews > 0 && (
-              <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-rd-danger" />
-            )}
-          </button>
-          <span className="min-w-0 flex-1 truncate text-[0.97rem] font-bold">
-            {c ? `故 ${c.deceasedName} 様` : 'after-flow'}
-          </span>
-          <button
-            type="button"
-            data-tour="upload"
-            onClick={() => setUpload(true)}
-            className="flex h-9 items-center gap-1 rounded-md bg-rd-primary px-3 text-[0.9rem] font-bold text-white"
-          >
-            <Icon name="upload" size={15} />
-            追加
-          </button>
-        </header>
+        {dockShown && <ChatDockPanel caseId={caseId} base={base} />}
 
-        <main id="main" className="min-w-0 flex-1">
-          <Outlet />
-        </main>
+        <UploadDialog caseId={caseId} open={upload} onClose={() => setUpload(false)} />
+
+        {/* 初回だけ、ホームで「使い方を見ますか？」と尋ねる */}
+        {askTour && !tourOpen && location.pathname === base && (
+          <TourPrompt
+            onStart={startTour}
+            onLater={() => {
+              markTourSeen()
+              setAskTour(false)
+            }}
+          />
+        )}
+        <Tour open={tourOpen} onClose={() => setTourOpen(false)} />
       </div>
-
-      <UploadDialog caseId={caseId} open={upload} onClose={() => setUpload(false)} />
-
-      {/* 初回だけ、ホームで「使い方を見ますか？」と尋ねる */}
-      {askTour && !tourOpen && location.pathname === base && (
-        <TourPrompt
-          onStart={startTour}
-          onLater={() => {
-            markTourSeen()
-            setAskTour(false)
-          }}
-        />
-      )}
-      <Tour open={tourOpen} onClose={() => setTourOpen(false)} />
-    </div>
+    </ChatDockContext.Provider>
   )
 }

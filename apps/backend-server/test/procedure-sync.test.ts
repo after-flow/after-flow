@@ -19,9 +19,9 @@ function emptySnapshot(): SyncSnapshot {
 }
 
 describe('planProcedureSync: 空スナップショットからの作成', () => {
-  it('profile未回答の新規Caseでは22件のTaskを作る（default no の5件は出ない）', () => {
+  it('profile未回答の新規Caseでは23件のTaskを作る（default no の5件は出ない）', () => {
     const plan = planProcedureSync(PLACEHOLDER_RULE_CATALOG, factsOf(), emptySnapshot())
-    assert.equal(plan.createTasks.length, 22)
+    assert.equal(plan.createTasks.length, 23)
     assert.equal(plan.updateTasks.length, 0)
     assert.equal(plan.deleteTasks.length, 0)
   })
@@ -207,7 +207,7 @@ describe('planProcedureSync: yes の既存 Task', () => {
     assert.equal(planForManual.updateTasks.length, 0)
   })
 
-  it('legacy（submitToSource欠落）は submitTo が null なら RULE 扱い、非 null なら MANUAL 扱い', () => {
+  it('legacy（submitToSource欠落）は規則由来の Task なら RULE 扱いで、規則の窓口（variant を含む）に追随する', () => {
     const procedure = fixtureProcedure({ submitTo: '規則の窓口' })
     const catalog = fixtureCatalog(procedure)
     const legacyNull = taskEntity({ submitTo: null, submitToSource: undefined })
@@ -215,10 +215,24 @@ describe('planProcedureSync: yes の既存 Task', () => {
       snapshotOf({ task: legacyNull, deadlines: [deadlineEntity()], untouched: true }))
     assert.equal(planA.updateTasks[0]!.patch.submitTo, '規則の窓口')
 
-    const legacyFilled = taskEntity({ submitTo: '過去に具体化した窓口', submitToSource: undefined })
+    const legacyFilled = taskEntity({ submitTo: '以前の規則の窓口', submitToSource: undefined })
     const planB = planProcedureSync(catalog, factsOf(),
       snapshotOf({ task: legacyFilled, deadlines: [deadlineEntity()], untouched: true }))
-    assert.equal(planB.updateTasks.length, 0)
+    assert.equal(planB.updateTasks[0]!.patch.submitTo, '規則の窓口')
+  })
+
+  it('利用者が直した title/summary（textSource MANUAL）は規則の文言に戻さない', () => {
+    const procedure = fixtureProcedure({ title: '規則のタイトル', summary: '規則のサマリー' })
+    const catalog = fixtureCatalog(procedure)
+    const edited = taskEntity({ title: '自分で直したタイトル', summary: '自分で直したサマリー', textSource: 'MANUAL' })
+    const plan = planProcedureSync(catalog, factsOf(),
+      snapshotOf({ task: edited, deadlines: [deadlineEntity()], untouched: true }))
+    assert.equal(plan.updateTasks.length, 0)
+
+    const untouched = taskEntity({ title: '古い規則のタイトル', textSource: undefined })
+    const planRule = planProcedureSync(catalog, factsOf(),
+      snapshotOf({ task: untouched, deadlines: [deadlineEntity()], untouched: true }))
+    assert.equal(planRule.updateTasks[0]!.patch.title, '規則のタイトル')
   })
 
   it('variant で期限ルールが切り替わると、同じ正規Deadline docのruleIdが更新される', () => {

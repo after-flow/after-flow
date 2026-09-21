@@ -62,7 +62,7 @@ export function CasesScreen() {
           </li>
         ))}
       </ul>
-      <Link to="/cases/new" className="mt-4 inline-flex items-center gap-1 text-[0.94rem] font-bold text-rd-primary-text hover:underline">
+      <Link to="/cases/new" className="mt-2 inline-flex min-h-11 items-center gap-1 text-[0.94rem] font-bold text-rd-primary-text hover:underline">
         <Icon name="plus" size={16} />
         別の方の手続きをはじめる
       </Link>

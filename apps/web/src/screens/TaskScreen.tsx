@@ -49,6 +49,9 @@ import {
 } from '@/kit/domain'
 import { ResearchBox } from './parts/ResearchBox'
 import { CompleteTaskDialog } from './parts/CompleteTaskDialog'
+import { mergeBringRows } from '@/lib/bring'
+import { taskChatDraft } from '@/lib/chatDraft'
+import { useChatDock } from '@/shell/chatDock'
 
 const SOURCE_LABEL = { AI: 'AIが書類などから見つけた', MANUAL: '自分で追加した', RULE_ENGINE: '法律で期限が決まっている' } as const
 
@@ -78,6 +81,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
   const [confirming, setConfirming] = useState(false)
   const [justDone, setJustDone] = useState(false)
   const [addingEvidence, setAddingEvidence] = useState(false)
+  const chat = useChatDock()
 
   if (isLoading) return <Loading />
   if (isError || !task) return <ErrorState message="手続きを読み込めませんでした。" onRetry={() => void refetch()} />
@@ -160,7 +164,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
 
       {/* 1列表示のとき：窓口で真っ先に見たい「期限」を上に出す */}
       {d && (
-        <div className="flex items-center gap-3 rounded-lg border border-rd-border bg-rd-card px-4 py-3 xl:hidden">
+        <div className="flex items-center gap-3 rounded-lg border border-rd-border bg-rd-card px-4 py-3 @5xl:hidden">
           <CategoryIcon category={task.category} size={36} />
           <div className="min-w-0 flex-1">
             <p className={`text-[1.2rem] font-bold leading-tight ${dueTone}`}>{done ? '完了' : dueWords(d)}</p>
@@ -172,7 +176,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
       )}
 
       {!d && prep && !done && (
-        <div className="rounded-lg border border-rd-warning-line bg-rd-warning-soft px-4 py-3 text-[0.9rem] leading-relaxed xl:hidden">
+        <div className="rounded-lg border border-rd-warning-line bg-rd-warning-soft px-4 py-3 text-[0.9rem] leading-relaxed @5xl:hidden">
           <strong className="text-rd-warning-text">早めに始めたい手続きです。</strong>
           {prep.dueDate && <>相続の方法を決める期限（{formatDate(prep.dueDate, { weekday: true })}）より前に済ませます。</>}
         </div>
@@ -190,7 +194,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
         </Notice>
       )}
 
-      <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 xl:grid-cols-[minmax(0,1fr)_19rem]">
+      <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 @5xl:grid-cols-[minmax(0,1fr)_19rem]">
         {/* ---- 読むもの ---- */}
         <div className="flex flex-col gap-5">
           <Panel title="進め方">
@@ -278,8 +282,8 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
         </div>
 
         {/* ---- 押すもの ---- */}
-        <aside className="flex flex-col gap-4 xl:sticky xl:top-6">
-          <section className="hidden rounded-lg border border-rd-border bg-rd-card p-4 xl:block">
+        <aside className="flex flex-col gap-4 @5xl:sticky @5xl:top-6">
+          <section className="hidden rounded-lg border border-rd-border bg-rd-card p-4 @5xl:block">
             <div className="flex items-center gap-3">
               <CategoryIcon category={task.category} size={40} />
               <div>
@@ -350,20 +354,23 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                 { label: '最終更新', value: formatDateTime(task.updatedAt) },
               ]}
             />
-            <Link
-              to={`${base}/chat`}
-              className="mt-3 flex items-center gap-1.5 text-[0.9rem] font-bold text-rd-primary-text hover:underline"
+            {/* 画面は移らず、横（スマホでは下）に相談の窓を開く。手続きの案内を見ながら聞けるようにする */}
+            <button
+              type="button"
+              onClick={() => chat.open(taskChatDraft(task.title))}
+              className="mt-1 flex min-h-11 cursor-pointer items-center gap-1.5 text-[0.9rem] font-bold text-rd-primary-text hover:underline"
             >
               <Icon name="chat" size={16} />
               この手続きについてAIに聞く
-            </Link>
+            </button>
           </Panel>
         </aside>
       </div>
 
-      {/* 1列表示のとき：押すボタンは画面の下に固定する（サイドバーがある幅ではその右側に） */}
-      <div className="h-20 xl:hidden" aria-hidden />
-      <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-rd-border bg-rd-card px-4 py-3 lg:left-60 xl:hidden">
+      {/* 1列表示のとき：押すボタンは画面の下に固定する（サイドバーと、横に固定した相談の窓がある幅ではその間に）。
+          2列にするかは画面の幅ではなく本文の幅で決める。相談の窓を開くと本文が狭くなるため */}
+      <div className="h-20 @5xl:hidden" aria-hidden />
+      <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-rd-border bg-rd-card px-4 py-3 lg:left-60 xl:right-[var(--chat-dock-w,0px)] @5xl:hidden">
         {done ? (
           actions.includes('reopen') && (
             <Button
@@ -511,30 +518,20 @@ function CarriedOver({ caseId, taskId }: { caseId: string; taskId: string }) {
  */
 function BringList({ caseId, base, task, bring }: { caseId: string; base: string; task: TaskResource; bring: string[] }) {
   const update = useUpdateRequiredDocuments(caseId)
+  // いま押した持ち物だけ、印を小さく弾ませる（開いたときに並んでいる印まで動かさない）
+  const [justTicked, setJustTicked] = useState<string | null>(null)
   const docs = task.requiredDocuments
-  /*
-    並びは押しても変えない（窓口で消し込んでいる最中に行が動くと押し間違える）。
-    持ち物の一覧 → 案内に載っている持ち物、の順。案内の持ち物は、押して記録した後も案内の位置に出す。
-  */
-  const fromBring = (r: TaskRequiredDocumentResource) => r.id.startsWith('bring_') && bring.includes(r.label)
-  const rows: { label: string; doc?: TaskRequiredDocumentResource }[] = [
-    ...docs.filter((r) => !fromBring(r)).map((r) => ({ label: r.label, doc: r })),
-    ...bring
-      .filter((b) => !docs.some((r) => r.label === b && !fromBring(r)))
-      .map((b) => ({ label: b, doc: docs.find((r) => r.label === b && fromBring(r)) })),
-  ]
+  const rows = mergeBringRows(docs, bring)
   const total = rows.length
   if (total === 0) return <span className="text-rd-text-3">登録されている持ち物はありません</span>
-  // `collected` は BE ユニット2待ち（§6リスク）。それまでは documentId の有無を代わりに使う
-  const ready = rows.filter((r) => r.doc?.documentId != null).length
+  const isReady = (r?: TaskRequiredDocumentResource) => Boolean(r && (r.collected || r.documentId != null))
+  const ready = rows.filter((r) => isReady(r.doc)).length
 
   const save = (next: TaskRequiredDocumentResource[]) =>
     void update.mutateAsync({ taskId: task.id, expectedVersion: task.version, requiredDocuments: next }).catch(() => {})
-  // documentId を消すと未用意に戻る。実物の書類が無いまま用意済みにする場合は、
-  // '' を「用意した（書類の紐付けなし）」の印にする（null は未用意と区別できないため）
-  const toggle = (id: string) => save(docs.map((r) => (r.id === id ? { ...r, documentId: r.documentId == null ? '' : null } : r)))
+  const toggle = (id: string) => save(docs.map((r) => (r.id === id ? { ...r, collected: !isReady(r) } : r)))
   const addChecked = (label: string) =>
-    save([...docs, { id: `bring_${crypto.randomUUID().slice(0, 8)}`, label, documentId: '', source: 'AI' }])
+    save([...docs, { id: `bring_${crypto.randomUUID().slice(0, 8)}`, label, documentId: null, collected: true, source: 'AI' }])
 
   return (
     <div className="mt-1">
@@ -544,20 +541,25 @@ function BringList({ caseId, base, task, bring }: { caseId: string; base: string
       </p>
       <ul className="mt-1.5 flex flex-col">
         {rows.map(({ label, doc }) => {
-          const on = doc?.documentId != null
+          const on = isReady(doc)
           return (
             <li key={doc?.id ?? `bring-${label}`} className="flex flex-wrap items-center gap-x-2 border-b border-rd-border-2 last:border-b-0">
               <button
                 type="button"
                 role="checkbox"
                 aria-checked={on}
-                onClick={() => (doc ? toggle(doc.id) : addChecked(label))}
+                onClick={() => {
+                  setJustTicked(on ? null : label)
+                  if (doc) toggle(doc.id)
+                  else addChecked(label)
+                }}
                 className="flex min-h-11 min-w-0 flex-1 items-center gap-2.5 py-1.5 text-left hover:bg-rd-bg"
               >
                 <Icon
+                  key={on ? 'on' : 'off'}
                   name={on ? 'check-circle' : 'circle'}
                   size={20}
-                  className={`shrink-0 ${on ? 'text-rd-success-text' : 'text-rd-text-3'}`}
+                  className={`shrink-0 ${on ? 'text-rd-success-text' : 'text-rd-text-3'} ${on && justTicked === label ? 'animate-check' : ''}`}
                 />
                 <span className={on ? 'text-rd-text-2 line-through decoration-rd-text-3' : ''}>{label}</span>
               </button>

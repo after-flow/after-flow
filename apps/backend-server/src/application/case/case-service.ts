@@ -56,6 +56,7 @@ export interface UpdateCaseInput {
   ownerName?: string
   relationshipToDeceased?: string
   municipality?: string | null
+  funeralCompletedAt?: string | null
   /** 丸ごと置換。省略項目は UNKNOWN に正規化される。null で未回答に戻す。キー省略は変更なし。 */
   profile?: ProfileInput | null
 }
@@ -139,6 +140,7 @@ export function toCaseResource(entity: CaseEntity, access: CaseAccess): CaseReso
     ownerName: entity.ownerName,
     relationshipToDeceased: entity.relationshipToDeceased,
     municipality: entity.municipality,
+    funeralCompletedAt: entity.funeralCompletedAt ?? null,
     ownerPersonId: entity.ownerPersonId ?? null,
     // membership 由来。assertSelf と同じ根拠を FE に見せる。
     selfPersonId: access.member.personId,
@@ -458,6 +460,7 @@ function buildPatch(current: CaseEntity, input: UpdateCaseInput): Partial<CaseEn
   assign('ownerName')
   assign('relationshipToDeceased')
   assign('municipality')
+  assign('funeralCompletedAt')
   if ('profile' in input) {
     const normalized: CaseProfile | null = input.profile == null ? null : normalizeProfile(input.profile)
     if (!profileEquals(current.profile ?? null, normalized)) patch.profile = normalized

@@ -43,6 +43,8 @@ export interface RequiredDocumentRef {
   label: string
   documentId: string | null
   source: TaskSource
+  /** 窓口で消し込む「用意できた」印。書類の紐付けとは独立。legacy 欠落 → false。 */
+  collected?: boolean
 }
 
 export interface TaskEntity extends EntityBase {
@@ -82,4 +84,6 @@ export interface TaskEntity extends EntityBase {
   conditional?: boolean
   /** submitTo の出所。legacy 欠落 → source==='RULE_ENGINE' なら RULE、それ以外は MANUAL。 */
   submitToSource?: SubmitToSource | null
+  /** title/summary の出所。利用者が直したら MANUAL になり、洗い出しで戻さない。legacy 欠落 → submitToSource と同じ規則。 */
+  textSource?: 'RULE' | 'MANUAL' | null
 }

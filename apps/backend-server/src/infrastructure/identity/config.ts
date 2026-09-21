@@ -68,6 +68,8 @@ export function readAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     tenantId: required(env, 'AUTH_TENANT_ID'),
     clockToleranceSeconds: Number(env.AUTH_CLOCK_TOLERANCE_SECONDS ?? 5),
     requireEmailVerified,
+    // Firebase の ID トークンには auth_time が必ず入る。無いものを通すと7日上限をすり抜ける
+    requireAuthTime: mode !== 'static-jwks',
   } satisfies Omit<AuthConfig, 'jwksUri' | 'staticJwks' | 'firebaseAuthEmulatorHost'>
 
   if (base.algorithms.some((algorithm) => !algorithm.startsWith('RS') && !algorithm.startsWith('ES'))) {

@@ -42,7 +42,7 @@ export function Toaster() {
         <div
           key={t.id}
           role={t.tone === 'error' ? 'alert' : 'status'}
-          className={`pointer-events-auto flex w-full max-w-md items-start gap-2.5 rounded-lg px-4 py-3 text-[0.94rem] leading-relaxed text-white shadow-lg ${
+          className={`pointer-events-auto flex w-full max-w-md animate-rise-in items-start gap-2.5 rounded-lg px-4 py-3 text-[0.94rem] leading-relaxed text-white shadow-lg ${
             t.tone === 'error' ? 'bg-rd-danger-text' : 'bg-rd-text'
           }`}
         >
