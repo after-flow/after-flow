@@ -38,6 +38,14 @@ export interface ProcedureGuidanceDependencies {
   timeoutMs: number
 }
 
+export const guidanceSkillLoadingModeSchema = z.enum(['staged', 'legacy-all'])
+export type GuidanceSkillLoadingMode = z.infer<typeof guidanceSkillLoadingModeSchema>
+
+function stageSkills(mode: GuidanceSkillLoadingMode, coreSkillIds: readonly ('case-assessment' | 'research-briefing' | 'grounded-guidance')[],
+  researchSkillIds: readonly ('official-source-research' | 'evidence-reconciliation')[]) {
+  return mode === 'staged' ? { coreSkillIds, researchSkillIds } : {}
+}
+
 /**
  * 構造化出力がスキーマに合わない場合だけ、1回だけ生成し直す。
  * OrcaRouter経由のjson_schemaはstrictを指定できず、実モデルの評価（#164）で
@@ -54,7 +62,7 @@ async function generateStructured<T>(generate: () => Promise<T>, signal: AbortSi
 }
 
 /** Workflow definition for a durable host; main.ts does not start it in an unmanaged Promise. */
-export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies) {
+function buildProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies, skillLoading: GuidanceSkillLoadingMode) {
   const scope = reviewedResearchScopeSchema.parse(deps.scope)
   async function checkControl() {
     deps.signal.throwIfAborted()
@@ -93,7 +101,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [selection.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
-        coreSkillIds: ['case-assessment'], researchSkillIds: [],
+        ...stageSkills(skillLoading, ['case-assessment'], []),
       })
       const response = await generateStructured(() => agents.coreAgent.generate(JSON.stringify({
         goal: '対象手続きの案内を作るために、許可済みの公式調査が必要かを判断してください。内部思考や説明文は出力せず、有限のAction列だけを返してください。',
@@ -137,7 +145,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [inputData.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds, evidenceSources: tools.sources,
-        coreSkillIds: ['research-briefing'], researchSkillIds: ['official-source-research', 'evidence-reconciliation'],
+        ...stageSkills(skillLoading, ['research-briefing'], ['official-source-research', 'evidence-reconciliation']),
       })
       const approvedResearchRequest = researchRequestSchema.parse({
         briefId: inputData.brief.briefId,
@@ -207,7 +215,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [inputData.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
-        coreSkillIds: ['grounded-guidance'], researchSkillIds: [],
+        ...stageSkills(skillLoading, ['grounded-guidance'], []),
       })
       const findings = inputData.research.outcomes[0]?.findings
       if (!findings) throw new Error('Guidance generation requires a completed research action')
@@ -314,6 +322,16 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
     },
   })
   return createWorkflow({ id: PROCEDURE_GUIDANCE_WORKFLOW, inputSchema, outputSchema }).then(load).then(plan).then(research).then(generate).then(report).commit()
+}
+
+/** Production entrypoint: stage-specific Skill loading cannot be disabled by dispatch input or configuration. */
+export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies) {
+  return buildProcedureGuidanceWorkflow(deps, 'staged')
+}
+
+/** Evaluation-only counterfactual used to quantify the legacy all-Skill prompt cost for #182. */
+export function createProcedureGuidanceWorkflowForEvaluation(deps: ProcedureGuidanceDependencies, mode: GuidanceSkillLoadingMode) {
+  return buildProcedureGuidanceWorkflow(deps, guidanceSkillLoadingModeSchema.parse(mode))
 }
 
 function contextTaskTitle(facts: ReturnType<typeof buildCoreContext>['modelInput']['facts']) {
