@@ -39,6 +39,12 @@ export interface Case {
    * 答えていない項目・「わからない」は、あてはまる可能性があるものとして扱う。
    */
   profile?: CaseProfile
+  /**
+   * 葬儀・火葬が済んだと、利用者が記録した日時。null・未設定は「まだ」。
+   * 葬儀・火葬は役所の手続きと違い、手続きとして登録されないことが多く、手続きの件数からは済んだか決められない。
+   * そのため利用者に選んでもらい、手続きの流れの「葬儀・火葬」の段階はこの記録だけで済みとする。
+   */
+  funeralCompletedAt?: ISODateTime | null
   status: CaseStatus
   createdAt: ISODateTime
 }

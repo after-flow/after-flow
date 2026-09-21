@@ -143,21 +143,24 @@ export function TasksScreen() {
           </div>
         )}
 
-        {list.length === 0 ? (
-          <Empty
-            title={
-              who != null
-                ? 'この担当の手続きはありません'
-                : tab === 'todo' ? 'やることはありません' : tab === 'waiting' ? '結果待ちの手続きはありません' : 'まだ済んだ手続きはありません'
-            }
-          >
-            {who != null ? '「担当」を「全員」にすると、すべての手続きが表示されます。' : tab === 'waiting' && '役所や金融機関に出し終えた手続きが、ここに並びます。'}
-          </Empty>
-        ) : tab === 'todo' ? (
-          <BucketedList tasks={list} all={visible} base={base} stalled={stalled} />
-        ) : (
-          <TaskTable tasks={list} all={visible} base={base} stalled={stalled} />
-        )}
+        {/* タブを切り替えたら中身を短くふわっと出し、切り替わったことを伝える */}
+        <div key={tab} className="animate-fade-in">
+          {list.length === 0 ? (
+            <Empty
+              title={
+                who != null
+                  ? 'この担当の手続きはありません'
+                  : tab === 'todo' ? 'やることはありません' : tab === 'waiting' ? '結果待ちの手続きはありません' : 'まだ済んだ手続きはありません'
+              }
+            >
+              {who != null ? '「担当」を「全員」にすると、すべての手続きが表示されます。' : tab === 'waiting' && '役所や金融機関に出し終えた手続きが、ここに並びます。'}
+            </Empty>
+          ) : tab === 'todo' ? (
+            <BucketedList tasks={list} all={visible} base={base} stalled={stalled} />
+          ) : (
+            <TaskTable tasks={list} all={visible} base={base} stalled={stalled} />
+          )}
+        </div>
       </div>
 
       {locked && hiddenCount > 0 && (
@@ -195,7 +198,7 @@ function BucketedList({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[
             <h2 className={`flex items-center gap-2 border-b border-rd-border bg-rd-bg px-4 py-1.5 text-[0.86rem] font-bold ${tone}`}>
               {b.tone === 'critical' && <Icon name="warning" size={14} />}
               {b.label}
-              <span className="font-normal text-rd-text-3">{items.length}件</span>
+              <span className="font-normal whitespace-nowrap text-rd-text-3">{items.length}件</span>
             </h2>
             {b.id === 'overdue' && (
               <p className="border-b border-rd-border-2 px-4 py-2 text-[0.86rem] text-rd-text-2">

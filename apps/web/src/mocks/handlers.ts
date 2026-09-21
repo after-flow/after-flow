@@ -722,7 +722,7 @@ function applyProposal(a: Approval) {
   }
 
   // 「故人の情報を登録する」のように手続き名を持たない提案からは、手続きを作らない。
-  // 作ると名前も期限もない手続きができ、ほかを片づけたあとに「まずはこれ」へ出てきてしまう。
+  // 作ると名前も期限もない手続きができ、ほかを片づけたあとに「やること」の先頭に出てきてしまう。
   if ((a.kind === 'TASK_PROPOSAL' || a.kind === 'ESCALATION_PROPOSAL') && value('手続き名').trim()) {
     db.tasks.push({
       id: nextId('task'),

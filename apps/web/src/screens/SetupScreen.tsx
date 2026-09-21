@@ -79,7 +79,7 @@ export function SetupScreen() {
         } catch {
           toast('答えにあわせて、必要な手続きを洗い出しました')
         }
-        // 初回は「まずはこれ」の1件から見てもらう。答え直したときは、変わった一覧を見てもらう
+        // 初回はホーム（手続きの流れ）で、いまの段階から見てもらう。答え直したときは、変わった一覧を見てもらう
         navigate(firstTime ? base : `${base}/tasks`)
       }}
       base={base}

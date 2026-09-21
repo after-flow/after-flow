@@ -119,7 +119,7 @@ export function FamilyScreen() {
           ) : (
             <div className="flex items-center gap-3">
               <div className="h-2 flex-1 overflow-hidden rounded-full bg-rd-shade">
-                <div className="h-full rounded-full bg-rd-success" style={{ width: `${heirs.length ? (decidedCount / heirs.length) * 100 : 0}%` }} />
+                <div className="h-full rounded-full bg-rd-success transition-[width] duration-500 ease-out" style={{ width: `${heirs.length ? (decidedCount / heirs.length) * 100 : 0}%` }} />
               </div>
               <span className="shrink-0 text-[0.9rem] font-bold">
                 {decidedCount}人が記録済み（{heirs.length}人中）
