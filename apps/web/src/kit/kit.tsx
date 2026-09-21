@@ -15,8 +15,9 @@ import { Icon, type IconName } from '@/kit/Icon'
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost'
 type ButtonSize = 'md' | 'sm' | 'lg'
 
+// 押したときに 1px だけ沈ませ、押せたことを手ごたえで伝える
 const BTN_BASE =
-  'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-bold whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-45'
+  'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-bold whitespace-nowrap transition-[color,background-color,border-color,transform] duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45 disabled:active:translate-y-0'
 
 const BTN_VARIANT: Record<ButtonVariant, string> = {
   primary: 'bg-rd-primary text-white hover:bg-rd-primary-text',
@@ -156,7 +157,8 @@ export function PageHeader({
       {back && (
         <Link
           to={back.to}
-          className="inline-flex w-fit items-center gap-0.5 text-[0.9rem] font-bold text-rd-text-2 hover:text-rd-text"
+          // 見た目の大きさは変えずに、押せる範囲を上下に広げる（スマホで指が届く高さ 40px 以上）
+          className="-my-2.5 inline-flex w-fit items-center gap-0.5 py-2.5 text-[0.9rem] font-bold text-rd-text-2 hover:text-rd-text"
         >
           <Icon name="chevron-left" size={15} />
           {back.label}
@@ -215,8 +217,41 @@ export function Tabs<T extends string>({
   value: T
   onChange: (id: T) => void
 }) {
+  const listRef = useRef<HTMLDivElement>(null)
+  /*
+    選んだタブが横スクロールの外に隠れていたら、見える位置まで送る（URL の ?tab= で開いたときや、右端のタブを押したとき）。
+    scrollIntoView はページごと縦にも動かすことがあるので、タブの列の中だけを動かす
+  */
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const reveal = () => {
+      const tab = list.querySelector<HTMLElement>('[aria-selected="true"]')
+      if (!tab) return
+      const l = list.getBoundingClientRect()
+      const t = tab.getBoundingClientRect()
+      if (t.right > l.right) list.scrollLeft += t.right - l.right
+      else if (t.left < l.left) list.scrollLeft -= l.left - t.left
+    }
+    reveal()
+    // 件数が後から出る・フォントが差し替わる・画面の幅が変わると、あとからはみ出すことがある。タブの大きさが変わるたびに確かめる
+    const observer = new ResizeObserver(reveal)
+    observer.observe(list)
+    for (const tab of list.children) observer.observe(tab)
+    return () => observer.disconnect()
+  }, [value, items.length])
+
   return (
-    <div role="tablist" className="flex flex-wrap gap-x-1 border-b border-rd-border">
+    /*
+      折り返すと、はみ出した1つだけが2段目に出て、どれが選ばれているか分かりにくい。
+      1段のまま、入らない分は横にスクロールする（右端で切れて見えることで、続きがあると分かる）
+    */
+    <div
+      ref={listRef}
+      role="tablist"
+      // 下の線は影で引く。横スクロールの箱では -mb-px で線に重ねられないが、影なら選んだタブの下線が上に重なる
+      className="flex gap-x-1 overflow-x-auto shadow-[inset_0_-1px_0_var(--color-rd-border)] [scrollbar-width:none]"
+    >
       {items.map((t) => {
         const active = t.id === value
         return (
@@ -226,7 +261,8 @@ export function Tabs<T extends string>({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(t.id)}
-            className={`-mb-px flex h-11 shrink-0 items-center gap-1.5 border-b-2 px-3 text-[0.94rem] font-bold ${
+            // フォーカスの枠はタブの内側に描く。外側に描くと、横スクロールの箱に上下を切られて見えない
+            className={`flex h-11 shrink-0 items-center gap-1.5 border-b-2 px-2.5 text-[0.94rem] font-bold whitespace-nowrap transition-colors duration-150 focus-visible:outline-offset-[-3px] sm:px-3 ${
               active
                 ? 'border-rd-primary text-rd-primary-text'
                 : 'border-transparent text-rd-text-2 hover:text-rd-text'
@@ -265,13 +301,19 @@ export function Notice({
 }) {
   const t = NOTICE_TONE[tone]
   return (
-    <div role={role} className={`flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border px-4 py-3 ${t.box}`}>
+    <div role={role} className={`flex items-start gap-3 rounded-lg border px-4 py-3 ${t.box}`}>
       <Icon name={t.icon} size={18} className={`mt-0.5 shrink-0 ${t.fg}`} />
-      <div className="min-w-0 flex-1 text-[0.94rem] leading-relaxed">
-        {title && <p className={`font-bold ${t.fg}`}>{title}</p>}
-        {children && <div className={title ? 'mt-0.5 text-rd-text' : 'text-rd-text'}>{children}</div>}
+      {/*
+        文とボタンは、並べて入るなら横に、入らなければボタンを文の下へ送る。
+        文を flex-1 だけにすると基準の幅が0になり、ボタンが長いと文が1文字ずつ縦に折り返していた
+      */}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-[1_1_14rem] text-[0.94rem] leading-relaxed">
+          {title && <p className={`font-bold ${t.fg}`}>{title}</p>}
+          {children && <div className={title ? 'mt-0.5 text-rd-text' : 'text-rd-text'}>{children}</div>}
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
       </div>
-      {action && <div className="shrink-0 self-center">{action}</div>}
     </div>
   )
 }
@@ -427,19 +469,24 @@ export function Modal({
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCloseRef.current()
+      // 日本語の変換を Esc で取り消したときは閉じない
+      if (e.key === 'Escape' && !e.isComposing) onCloseRef.current()
     }
     document.addEventListener('keydown', onKey)
-    // 開いたときに一度だけ、ダイアログへフォーカスを移す
+    // 開いたときに一度だけ、ダイアログへフォーカスを移す。閉じたら、開く前の場所（押したボタンなど）へ戻す
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     ref.current?.focus()
-    return () => document.removeEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      if (opener?.isConnected) opener.focus()
+    }
   }, [open])
 
   if (!open) return null
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex animate-fade-in items-end justify-center bg-black/40 sm:items-center sm:p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
@@ -450,7 +497,8 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-xl bg-rd-card sm:rounded-xl ${wide ? 'max-w-2xl' : 'max-w-md'}`}
+        // スマホでは下から、広い画面では中央にふわっと出す
+        className={`flex max-h-[90dvh] w-full animate-sheet-up flex-col overflow-hidden rounded-t-xl bg-rd-card sm:animate-pop-in sm:rounded-xl ${wide ? 'max-w-2xl' : 'max-w-md'}`}
       >
         <div className="flex items-start justify-between gap-3 border-b border-rd-border px-5 py-3.5">
           <div>

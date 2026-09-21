@@ -130,7 +130,13 @@ export function useUpdateCase(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
     // dateOfBirth は null で「消す」。undefined だと送られず、前の値が残ってしまう
-    mutationFn: (patch: { municipality?: string; dateOfBirth?: string | null; profile?: CaseProfile }) =>
+    // funeralCompletedAt も null で「まだ」に戻す
+    mutationFn: (patch: {
+      municipality?: string
+      dateOfBirth?: string | null
+      profile?: CaseProfile
+      funeralCompletedAt?: string | null
+    }) =>
       api.patch<Case>(`/cases/${caseId}`, patch),
     onSuccess: () => {
       // 故人の状況が変わると、Rule Engine があてはまる手続きを洗い出し直す

@@ -62,21 +62,24 @@ export function ApprovalsScreen() {
           />
         </div>
 
-        {tab === 'pending' &&
-          (pending.length === 0 ? (
-            <Empty title="AIからの確認はありません">書類を追加すると、読み取った内容がここに届きます。</Empty>
-          ) : (
-            <ApprovalList items={pending} base={base} />
-          ))}
+        {/* タブを切り替えたら中身を短くふわっと出し、切り替わったことを伝える */}
+        <div key={tab} className="animate-fade-in">
+          {tab === 'pending' &&
+            (pending.length === 0 ? (
+              <Empty title="AIからの確認はありません">書類を追加すると、読み取った内容がここに届きます。</Empty>
+            ) : (
+              <ApprovalList items={pending} base={base} />
+            ))}
 
-        {tab === 'insights' && <InsightList caseId={caseId} base={base} items={shownInsights} />}
+          {tab === 'insights' && <InsightList caseId={caseId} base={base} items={shownInsights} />}
 
-        {tab === 'done' &&
-          (decided.length === 0 ? (
-            <Empty title="まだ確認したものはありません" />
-          ) : (
-            <ApprovalList items={decided} base={base} />
-          ))}
+          {tab === 'done' &&
+            (decided.length === 0 ? (
+              <Empty title="まだ確認したものはありません" />
+            ) : (
+              <ApprovalList items={decided} base={base} />
+            ))}
+        </div>
       </div>
     </Page>
   )

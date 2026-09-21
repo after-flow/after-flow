@@ -210,18 +210,26 @@
 - 窓口でもらう受理証明や控えは紙なので、その場で写真に撮って残すのが自然ですが、いまの記録（`Evidence`）は文字だけです。
 - **依頼**：記録に書類をひも付けられるようにしてください（例：`Evidence.documentId`）。書類そのものは既存の書類の追加 API で送ります。
 
+### 11-6. 【中】葬儀・火葬が済んだかを、利用者が記録する
+- 葬儀・火葬は手続きとして登録されないことが多く、手続きの件数からは「済み」にできません。
+  - これまでフロントエンドでは「③〜⑤の段階に進んだら済みとみなす」と推定していましたが、推定はやめました。
+- **仕様**：手続きの流れの「葬儀・火葬」の段階は、利用者が「葬儀・火葬が済んだ」を押して記録したかどうかだけで済みとします。取り消しもできます。
+- **依頼**：ケースに `funeralCompletedAt`（日時。`null` は「まだ」）を持たせ、`PATCH /cases/:caseId` で受け取って `Case` で返してください。
+  - `null` を受け取ったら記録を消してください（「まだ済んでいない」に戻す操作です）。
+  - `GET /cases/:caseId/overview` の `flowStages` の `funeral` の `state` も、この記録で `COMPLETED` にしてもらえると、画面側の判定を外せます（いまは画面側で `case.funeralCompletedAt` を見ています）。
+
 ---
 
 ## 付録：フロントエンドが呼んでいる API の変更点
 
 | API | 変更 |
 | --- | --- |
-| `PATCH /cases/:caseId` | `municipality` に加えて、**`dateOfBirth`（`null` で消す）・`profile`** を送る。受け取ったら手続きを洗い出し直す |
+| `PATCH /cases/:caseId` | `municipality` に加えて、**`dateOfBirth`（`null` で消す）・`profile`・`funeralCompletedAt`（`null` で消す）** を送る。受け取ったら手続きを洗い出し直す |
 | `POST /cases/:caseId/persons` | ケース作成の直後に、本人を相続人として登録するために呼ぶ（2 の依頼で不要にできる） |
 | `GET /cases/:caseId/documents` | 読み取り中の書類がある間、3秒ごとに呼ぶ（画面が裏でも） |
 | `GET /documents/:id` | 読み取り中の詳細画面を開いている間、3秒ごとに呼ぶ |
 | `GET /tasks/:id` | 自律調査中は2秒ごとに呼ぶ（既存どおり。5分で打ち切り） |
-| 型 `Case` | `profile?: CaseProfile` を追加 |
+| 型 `Case` | `profile?: CaseProfile`・`funeralCompletedAt?: string \| null` を追加 |
 | 型 `Task` | `conditional?: boolean` を追加 |
 | `PATCH /assets/:id`・`/liabilities/:id` | 「直す」から呼ぶ。**`amount: null` で金額を消す** |
 | `PATCH /contracts/:id` | 「直す」から、名前・種類・契約先を送る |

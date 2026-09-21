@@ -311,7 +311,7 @@ export const db: Store = {
       id: 'task_4',
       title: '相続人を調べる（戸籍の収集）',
       summary:
-        '故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続方法の判断（3か月以内）に間に合うよう、早めに着手します。',
+        '故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続の方法を決める期限（3か月）に間に合うよう、早めに着手します。',
       status: 'COLLECTING_INFORMATION',
       stage: 'investigation',
       category: '相続',
@@ -357,14 +357,14 @@ export const db: Store = {
     task({
       id: 'task_6',
       title: '故人の預金口座を解約して払い戻しを受ける',
-      summary: '相続方法が確定したあとに行う手続きです。',
+      summary: '相続の方法が決まったあとに行う手続きです。',
       status: 'NOT_STARTED',
       stage: 'transfer',
       category: '金融機関',
       source: 'AI',
       assetDisposal: true,
       dependencies: [
-        { type: 'DECISION', label: '相続方法が相続人全員について確定していること', satisfied: false },
+        { type: 'DECISION', label: '相続人全員の相続の方法が決まっていること', satisfied: false },
       ],
     }),
     task({
@@ -693,9 +693,9 @@ export const db: Store = {
       id: 'ins_2',
       caseId: CASE_ID,
       kind: 'DEADLINE_RISK',
-      body: '戸籍の取り寄せは郵送だと2〜3週間かかることがあります。相続方法を決める期限から逆算すると、今月中に請求を始めないと間に合わなくなるおそれがあります。',
+      body: '戸籍の取り寄せは郵送だと2〜3週間かかることがあります。相続の方法を決める期限から逆算すると、今月中に請求を始めないと間に合わなくなるおそれがあります。',
       evidence: [
-        { label: '相続方法の判断期限', value: jpDate(addMonthsLegal(DEATH, 3)) },
+        { label: '相続の方法を決める期限', value: jpDate(addMonthsLegal(DEATH, 3)) },
         { label: '戸籍の収集', value: '未着手（必要書類 2件が未取得）', taskId: 'task_4' },
       ],
       detectedAt: new Date(Date.now() - 26 * 3600_000).toISOString(),

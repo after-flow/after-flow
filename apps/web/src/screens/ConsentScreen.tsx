@@ -3,7 +3,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAgreeConsents, useConsents } from '@/lib/api/queries'
 import type { ConsentDocument } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
-import { Badge, Button, ErrorState, LinkButton, Loading, Notice } from '@/kit/kit'
+import { Badge, Button, ErrorState, LinkButton, Loading, Modal, Notice } from '@/kit/kit'
+import { LEGAL_DOCS, legalDocId } from '@/lib/legalDocs'
+import { LegalBody } from './parts/LegalBody'
 import { Centered, Logo } from './parts/EntryLayout'
 
 /**
@@ -16,6 +18,9 @@ import { Centered, Logo } from './parts/EntryLayout'
  * この画面には2通りの来かたがある。
  *  - はじめて使うとき（必須の同意が済んでいない）→ 同意したらケースの画面へ
  *  - 使っている途中で「内容を見て同意する」を押したとき → 同意したら元の画面へ戻す
+ *
+ * 「全文を読む」は画面を移らず、ダイアログで開く。規約の画面へ移ると、この画面の状態
+ * （付けたチェック）が消えてしまうため。
  */
 export function ConsentScreen() {
   const navigate = useNavigate()
@@ -24,6 +29,7 @@ export function ConsentScreen() {
   const { data, isLoading, isError, refetch } = useConsents()
   const agree = useAgreeConsents()
   const [checked, setChecked] = useState<Record<string, boolean>>({})
+  const [reading, setReading] = useState<ConsentDocument | null>(null)
 
   if (isLoading) return <Loading label="確認事項を読み込み中" />
   if (isError || !data)
@@ -79,8 +85,10 @@ export function ConsentScreen() {
             doc={doc}
             checked={Boolean(checked[doc.kind])}
             onChange={(v) => setChecked((prev) => ({ ...prev, [doc.kind]: v }))}
+            onRead={() => setReading(doc)}
           />
         ))}
+        <FullTextDialog doc={reading} onClose={() => setReading(null)} />
 
         {agree.isError && (
           <Notice tone="danger" role="alert">
@@ -124,10 +132,12 @@ function ConsentItem({
   doc,
   checked,
   onChange,
+  onRead,
 }: {
   doc: ConsentDocument
   checked: boolean
   onChange: (v: boolean) => void
+  onRead: () => void
 }) {
   return (
     <section
@@ -150,13 +160,15 @@ function ConsentItem({
           ))}
         </ul>
 
-        <Link
-          to={doc.url}
-          className="mt-2.5 inline-flex items-center gap-0.5 text-[0.9rem] font-bold text-rd-primary-text hover:underline"
+        <button
+          type="button"
+          onClick={onRead}
+          aria-haspopup="dialog"
+          className="mt-2.5 inline-flex cursor-pointer items-center gap-0.5 text-[0.9rem] font-bold text-rd-primary-text hover:underline"
         >
           全文を読む
           <Icon name="chevron-right" size={15} />
-        </Link>
+        </button>
       </div>
 
       <label className="flex cursor-pointer items-start gap-3 border-t border-rd-border bg-rd-bg px-4 py-3.5 sm:px-5">
@@ -176,5 +188,28 @@ function ConsentItem({
         </span>
       </label>
     </section>
+  )
+}
+
+/** 全文。本文が画面側に無い文書（新しく増えたものなど）は、規約の画面を別のタブで開く道だけ出す */
+function FullTextDialog({ doc, onClose }: { doc: ConsentDocument | null; onClose: () => void }) {
+  const id = doc ? legalDocId(doc.url) : null
+  const body = id ? LEGAL_DOCS[id] : null
+  return (
+    <Modal open={doc != null} title={doc?.title ?? ''} description={doc && `第${doc.version}版`} onClose={onClose} wide>
+      {body ? (
+        <LegalBody doc={body} bordered={false} />
+      ) : (
+        doc && (
+          <p className="text-[0.94rem] leading-relaxed">
+            この文書の全文は、
+            <Link to={doc.url} target="_blank" rel="noreferrer" className="font-bold text-rd-primary-text underline">
+              別のタブ
+            </Link>
+            で開いてご確認ください。
+          </p>
+        )
+      )}
+    </Modal>
   )
 }
