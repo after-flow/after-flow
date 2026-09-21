@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { dispatchSchema } from '@aftercare/internal-contracts'
+import { dispatchSchema, cancelExecutionSchema } from '@aftercare/internal-contracts'
 import type { RunDispatch, ExecutionSnapshotStatus } from '@aftercare/internal-contracts'
 
 /**
@@ -57,6 +57,16 @@ export async function startFakeAiServer(
         const status = snapshots.get(runId) ?? { runId, jobId: url.searchParams.get('jobId'), executionAttempt: url.searchParams.get('executionAttempt'),
           waitRequestId: url.searchParams.get('waitRequestId'), state: 'MISSING', snapshotId: null }
         response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(status))
+        return
+      }
+      if (request.method === 'POST' && url.pathname.endsWith('/cancel')) {
+        const parsed = cancelExecutionSchema.safeParse(raw)
+        if (!parsed.success) { response.writeHead(400).end(); return }
+        const { cancelId, runId, jobId, executionAttempt } = parsed.data
+        const status = accepted.has(cancelId) ? 'DUPLICATE' : 'STOPPED'
+        accepted.add(cancelId)
+        received.push({ eventId: cancelId, type: 'agent.cancel', attempt: 1, audience: request.headers['x-audience'] as string })
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ cancelId, runId, jobId, executionAttempt, status }))
         return
       }
       const dispatch = options.protocol === 'scoped' ? dispatchSchema.safeParse(raw) : null

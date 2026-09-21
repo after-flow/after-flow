@@ -44,8 +44,39 @@ const guidanceSchema = resultBase.extend({
   missing: z.array(z.string().max(200)).max(50).default([]), failureReason: z.string().max(500).nullable().optional(),
 }).strict()
 const chatSchema = resultBase.extend({ kind: z.literal('chat_reply'), body: z.string().min(1).max(10000), professionalNotice: z.boolean().default(false) }).strict()
-const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']) }).strict()
-export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema])
+export const runSummarySchema = z.object({
+  summary: z.string().max(1000), completed: z.array(z.string().min(1).max(300)).max(20),
+  questions: z.array(z.string().min(1).max(300)).max(20), remaining: z.array(z.string().min(1).max(300)).max(20),
+}).strict()
+export type RunSummary = z.infer<typeof runSummarySchema>
+export const clarificationHistorySchema = z.array(z.object({
+  resultId: internalId, questionIndex: z.number().int().min(0).max(19), question: z.string().min(1).max(300),
+  answer: z.string().min(1).max(1000), caseVersion: z.number().int().positive(), state: z.literal('user_reported'),
+}).strict()).max(60)
+export type ClarificationHistory = z.infer<typeof clarificationHistorySchema>
+const insightTaskSchema = z.object({ id: internalId, version: z.number().int().positive(), title: z.string().min(1).max(120) }).strict()
+const insightEventBase = z.object({ id: internalId, caseId: internalId, caseVersion: z.number().int().positive(), expiresAt: z.string().datetime(), task: insightTaskSchema })
+/** Issued by an authenticated Backend detector, not by a model or public request. */
+export const insightEventSchema = z.discriminatedUnion('kind', [
+  insightEventBase.extend({ kind: z.literal('DEADLINE_REVIEW'), deadline: z.object({ id: internalId, version: z.number().int().positive(), dueDate: z.iso.date(), confirmation: z.literal('CONFIRMED'), ruleId: internalId, ruleVersion: internalId }).strict() }).strict(),
+  insightEventBase.extend({ kind: z.literal('DOCUMENTS_MISSING'), documents: z.array(z.object({ id: internalId, label: z.string().min(1).max(120) }).strict()).min(1).max(20) }).strict(),
+  insightEventBase.extend({ kind: z.literal('PROFESSIONAL_REVIEW'), reason: z.string().min(1).max(1000) }).strict(),
+  insightEventBase.extend({ kind: z.literal('CASE_CHANGED') }).strict(),
+])
+export type InsightEvent = z.infer<typeof insightEventSchema>
+export const insightDraftSchema = z.object({
+  eventId: internalId, resultId: internalId,
+  kind: z.enum(['DEADLINE_RISK', 'MISSING_DOCUMENT', 'PROFESSIONAL_NEEDED']), body: z.string().min(1).max(4000),
+  relatedTaskId: internalId, relatedTaskTitle: z.string().min(1).max(120),
+  evidence: z.array(z.object({ label: z.string().min(1).max(120), value: z.string().min(1).max(2000), taskId: internalId, capturedVersion: z.number().int().positive() }).strict()).min(1).max(20),
+  requiresProfessional: z.boolean(), professionalReviewNote: z.string().min(1).max(1000).nullable(),
+}).strict()
+export type InsightDraft = z.infer<typeof insightDraftSchema>
+const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']), output: runSummarySchema.optional(), insights: z.array(insightDraftSchema).max(20).optional() }).strict()
+export const interruptedResultSchema = resultBase.extend({ kind: z.literal('execution_interrupted'), operation: operationSchema,
+  status: z.literal('NEEDS_ATTENTION'), failureReason: z.enum(['BUDGET_EXCEEDED', 'TIME_LIMIT', 'EXECUTION_FAILED']), output: runSummarySchema,
+}).strict()
+export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema, interruptedResultSchema])
 export type InternalResult = z.infer<typeof internalResultSchema>
 export const heartbeatSchema = z.object({}).strict()
 const progressEventSchema = z.object({
@@ -102,3 +133,61 @@ export const dispatchSchema = z.object({
 }).strict()
 export type RunDispatch = z.infer<typeof dispatchSchema>
 export const dispatchAckSchema = z.object({ jobId: internalId, runId: internalId, status: z.enum(['ACCEPTED', 'DUPLICATE']) }).strict()
+
+/** Formal Proposal status for a Run; approval itself must never be inferred from an AI message. */
+export const proposalActionStateSchema = z.object({
+  id: internalId, actionId: internalId.nullable(), proposalVersion: z.number().int().positive(),
+  payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  status: z.enum(['SUBMITTED', 'VALIDATED', 'AWAITING_APPROVAL', 'APPLIED', 'REJECTED', 'STALE', 'EXPIRED']),
+}).strict()
+
+const proposalHistoryItemSchema = proposalActionStateSchema.extend({
+  kind: aiProposalSchema.shape.kind, source: z.enum(['USER', 'SYSTEM', 'AI']),
+  title: z.string().max(120), summary: z.string().max(2000),
+  targetTitle: z.string().max(500).nullable(), targetTaskId: internalId.nullable(),
+  assetDisposal: z.boolean(), supersedesProposalVersion: z.number().int().positive().nullable(),
+}).strict()
+export const planningHistorySchema = z.object({
+  complete: z.literal(true),
+  proposals: z.array(proposalHistoryItemSchema).max(100),
+  versions: z.array(z.object({
+    proposalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    title: z.string().max(120), summary: z.string().max(2000), targetTitle: z.string().max(500).nullable(),
+    supersedesProposalVersion: z.number().int().positive().nullable(),
+  }).strict()).max(100),
+  approvals: z.array(z.object({
+    proposalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED']), applicationStatus: z.enum(['NOT_APPLIED', 'APPLIED', 'FAILED']),
+    decisionNote: z.string().max(2000).nullable(), applicationFailureReason: z.string().max(2000).nullable(),
+  }).strict()).max(100),
+}).strict().superRefine((history, ctx) => {
+  const versions = new Map(history.versions.map(item => [`${item.proposalId}:${item.proposalVersion}`, item]))
+  if (versions.size !== history.versions.length || new Set(history.proposals.map(item => item.id)).size !== history.proposals.length) {
+    ctx.addIssue({ code: 'custom', message: 'Planning history identity collision' })
+  }
+  for (const proposal of history.proposals) {
+    if (proposal.proposalVersion > 100) { ctx.addIssue({ code: 'custom', message: 'Planning history is incomplete' }); continue }
+    for (let version = 1; version <= proposal.proposalVersion; version++) {
+      const stored = versions.get(`${proposal.id}:${version}`)
+      if (!stored || (version === proposal.proposalVersion && stored.payloadHash !== proposal.payloadHash)) ctx.addIssue({ code: 'custom', message: 'Planning history is incomplete' })
+    }
+  }
+  for (const approval of history.approvals) {
+    if (versions.get(`${approval.proposalId}:${approval.proposalVersion}`)?.payloadHash !== approval.payloadHash) ctx.addIssue({ code: 'custom', message: 'Approval history does not match its version' })
+  }
+})
+export type PlanningHistory = z.infer<typeof planningHistorySchema>
+
+
+/** Backend-owned case planning pause. null is explicit absence; omission is not permission. */
+export const planningRestrictionSchema = z.object({ reason: z.string().trim().min(1).max(1000) }).strict().nullable()
+export type PlanningRestriction = z.infer<typeof planningRestrictionSchema>
+
+/** Backend-authenticated control message. It contains no business content or execution capability. */
+export const cancelExecutionSchema = z.object({ cancelId: internalId, runId: internalId, jobId: internalId, executionAttempt: internalId,
+  issuedAt: z.number().int().nonnegative(), expiresAt: z.number().int().positive(),
+}).strict()
+export type CancelExecution = z.infer<typeof cancelExecutionSchema>
+export const cancelExecutionAckSchema = z.object({ cancelId: internalId, runId: internalId, jobId: internalId,
+  executionAttempt: internalId, status: z.enum(['STOPPED', 'DUPLICATE']),
+}).strict()

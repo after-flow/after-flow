@@ -1,3 +1,9 @@
+import { clarificationHistorySchema } from '@aftercare/internal-contracts'
+import type { AgentRunOutcomeResource } from '@aftercare/public-contracts'
+import type { CaseMember } from '../../domain/authorization/case-role.js'
+import { roleAllows } from '../../domain/authorization/case-role.js'
+import type { TenantMember } from '../authorization/case-access.js'
+import type { MessageEntity } from '../../domain/message/message.js'
 import { randomUUID } from 'node:crypto'
 import type { AgentOperation, AgentRunEntity, AgentRunStatus } from '../../domain/agent/agent-run.js'
 import { canCancel, canRetry, isRunTerminal, isRunWaiting } from '../../domain/agent/agent-run.js'
@@ -35,6 +41,7 @@ export interface AgentRunView {
   waiting: boolean
   waitingFor: string | null
   failureReason: string | null
+  outcome: AgentRunOutcomeResource | null
   caseVersionAtAccept: number
   startedAt: string | null
   finishedAt: string | null
@@ -65,6 +72,7 @@ export function toAgentRunView(entity: AgentRunEntity): AgentRunView {
     waiting: isRunWaiting(entity.status),
     waitingFor: entity.waitingFor,
     failureReason: entity.failureReason,
+    outcome: entity.outcome ?? null,
     caseVersionAtAccept: entity.caseVersionAtAccept,
     startedAt: entity.startedAt,
     finishedAt: entity.finishedAt,
@@ -238,13 +246,16 @@ export class AgentRunService {
           details: { status: current.status },
         })
       }
+      const cancelId = randomUUID()
+      const cancellation = current.currentJobId ? { cancelId, jobId: current.currentJobId, executionAttempt: current.currentAttemptId } : undefined
       tx.update<AgentRunEntity>(runLocation(caseId, runId), expectedVersion, {
-        status: 'CANCELLED',
+        ...(cancellation ? { cancellation } : {}), status: 'CANCELLED',
         cancelRequestedBy: user.userId,
         finishedAt: new Date().toISOString(),
         // 取消後に届いた古い attempt の結果を受け付けないよう、世代を変える。
         currentAttemptId: randomUUID(),
       })
+      if (cancellation) tx.outbox({ id: cancelId, type: 'agent.cancel', caseId, payload: { runId } })
       await cancelWait(tx, current)
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       tx.audit({
@@ -255,6 +266,53 @@ export class AgentRunService {
       })
     })
 
+    return this.get(user, caseId, runId)
+  }
+
+  async answerQuestions(user: AuthenticatedUser, caseId: string, runId: string,
+    input: { expectedVersion: number; resultId: string; answers: { questionIndex: number; answer: string }[] },
+    meta: CommandMeta): Promise<AgentRunView> {
+    const access = await this.access.authorizeCase(user, caseId, 'case.write')
+    await this.consent.assertExternalAiAllowed(user)
+    await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async tx => {
+      const member = await tx.get<CaseMember>({ collection: collections.caseMembers, caseId, id: user.userId })
+      const tenant = await tx.get<TenantMember>({ collection: collections.members, caseId: null, id: user.userId })
+      if (!member?.active || member.userId !== user.userId || !roleAllows(member.role, 'case.write') || !tenant?.active || tenant.userId !== user.userId) throw errors.forbidden()
+      await this.consent.assertExternalAiAllowed(user, tx)
+      const run = await tx.require<AgentRunEntity>(runLocation(caseId, runId))
+      const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
+      if (run.version !== input.expectedVersion || run.status !== 'NEEDS_ATTENTION' || run.operation !== 'case_planning'
+        || !run.outcome || run.outcome.resultId !== input.resultId || run.outcome.attemptId !== run.currentAttemptId
+        || run.outcome.caseVersion !== entity.caseVersion) throw errors.conflict({ details: { reason: 'STALE_QUESTIONS' } })
+      if (entity.aiPlanningRestriction) throw errors.preconditionFailed({ details: { reason: 'AI_PLANNING_RESTRICTED' } })
+      if (!input.answers.length || input.answers.length > 20 || new Set(input.answers.map(a => a.questionIndex)).size !== input.answers.length
+        || input.answers.some(a => !Number.isInteger(a.questionIndex) || !run.outcome!.questions[a.questionIndex] || !a.answer.trim() || a.answer.length > 1000)) throw errors.validationFailed()
+      const history = clarificationHistorySchema.safeParse([...(run.clarificationHistory ?? []), ...input.answers.map(a => ({
+        resultId: input.resultId, questionIndex: a.questionIndex, question: run.outcome!.questions[a.questionIndex]!,
+        answer: a.answer.trim(), caseVersion: entity.caseVersion + 1, state: 'user_reported',
+      }))])
+      if (!history.success) throw errors.preconditionFailed({ details: { reason: 'CLARIFICATION_HISTORY_LIMIT' } })
+      const jobId = randomUUID(), attemptId = randomUUID()
+      if (run.fencingToken) await releaseLease(tx, caseId, runId, run.fencingToken)
+      await cancelWait(tx, run)
+      for (const answer of input.answers) {
+        const messageId = randomUUID()
+        tx.create<MessageEntity>({ collection: collections.messages, caseId, id: messageId }, {
+          id: messageId, role: 'user', body: `${run.outcome!.questions[answer.questionIndex]}\n${answer.answer.trim()}`,
+          agentRunId: null, replyRunId: null, professionalNotice: false, escalationProposalId: null, resultId: null,
+        })
+      }
+      // Message creation advances Case context once in the shared UnitOfWork.
+      tx.update<AgentRunEntity>(runLocation(caseId, runId), run.version, {
+        status: 'QUEUED', attempt: run.attempt + 1, currentAttemptId: attemptId, currentJobId: jobId,
+        initiatedByUserId: user.userId, caseVersionAtAccept: entity.caseVersion + 1, clarificationHistory: history.data,
+        progressSequence: -1, fencingToken: null, activeWaitRequestId: null,
+        pendingResume: { kind: 'RETRY', previousAttemptId: run.currentAttemptId, snapshotId: null, waitRequestId: null, outcome: 'QUESTIONS_ANSWERED' },
+        failureReason: null, waitingFor: null, finishedAt: null,
+      })
+      tx.audit({ caseId, type: 'agent_run.questions_answered', target: { collection: collections.agentRuns.name, id: runId, version: run.version + 1 }, detail: { resultId: input.resultId, answerCount: input.answers.length } })
+      tx.outbox({ id: jobId, type: 'agent.case_planning', caseId, payload: { caseId, runId, operation: run.operation, targetType: run.targetType, targetId: run.targetId, attempt: run.attempt + 1 } })
+    })
     return this.get(user, caseId, runId)
   }
 
@@ -296,7 +354,7 @@ export class AgentRunService {
         progressSequence: -1,
         fencingToken: null,
         activeWaitRequestId: null,
-        pendingResume: null,
+        pendingResume: { kind: 'RETRY', previousAttemptId: current.currentAttemptId, snapshotId: null, waitRequestId: null, outcome: 'USER_RETRY' },
         failureReason: null,
         waitingFor: null,
         finishedAt: null,
