@@ -9,6 +9,7 @@ import type { CaseScopedRepository, IdempotencyStore, AuditLogPort } from '../..
 import type { ReadRepository, UnitOfWork, Tx, DocLocation, WorkContext } from '../../application/ports/persistence.js'
 import type { AccessService } from '../../application/authorization/case-access.js'
 import type { CaseEntity } from '../../domain/shared/types.js'
+import type { CaseEntity as CaseAggregateEntity } from '../../domain/case/case.js'
 import type { EntityBase, EntityPatch } from '../../domain/shared/entity.js'
 import { collections, type CollectionDescriptor } from '../../domain/shared/collections.js'
 import type { Person, Relationship } from '../../domain/person/person.js'
@@ -163,7 +164,16 @@ export function createBusinessServices(access: AccessService, read: ReadReposito
         async countReferences(tenantId, caseId, personId) {
           // Decision の ID は Person の ID。除外と Decision 記録の競合も tx.get で検出する。
           const decision = await get(tenantId, { collection: collections.decisions, caseId, id: personId })
-          return { inheritanceDecisions: decision ? 1 : 0, evidences: 0, auditEntries: 0 }
+          // Case.ownerPersonId への紐付けは work context 内でしか読めない
+          // （get() の tenant/caseId ガードは caseId: null のこの文書には合わない）。
+          const { tx } = transaction()
+          const caseEntity = await tx.get<CaseAggregateEntity>({ collection: collections.cases, caseId: null, id: caseId })
+          return {
+            inheritanceDecisions: decision ? 1 : 0,
+            evidences: 0,
+            auditEntries: 0,
+            linkedAsCaseOwner: caseEntity?.ownerPersonId === personId,
+          }
         },
       },
     }),

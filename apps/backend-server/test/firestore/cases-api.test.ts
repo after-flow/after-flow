@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { createMiddleware } from 'hono/factory'
 import { createApp } from '../../src/app.js'
+import type { Clock } from '../../src/application/ports.js'
 import { collections, INFRASTRUCTURE_COLLECTIONS } from '../../src/domain/shared/collections.js'
 import type { AppEnv } from '../../src/presentation/http/context.js'
 import { createPublicV1Routes } from '../../src/presentation/routes/public/v1/index.js'
@@ -9,9 +10,11 @@ import {
   agreeRequiredConsents,
   buildApp,
   call,
+  jsonRequest,
+  seedHeir,
   seedTenantMember,
 } from './helpers/app.js'
-import type { Json } from './helpers/app.js'
+import type { Json, TestAppOptions } from './helpers/app.js'
 import {
   describeFirestore,
   firestore,
@@ -21,11 +24,16 @@ import {
 } from './helpers/emulator.js'
 
 /** 必須同意まで済ませた利用者のアプリ。業務 API の前提を揃える。 */
-async function appFor(tenantId: string, userId: string) {
-  const app = buildApp(tenantId, userId)
+async function appFor(tenantId: string, userId: string, options: TestAppOptions = {}) {
+  const app = buildApp(tenantId, userId, options)
   await agreeRequiredConsents(app)
   return app
 }
+
+/** 日付境界のテスト用に固定した「今日」。JST 2026-06-15。 */
+const FIXED_NOW = '2026-06-15T03:00:00.000Z'
+const TODAY_JST = '2026-06-15'
+const fixedClock: Clock = { now: () => FIXED_NOW }
 
 const validBody = {
   deceasedName: '架空 太郎',
@@ -54,11 +62,11 @@ function patch(body: unknown, key = `patch-${Math.random()}`): RequestInit {
   }
 }
 
-async function setup() {
+async function setup(options: TestAppOptions = {}) {
   const tenantId = newTenantId()
   const userId = 'user-owner'
   await seedTenantMember(tenantId, userId)
-  return { tenantId, userId, app: await appFor(tenantId, userId) }
+  return { tenantId, userId, app: await appFor(tenantId, userId, options) }
 }
 
 describeFirestore('案件の作成', () => {
@@ -405,5 +413,359 @@ describeFirestore('AI planning restriction', () => {
     const outsider = await appFor(tenantId, 'outsider')
     assert.equal((await call(outsider, url, patch({ expectedVersion: 2, restriction: null }))).status, 404)
     assert.deepEqual((await call(app, `/cases/${id}`)).body.data.aiPlanningRestriction, { reason: 'pause' })
+  })
+})
+
+describeFirestore('本人を同時登録して案件を作成する', () => {
+  const ownerPersonBody = { ...validBody, ownerPerson: { isHeir: true } }
+
+  it('ownerPersonId と selfPersonId が同じ Person を指し、caseVersion は 1 のまま', async () => {
+    const { app, tenantId } = await setup()
+    const created = await call(app, '/cases', post(ownerPersonBody, 'idem-owner-0001'))
+
+    assert.equal(created.status, 201, JSON.stringify(created.body))
+    const { id: caseId, ownerPersonId, selfPersonId } = created.body.data
+    assert.ok(ownerPersonId)
+    assert.equal(selfPersonId, ownerPersonId)
+    assert.equal(created.body.data.caseVersion, 1)
+
+    const caseDoc = await firestore().doc(`tenants/${tenantId}/cases/${caseId}`).get()
+    assert.equal(caseDoc.get('ownerPersonId'), ownerPersonId)
+
+    const personDoc = await firestore().doc(`tenants/${tenantId}/cases/${caseId}/persons/${ownerPersonId}`).get()
+    assert.ok(personDoc.exists)
+    assert.equal(personDoc.get('name'), validBody.ownerName)
+    assert.equal(personDoc.get('relationshipLabel'), validBody.relationshipToDeceased)
+    assert.equal(personDoc.get('role'), 'HEIR_CANDIDATE')
+    assert.equal(personDoc.get('isHeir'), true)
+    assert.equal(personDoc.get('excludedAt'), null)
+    assert.equal(personDoc.get('caseId'), caseId)
+    assert.equal(personDoc.get('createdBy').id, 'user-owner')
+
+    const memberDoc = await firestore().doc(`tenants/${tenantId}/cases/${caseId}/caseMembers/user-owner`).get()
+    assert.equal(memberDoc.get('personId'), ownerPersonId)
+
+    const personsList = await call(app, `/cases/${caseId}/persons`)
+    assert.equal(personsList.status, 200)
+    assert.deepEqual(personsList.body.data.map((p: Json) => p.id), [ownerPersonId])
+
+    const fetched = await call(app, `/cases/${caseId}`)
+    assert.equal(fetched.body.data.ownerPersonId, ownerPersonId)
+    assert.equal(fetched.body.data.selfPersonId, ownerPersonId)
+  })
+
+  it('監査は case.created と person.created の2件、case.context_changed は無い。Outbox は case.created 1件', async () => {
+    const { app, tenantId } = await setup()
+    const created = await call(app, '/cases', post(ownerPersonBody, 'idem-owner-0002'))
+    const caseId = created.body.data.id
+
+    const audits = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/auditEvents`).get()
+    const types = audits.docs.map(d => d.get('type')).sort()
+    assert.deepEqual(types, ['case.created', 'person.created'])
+
+    const outbox = await firestore().collection(`tenants/${tenantId}/${INFRASTRUCTURE_COLLECTIONS.outbox}`).get()
+    assert.equal(outbox.size, 1)
+    assert.equal(outbox.docs[0]?.get('type'), 'case.created')
+  })
+
+  it('isHeir:false でも ownerPersonId は設定され、role は RELATED。相続方法は確定できない', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post({ ...validBody, ownerPerson: { isHeir: false } }, 'idem-owner-0003'))
+    const { id: caseId, ownerPersonId } = created.body.data
+    assert.ok(ownerPersonId)
+
+    const fetched = await call(app, `/cases/${caseId}/persons`)
+    assert.equal(fetched.body.data[0].role, 'RELATED')
+    assert.equal(fetched.body.data[0].isHeir, false)
+
+    const decision = await call(
+      app,
+      `/cases/${caseId}/inheritance-decisions/${ownerPersonId}`,
+      jsonRequest('POST', { method: null, state: 'DRAFT' }),
+    )
+    // 有効な相続人候補ではないため確定できない。
+    assert.equal(decision.status, 409)
+    assert.equal(decision.body.error.code, 'PRECONDITION_FAILED')
+  })
+
+  it('冪等再送は同じ Person を再利用し、ownerPerson を変えた再送は409', async () => {
+    const { app, tenantId } = await setup()
+    const first = await call(app, '/cases', post(ownerPersonBody, 'idem-owner-0004'))
+    const second = await call(app, '/cases', post(ownerPersonBody, 'idem-owner-0004'))
+
+    assert.equal(second.status, 201)
+    assert.equal(second.body.data.id, first.body.data.id)
+    assert.equal(second.body.data.ownerPersonId, first.body.data.ownerPersonId)
+    assert.equal((await firestore().collection(`tenants/${tenantId}/cases`).get()).size, 1)
+    const persons = await firestore()
+      .collection(`tenants/${tenantId}/cases/${first.body.data.id}/persons`)
+      .get()
+    assert.equal(persons.size, 1)
+
+    const conflicting = await call(
+      app,
+      '/cases',
+      post({ ...ownerPersonBody, ownerPerson: { isHeir: false } }, 'idem-owner-0004'),
+    )
+    assert.equal(conflicting.status, 409)
+    assert.equal(conflicting.body.error.code, 'IDEMPOTENCY_KEY_REUSED')
+  })
+
+  it('不正な ownerPerson は400', async () => {
+    const { app } = await setup()
+    for (const ownerPerson of [{}, { isHeir: true, extra: 1 }, { isHeir: 'yes' }]) {
+      const response = await call(app, '/cases', post({ ...validBody, ownerPerson }, `idem-owner-bad-${Math.random()}`))
+      assert.equal(response.status, 400, JSON.stringify(response.body))
+      assert.equal(response.body.error.code, 'VALIDATION_FAILED')
+    }
+  })
+
+  it('本人は自分の相続方法を確定できる。別 Person では403', async () => {
+    const { app, tenantId } = await setup()
+    const created = await call(app, '/cases', post(ownerPersonBody, 'idem-owner-0005'))
+    const caseId = created.body.data.id as string
+    const ownerPersonId = created.body.data.ownerPersonId as string
+
+    const recorded = await call(
+      app,
+      `/cases/${caseId}/inheritance-decisions/${ownerPersonId}`,
+      jsonRequest('POST', { method: null, state: 'DRAFT' }),
+    )
+    assert.equal(recorded.status, 200, JSON.stringify(recorded.body))
+
+    const confirmed = await call(
+      app,
+      `/cases/${caseId}/inheritance-decisions/${ownerPersonId}/confirm`,
+      jsonRequest('POST', { expectedVersion: recorded.body.data.version, method: 'SIMPLE_ACCEPTANCE' }),
+    )
+    assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body))
+    assert.equal(confirmed.body.data.confirmed, true)
+
+    // 案件の所有者でも、紐付いていない別の Person の意思を本人として確定できない。
+    await seedHeir(tenantId, caseId, 'person-other')
+    const other = await call(
+      app,
+      `/cases/${caseId}/inheritance-decisions/person-other`,
+      jsonRequest('POST', { method: null, state: 'DRAFT' }),
+    )
+    assert.equal(other.status, 200, JSON.stringify(other.body))
+    const forbidden = await call(
+      app,
+      `/cases/${caseId}/inheritance-decisions/person-other/confirm`,
+      jsonRequest('POST', { expectedVersion: other.body.data.version, method: 'SIMPLE_ACCEPTANCE' }),
+    )
+    assert.equal(forbidden.status, 403)
+  })
+
+  it('OWNER が作成した Case を EDITOR が読むと ownerPersonId は非null・selfPersonId は null', async () => {
+    const owner = await setup()
+    const created = await call(owner.app, '/cases', post(ownerPersonBody, 'idem-owner-0006'))
+    const caseId = created.body.data.id
+
+    await seedTenantMember(owner.tenantId, 'user-editor')
+    await unitOfWork().run(workContext(owner.tenantId), async tx => {
+      tx.create(
+        { collection: collections.caseMembers, caseId, id: 'user-editor' },
+        { id: 'user-editor', userId: 'user-editor', role: 'EDITOR', active: true, personId: null } as never,
+      )
+    })
+    const editor = await appFor(owner.tenantId, 'user-editor')
+    const fetched = await call(editor, `/cases/${caseId}`)
+    assert.equal(fetched.body.data.ownerPersonId, created.body.data.ownerPersonId)
+    assert.equal(fetched.body.data.selfPersonId, null)
+
+    const list = await call(editor, '/cases')
+    assert.equal(list.body.data[0].selfPersonId, null)
+  })
+
+  it('PATCH /cases/:caseId に ownerPersonId を送ると400', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post(ownerPersonBody, 'idem-owner-0007'))
+    const response = await call(
+      app,
+      `/cases/${created.body.data.id}`,
+      patch({ expectedVersion: 1, ownerPersonId: 'person_forged' }),
+    )
+    assert.equal(response.status, 400)
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED')
+  })
+})
+
+describeFirestore('本人フラグ無しでの作成（後方互換）', () => {
+  it('ownerPersonId/selfPersonId は null、persons は0件、監査は既存どおり1件', async () => {
+    const { app, tenantId } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-compat-0001'))
+    assert.equal(created.status, 201)
+    assert.equal(created.body.data.ownerPersonId, null)
+    assert.equal(created.body.data.selfPersonId, null)
+
+    const caseId = created.body.data.id
+    const member = await firestore().doc(`tenants/${tenantId}/cases/${caseId}/caseMembers/user-owner`).get()
+    assert.equal(member.get('personId'), null)
+
+    const persons = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/persons`).get()
+    assert.equal(persons.size, 0)
+
+    const audits = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/auditEvents`).get()
+    assert.equal(audits.size, 1)
+    assert.equal(audits.docs[0]?.get('type'), 'case.created')
+  })
+
+  it('ownerPerson: null は省略と同じ挙動', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post({ ...validBody, ownerPerson: null }, 'idem-compat-0002'))
+    assert.equal(created.status, 201)
+    assert.equal(created.body.data.ownerPersonId, null)
+  })
+
+  it('後から POST /cases/:caseId/persons で本人を登録できる', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-compat-0003'))
+    const caseId = created.body.data.id
+    const person = await call(
+      app,
+      `/cases/${caseId}/persons`,
+      jsonRequest('POST', { name: validBody.ownerName, relationship: validBody.relationshipToDeceased, isHeir: true }),
+    )
+    assert.equal(person.status, 201, JSON.stringify(person.body))
+  })
+})
+
+describeFirestore('案件作成の日付検証', () => {
+  const future = '2026-06-17' // TODAY_JST + 2日
+  const past = '2026-04-01'
+
+  it('未来の死亡日を拒否し、何も残さない', async () => {
+    const { app, tenantId } = await setup({ clock: fixedClock })
+    const key = 'idem-date-0001'
+    const response = await call(app, '/cases', post({ ...validBody, dateOfDeath: future, knownAt: null }, key))
+    assert.equal(response.status, 400)
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED')
+    assert.equal(response.body.error.details.source, 'body')
+    assert.deepEqual(
+      response.body.error.details.issues.map((i: Json) => [i.path, i.code]),
+      [['dateOfDeath', 'DATE_OF_DEATH_IN_FUTURE']],
+    )
+
+    assert.equal((await firestore().collection(`tenants/${tenantId}/cases`).get()).size, 0)
+    assert.equal((await firestore().collection(`tenants/${tenantId}/${INFRASTRUCTURE_COLLECTIONS.outbox}`).get()).size, 0)
+
+    // 同じキーで正しい内容を送れば作成できる（冪等文書が残っていない証拠）。
+    const retry = await call(app, '/cases', post({ ...validBody, dateOfDeath: past, knownAt: null }, key))
+    assert.equal(retry.status, 201, JSON.stringify(retry.body))
+  })
+
+  it('知った日が死亡日より前は拒否する', async () => {
+    const { app } = await setup({ clock: fixedClock })
+    const response = await call(app, '/cases', post({ ...validBody, dateOfDeath: '2026-04-10', knownAt: '2026-04-01' }, 'idem-date-0002'))
+    assert.equal(response.status, 400)
+    assert.deepEqual(
+      response.body.error.details.issues.map((i: Json) => [i.path, i.code]),
+      [['knownAt', 'KNOWN_AT_BEFORE_DATE_OF_DEATH']],
+    )
+  })
+
+  it('未来の知った日を拒否する（死亡日は過去）', async () => {
+    const { app } = await setup({ clock: fixedClock })
+    const response = await call(app, '/cases', post({ ...validBody, dateOfDeath: past, knownAt: future }, 'idem-date-0003'))
+    assert.equal(response.status, 400)
+    assert.deepEqual(
+      response.body.error.details.issues.map((i: Json) => [i.path, i.code]),
+      [['knownAt', 'KNOWN_AT_IN_FUTURE']],
+    )
+  })
+
+  it('未来の死亡日かつ知った日が死亡日より前は、両方の path を返す', async () => {
+    const { app } = await setup({ clock: fixedClock })
+    const response = await call(app, '/cases', post({ ...validBody, dateOfDeath: future, knownAt: past }, 'idem-date-0004'))
+    assert.equal(response.status, 400)
+    const paths = response.body.error.details.issues.map((i: Json) => i.path).sort()
+    assert.deepEqual(paths, ['dateOfDeath', 'knownAt'])
+  })
+
+  it('境界（今日と同日）はすべて有効', async () => {
+    const { app } = await setup({ clock: fixedClock })
+    const okDeath = await call(app, '/cases', post({ ...validBody, dateOfDeath: TODAY_JST, knownAt: null }, 'idem-date-0005'))
+    assert.equal(okDeath.status, 201, JSON.stringify(okDeath.body))
+
+    const okKnownEqualsDeath = await call(
+      app, '/cases', post({ ...validBody, dateOfDeath: past, knownAt: past }, 'idem-date-0006'),
+    )
+    assert.equal(okKnownEqualsDeath.status, 201)
+
+    const okKnownEqualsToday = await call(
+      app, '/cases', post({ ...validBody, dateOfDeath: past, knownAt: TODAY_JST }, 'idem-date-0007'),
+    )
+    assert.equal(okKnownEqualsToday.status, 201, JSON.stringify(okKnownEqualsToday.body))
+  })
+})
+
+describeFirestore('案件訂正の日付検証', () => {
+  it('知った日を死亡日より前に訂正すると400', async () => {
+    const { app } = await setup({ clock: fixedClock })
+    const created = await call(app, '/cases', post(validBody, 'idem-patch-date-0001'))
+    const response = await call(
+      app,
+      `/cases/${created.body.data.id}`,
+      patch({ expectedVersion: 1, knownAt: '2026-03-01' }),
+    )
+    assert.equal(response.status, 400)
+    assert.deepEqual(
+      response.body.error.details.issues.map((i: Json) => [i.path, i.code]),
+      [['knownAt', 'KNOWN_AT_BEFORE_DATE_OF_DEATH']],
+    )
+  })
+
+  it('死亡日を既存の知った日より後に訂正すると400', async () => {
+    const { app } = await setup({ clock: fixedClock })
+    const created = await call(app, '/cases', post(validBody, 'idem-patch-date-0002'))
+    const response = await call(
+      app,
+      `/cases/${created.body.data.id}`,
+      patch({ expectedVersion: 1, dateOfDeath: '2026-04-05' }),
+    )
+    assert.equal(response.status, 400)
+    assert.deepEqual(
+      response.body.error.details.issues.map((i: Json) => [i.path, i.code]),
+      [['knownAt', 'KNOWN_AT_BEFORE_DATE_OF_DEATH']],
+    )
+  })
+
+  it('日付に触れない PATCH は、既存の日付不整合を巻き込まない', async () => {
+    const { app, tenantId } = await setup({ clock: fixedClock })
+    const created = await call(app, '/cases', post(validBody, 'idem-patch-date-0003'))
+    const caseId = created.body.data.id
+
+    // legacy な不整合を直接 Firestore に作る（knownAt が dateOfDeath より前）。
+    await unitOfWork().run(workContext(tenantId), async tx => {
+      const location = { collection: collections.cases, caseId: null, id: caseId }
+      const current = await tx.require(location)
+      tx.update(location, current.version, { dateOfDeath: '2026-05-01', knownAt: '2026-04-01' })
+    })
+
+    const municipalityOnly = await call(
+      app,
+      `/cases/${caseId}`,
+      patch({ expectedVersion: 2, municipality: '別の架空市' }),
+    )
+    assert.equal(municipalityOnly.status, 200, JSON.stringify(municipalityOnly.body))
+
+    const fixDates = await call(
+      app,
+      `/cases/${caseId}`,
+      patch({ expectedVersion: 3, dateOfDeath: '2026-04-01', knownAt: '2026-04-01' }),
+    )
+    assert.equal(fixDates.status, 200, JSON.stringify(fixDates.body))
+  })
+
+  it('既存の knownAt PATCH（過去日）は引き続き200', async () => {
+    const { app } = await setup({ clock: fixedClock })
+    const created = await call(app, '/cases', post(validBody, 'idem-patch-date-0004'))
+    const response = await call(
+      app,
+      `/cases/${created.body.data.id}`,
+      patch({ expectedVersion: 1, knownAt: '2026-04-10' }),
+    )
+    assert.equal(response.status, 200)
   })
 })

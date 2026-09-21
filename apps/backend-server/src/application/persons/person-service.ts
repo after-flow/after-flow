@@ -11,6 +11,7 @@ import type {
 import {
   createPerson,
   createRelationship,
+  defaultRoleFor,
   excludePerson,
   excludeRelationship,
   updatePerson,
@@ -88,7 +89,7 @@ function fieldsFromCreate(req: CreatePersonRequest): PersonFields {
     name: req.name,
     nameKana: req.nameKana ?? null,
     relationshipLabel: req.relationship,
-    role: req.role ?? (isHeir ? 'HEIR_CANDIDATE' : 'RELATED'),
+    role: req.role ?? defaultRoleFor(isHeir),
     isHeir,
     dateOfBirth: req.dateOfBirth ?? null,
     specialCircumstance: req.specialCircumstance ?? null,

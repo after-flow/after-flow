@@ -13,6 +13,7 @@ import { DocumentService } from '../../../src/application/document/document-serv
 import type { InheritanceDecisionReader } from '../../../src/application/task/task-service.js'
 import { AgentRunService } from '../../../src/application/agent/agent-run-service.js'
 import type { AgentOperation } from '../../../src/domain/agent/agent-run.js'
+import type { Clock } from '../../../src/application/ports.js'
 import {
   InheritanceDecisionService,
   StoredInheritanceDecisionReader,
@@ -66,6 +67,8 @@ export interface TestAppOptions {
   connectedOperations?: AgentOperation[]
   /** 内部APIのサービストークン。未指定なら内部APIを公開しない。 */
   serviceToken?: string
+  /** CaseService の時計。未指定なら実時刻。日付境界のテストで固定時刻を注入する。 */
+  clock?: Clock
 }
 
 export function buildApp(tenantId: string, userId: string, options: TestAppOptions = {}) {
@@ -89,7 +92,7 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
 
   const routes = createPublicV1Routes({
     ...createBusinessServices(access, readRepository(), unitOfWork()),
-    caseService: new CaseService(access, readRepository(), unitOfWork()),
+    caseService: new CaseService(access, readRepository(), unitOfWork(), options.clock),
     consentService,
     documentService: new DocumentService(
       access,

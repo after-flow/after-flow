@@ -22,6 +22,17 @@ export interface CaseEntity extends EntityBase {
   relationshipToDeceased: string
   /** 手続き先の市区町村。番地は保持しない。 */
   municipality: string | null
+  /**
+   * 作成者本人に対応する Person の ID。
+   *
+   * Case 作成時に本人を Person として同時登録した場合だけ入る。それ以外は
+   * null。作成時点の紐付けを記録した履歴値であり、以後は更新しない
+   * （membership の付け替えには追従しない）。名前一致で本人を推定しない
+   * （改名・表記ゆれで判定がずれる）。呼び出し主体が本人かどうかの判定には
+   * 使わず、CaseMember.personId（DTO では selfPersonId）を根拠にする。
+   * legacy record では欠落しうるため optional。読み出し側は null に正規化する。
+   */
+  ownerPersonId?: string | null
   /** Human-controlled pause of AI planning; absent only on legacy records. */
   aiPlanningRestriction?: { reason: string } | null
   status: CaseStatus

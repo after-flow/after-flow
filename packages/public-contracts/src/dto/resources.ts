@@ -41,6 +41,13 @@ export interface Case {
   profile?: CaseProfile
   status: CaseStatus
   createdAt: ISODateTime
+  /**
+   * 作成者本人に対応する Person の ID。Backend は null を返しうる項目で、
+   * 他の項目のように省略ではなく明示的に `null` が入る（Backend の CaseResource に合わせた）。
+   */
+  ownerPersonId?: string | null
+  /** 呼び出し利用者自身に紐付く Person の ID。Backend の CaseResource と同じ意味。 */
+  selfPersonId?: string | null
 }
 
 export type YesNoUnknown = 'YES' | 'NO' | 'UNKNOWN'
