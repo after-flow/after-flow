@@ -27,6 +27,7 @@ import { entityProposalAppliers } from '../../../src/application/proposal/entity
 import { taskActionProposalAppliers } from '../../../src/application/proposal/task-action-appliers.js'
 import type { ProposalApplier } from '../../../src/application/proposal/proposal-service.js'
 import { TaskService } from '../../../src/application/task/task-service.js'
+import { ProcedureSyncService } from '../../../src/application/task/procedure-sync-service.js'
 import { PLACEHOLDER_RULE_CATALOG } from '../../../src/domain/task/rule-catalog.js'
 import type { RuleCatalog } from '../../../src/domain/task/rule-engine.js'
 import { PLACEHOLDER_CATALOG } from '../../../src/domain/consent/catalog.js'
@@ -73,6 +74,8 @@ export interface TestAppOptions {
 
 export function buildApp(tenantId: string, userId: string, options: TestAppOptions = {}) {
   const access = new AccessService(readRepository())
+  const ruleCatalog = options.ruleCatalog ?? PLACEHOLDER_RULE_CATALOG
+  const procedureSync = new ProcedureSyncService(ruleCatalog, readRepository())
   const consentService = new ConsentService(
     options.catalog ?? PLACEHOLDER_CATALOG,
     access,
@@ -92,7 +95,7 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
 
   const routes = createPublicV1Routes({
     ...createBusinessServices(access, readRepository(), unitOfWork()),
-    caseService: new CaseService(access, readRepository(), unitOfWork(), options.clock),
+    caseService: new CaseService(access, readRepository(), unitOfWork(), options.clock, procedureSync),
     consentService,
     documentService: new DocumentService(
       access,
@@ -104,10 +107,11 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       options.aiConnected ?? false,
     ),
     taskService: new TaskService(
-      options.ruleCatalog ?? PLACEHOLDER_RULE_CATALOG,
+      ruleCatalog,
       access,
       readRepository(),
       unitOfWork(),
+      procedureSync,
       options.decisions ?? new StoredInheritanceDecisionReader(readRepository()),
     ),
     agentRunService,

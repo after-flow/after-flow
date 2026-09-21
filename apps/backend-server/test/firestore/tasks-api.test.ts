@@ -25,6 +25,7 @@ const REVIEWED_CATALOG: RuleCatalog = {
       basis: 'KNOWN_AT',
       period: { unit: 'DAY', count: 7, includeFirstDay: false },
       basisLabel: '相続の開始を知った日の翌日から数えて7日以内',
+      knownAtLabel: '相続の開始を知った日',
       legalNature: 'JURISDICTIONAL',
       jurisdiction: '架空市',
       reviewed: true,
@@ -32,6 +33,7 @@ const REVIEWED_CATALOG: RuleCatalog = {
       sourceCheckedAt: '2026-09-20T00:00:00+09:00',
       extendable: false,
       critical: true,
+      reviewedBy: { name: 'テスト 司法書士', qualification: 'JUDICIAL_SCRIVENER' },
     },
   ],
   initialProcedures: [
@@ -46,6 +48,9 @@ const REVIEWED_CATALOG: RuleCatalog = {
       assetDisposal: false,
       requiredDocuments: [],
       deadlineRuleId: 'fixture-notification',
+      applicability: { default: 'yes', rules: [] },
+      variants: [],
+      targetDate: null,
     },
     {
       id: 'fixture-disposal',
@@ -58,9 +63,14 @@ const REVIEWED_CATALOG: RuleCatalog = {
       assetDisposal: true,
       requiredDocuments: [],
       deadlineRuleId: null,
+      applicability: { default: 'yes', rules: [] },
+      variants: [],
+      targetDate: null,
     },
   ],
   deliberationDeadlineRuleId: null,
+  reviewedBy: { name: 'テスト 司法書士', qualification: 'JUDICIAL_SCRIVENER' },
+  reviewedAt: '2026-09-20T00:00:00+09:00',
 }
 
 /** 業務レビュー未了(reviewed:false)のルールだけを持つ架空カタログ。 */
@@ -74,6 +84,7 @@ const UNREVIEWED_CATALOG: RuleCatalog = {
       basis: 'KNOWN_AT',
       period: { unit: 'DAY', count: 14, includeFirstDay: false },
       basisLabel: '相続の開始を知った日の翌日から数えて14日以内',
+      knownAtLabel: '相続の開始を知った日',
       legalNature: 'JURISDICTIONAL',
       jurisdiction: '架空市',
       reviewed: false,
@@ -81,6 +92,7 @@ const UNREVIEWED_CATALOG: RuleCatalog = {
       sourceCheckedAt: null,
       extendable: null,
       critical: false,
+      reviewedBy: null,
     },
   ],
   initialProcedures: [
@@ -95,9 +107,14 @@ const UNREVIEWED_CATALOG: RuleCatalog = {
       assetDisposal: false,
       requiredDocuments: [],
       deadlineRuleId: 'fixture-unreviewed',
+      applicability: { default: 'yes', rules: [] },
+      variants: [],
+      targetDate: null,
     },
   ],
   deliberationDeadlineRuleId: null,
+  reviewedBy: null,
+  reviewedAt: null,
 }
 
 const caseBody = {
@@ -201,11 +218,12 @@ describeFirestore('Taskの担当者・必要書類・依存関係', () => {
     assert.equal(forged.status, 400)
   })
 
-  it('201件の期限を再評価し、再送で版を余分に増やさない', async () => {
+  it('legacy形式で複製された200件のDeadlineを削除し、正規docだけ残す。再送で版を余分に増やさない', async () => {
     const { tenantId, app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
     await initialize(app, caseId)
     const deadlines = firestore().collection(`tenants/${tenantId}/cases/${caseId}/deadlines`)
     const original = (await deadlines.get()).docs[0]!.data()
+    const canonicalId = original.id as string
     const batch = firestore().batch()
     for (let index = 0; index < 200; index++) {
       const id = `extra-deadline-${index}`
@@ -214,11 +232,19 @@ describeFirestore('Taskの担当者・必要書類・依存関係', () => {
     await batch.commit()
     await firestore().doc(`tenants/${tenantId}/cases/${caseId}`).update({ knownAt: '2026-05-01' })
     const response = await call(app, `/cases/${caseId}/deadlines/reevaluate`, jsonRequest('POST', {}))
-    assert.equal(response.status, 200)
-    assert.equal(response.body.data.updated.length, 201)
+    assert.equal(response.status, 200, JSON.stringify(response.body))
+    // 正規 doc（起算日訂正で dueDate が変わる）だけが updated に入る。legacy 200 件は削除される
+    // （reevaluate の応答の removed は Task のみを数えるため、Deadline の削除件数はここには出ない）。
+    assert.deepEqual(response.body.data.updated, [canonicalId])
+
+    const afterFirst = await deadlines.get()
+    assert.equal(afterFirst.size, 1, '正規 doc 以外の legacy 複製が削除されている')
+    assert.equal(afterFirst.docs[0]!.id, canonicalId)
+    assert.equal(afterFirst.docs[0]!.get('version'), 2)
+
     const next = await call(app, `/cases/${caseId}/deadlines/reevaluate`, jsonRequest('POST', {}))
     assert.deepEqual(next.body.data.updated, [])
-    assert.ok((await deadlines.get()).docs.every(doc => doc.get('version') === 2))
+    assert.equal((await deadlines.get()).size, 1)
   })
 })
 
@@ -236,12 +262,17 @@ async function findTask(
 describeFirestore('初期手続きの生成', () => {
   it('Case から定義どおりの手続きを作る', async () => {
     const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG })
-    const response = await initialize(app, caseId)
 
-    assert.equal(response.body.data.created.length, 2)
+    // Case 作成のトランザクション内で同期生成されるため、initialize を呼ぶ前から揃っている。
     const list = await call(app, `/cases/${caseId}/tasks`)
     assert.equal(list.body.data.length, 2)
     assert.equal(list.body.data[0].source, 'RULE_ENGINE')
+
+    // initialize は補正経路として残るが、同期済みの Case では何も作らない。
+    const response = await initialize(app, caseId)
+    assert.equal(response.body.data.created.length, 0)
+    const listAfter = await call(app, `/cases/${caseId}/tasks`)
+    assert.equal(listAfter.body.data.length, 2)
   })
 
   it('再実行しても手続きが重複しない', async () => {
@@ -326,22 +357,23 @@ describeFirestore('初期手続きの生成', () => {
       `/cases/${caseId}`,
       jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-03' }),
     )
-    const reevaluated = await call(
-      app,
-      `/cases/${caseId}/deadlines/reevaluate`,
-      jsonRequest('POST', {}, nextKey('idem-reeval')),
-    )
-    // basisLabel の付記が消えるだけでも再評価は1件の更新として数える。
-    assert.equal(reevaluated.body.data.updated.length, 1)
-
+    // PATCH と同じ Transaction 内で洗い出しが走るため、期限はここで既に更新されている。
     const after = await call(app, `/cases/${caseId}/deadlines`)
     const afterDeadline = after.body.data[0]
     assert.equal(afterDeadline.startDate, '2026-04-03')
     assert.equal(afterDeadline.dueDate, '2026-04-10')
     assert.doesNotMatch(afterDeadline.basisLabel, /知った日が未入力のため/)
+
+    // reevaluate は補正経路。同期済みの Case では何も変えない（冪等）。
+    const reevaluated = await call(
+      app,
+      `/cases/${caseId}/deadlines/reevaluate`,
+      jsonRequest('POST', {}, nextKey('idem-reeval')),
+    )
+    assert.equal(reevaluated.body.data.updated.length, 0)
   })
 
-  it('知った日を後入力しても死亡日と同じ日付ならbasisLabelの付記が消えたことを再評価が検出する', async () => {
+  it('知った日を後入力しても死亡日と同じ日付ならPATCHでbasisLabelの付記が消える', async () => {
     const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG }, { knownAt: undefined })
     await initialize(app, caseId)
 
@@ -355,17 +387,18 @@ describeFirestore('初期手続きの生成', () => {
       `/cases/${caseId}`,
       jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-01' }),
     )
+    // dueDate/startDate は変わらないが、basisLabel の付記は PATCH と同じ Transaction で消える。
+    const after = await call(app, `/cases/${caseId}/deadlines`)
+    assert.equal(after.body.data[0].dueDate, '2026-04-08')
+    assert.doesNotMatch(after.body.data[0].basisLabel, /知った日が未入力のため/)
+
+    // reevaluate は補正経路。同期済みの Case では何も変えない（冪等）。
     const reevaluated = await call(
       app,
       `/cases/${caseId}/deadlines/reevaluate`,
       jsonRequest('POST', {}, nextKey('idem-reeval')),
     )
-    // dueDate/startDateは変わらないが、basisLabelの付記が消えるため更新扱いになる。
-    assert.equal(reevaluated.body.data.updated.length, 1)
-
-    const after = await call(app, `/cases/${caseId}/deadlines`)
-    assert.equal(after.body.data[0].dueDate, '2026-04-08')
-    assert.doesNotMatch(after.body.data[0].basisLabel, /知った日が未入力のため/)
+    assert.equal(reevaluated.body.data.updated.length, 0)
   })
 
   it('起算日を訂正すると期限を作り直す', async () => {
@@ -378,15 +411,17 @@ describeFirestore('初期手続きの生成', () => {
       `/cases/${caseId}`,
       jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-10' }),
     )
+    // PATCH と同じ Transaction 内で期限が作り直される。
+    const deadlines = await call(app, `/cases/${caseId}/deadlines`)
+    assert.equal(deadlines.body.data[0].dueDate, '2026-04-17')
+
+    // reevaluate は補正経路。同期済みの Case では何も変えない（冪等）。
     const reevaluated = await call(
       app,
       `/cases/${caseId}/deadlines/reevaluate`,
       jsonRequest('POST', {}, nextKey('idem-reeval')),
     )
-    assert.equal(reevaluated.body.data.updated.length, 1)
-
-    const deadlines = await call(app, `/cases/${caseId}/deadlines`)
-    assert.equal(deadlines.body.data[0].dueDate, '2026-04-17')
+    assert.equal(reevaluated.body.data.updated.length, 0)
   })
 })
 

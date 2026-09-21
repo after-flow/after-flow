@@ -1,4 +1,5 @@
 import type { EntityBase } from '../shared/entity.js'
+import type { CaseProfile } from './case-profile.js'
 
 /** Case（案件）。仕様書 7.1 の中核 Entity。 */
 export type CaseStatus = 'ACTIVE' | 'CLOSED'
@@ -40,6 +41,12 @@ export interface CaseEntity extends EntityBase {
   ownerPersonId?: string | null
   /** Human-controlled pause of AI planning; absent only on legacy records. */
   aiPlanningRestriction?: { reason: string } | null
+  /**
+   * 手続きの出し分け条件（健康保険・年金・職業・不動産・車・住宅ローン）。
+   * 未回答は null（全項目 UNKNOWN と同じに評価する）。legacy record では欠落しうる
+   * ため optional。読み出し側は null に正規化する。
+   */
+  profile?: CaseProfile | null
   status: CaseStatus
   /**
    * Case 全体の版。

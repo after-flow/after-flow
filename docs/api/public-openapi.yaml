@@ -6615,7 +6615,7 @@ paths:
     post:
       operationId: createCase
       summary: 案件を作成する
-      description: 作成者を OWNER として membership を同じ Transaction で確定する。`ownerPerson` を指定すると本人を Person として同時登録し `ownerPersonId` に紐付ける（省略時は従来どおり後から POST /cases/:caseId/persons で登録する）。未来の死亡日、死亡日より前または未来の「知った日」は 400。初期手続きと期限の生成は別の処理が行う。
+      description: 作成者を OWNER として membership を同じ Transaction で確定する。`ownerPerson` を指定すると本人を Person として同時登録し `ownerPersonId` に紐付ける（省略時は従来どおり後から POST /cases/:caseId/persons で登録する）。未来の死亡日、死亡日より前または未来の「知った日」、死亡日より後の生年月日は 400。初期手続きと期限は同じ Transaction で生成され、201 応答直後の GET /cases/:caseId/tasks・overview に載る。
       tags:
         - cases
       security:
@@ -6724,6 +6724,61 @@ paths:
                       knownAt:
                         nullable: true
                         type: string
+                      profile:
+                        type: object
+                        properties:
+                          healthInsurance:
+                            type: string
+                            enum:
+                              - NATIONAL
+                              - EMPLOYEE
+                              - LATE_ELDERLY
+                              - UNKNOWN
+                          pension:
+                            type: string
+                            enum:
+                              - EMPLOYEES
+                              - NATIONAL_ONLY
+                              - NONE
+                              - UNKNOWN
+                          occupation:
+                            type: string
+                            enum:
+                              - EMPLOYEE
+                              - SELF_EMPLOYED
+                              - NONE
+                              - UNKNOWN
+                          realEstate:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          car:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          mortgage:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          answeredAt:
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        required:
+                          - healthInsurance
+                          - pension
+                          - occupation
+                          - realEstate
+                          - car
+                          - mortgage
+                          - answeredAt
+                        additionalProperties: false
                       ownerName:
                         type: string
                       relationshipToDeceased:
@@ -6907,6 +6962,61 @@ paths:
                         knownAt:
                           nullable: true
                           type: string
+                        profile:
+                          type: object
+                          properties:
+                            healthInsurance:
+                              type: string
+                              enum:
+                                - NATIONAL
+                                - EMPLOYEE
+                                - LATE_ELDERLY
+                                - UNKNOWN
+                            pension:
+                              type: string
+                              enum:
+                                - EMPLOYEES
+                                - NATIONAL_ONLY
+                                - NONE
+                                - UNKNOWN
+                            occupation:
+                              type: string
+                              enum:
+                                - EMPLOYEE
+                                - SELF_EMPLOYED
+                                - NONE
+                                - UNKNOWN
+                            realEstate:
+                              type: string
+                              enum:
+                                - YES
+                                - NO
+                                - UNKNOWN
+                            car:
+                              type: string
+                              enum:
+                                - YES
+                                - NO
+                                - UNKNOWN
+                            mortgage:
+                              type: string
+                              enum:
+                                - YES
+                                - NO
+                                - UNKNOWN
+                            answeredAt:
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          required:
+                            - healthInsurance
+                            - pension
+                            - occupation
+                            - realEstate
+                            - car
+                            - mortgage
+                            - answeredAt
+                          additionalProperties: false
                         ownerName:
                           type: string
                         relationshipToDeceased:
@@ -7068,6 +7178,61 @@ paths:
                       knownAt:
                         nullable: true
                         type: string
+                      profile:
+                        type: object
+                        properties:
+                          healthInsurance:
+                            type: string
+                            enum:
+                              - NATIONAL
+                              - EMPLOYEE
+                              - LATE_ELDERLY
+                              - UNKNOWN
+                          pension:
+                            type: string
+                            enum:
+                              - EMPLOYEES
+                              - NATIONAL_ONLY
+                              - NONE
+                              - UNKNOWN
+                          occupation:
+                            type: string
+                            enum:
+                              - EMPLOYEE
+                              - SELF_EMPLOYED
+                              - NONE
+                              - UNKNOWN
+                          realEstate:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          car:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          mortgage:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          answeredAt:
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        required:
+                          - healthInsurance
+                          - pension
+                          - occupation
+                          - realEstate
+                          - car
+                          - mortgage
+                          - answeredAt
+                        additionalProperties: false
                       ownerName:
                         type: string
                       relationshipToDeceased:
@@ -7181,7 +7346,7 @@ paths:
     patch:
       operationId: updateCase
       summary: 案件の基本情報を訂正する
-      description: status は変更できない。死亡日と「知った日」は別の事実として保持し、未入力を補完しない。死亡日・「知った日」を変更する場合、未来の死亡日、死亡日より前または未来の「知った日」は 400。ownerPersonId は含められない（変更したい場合は別途対応する）。
+      description: status は変更できない。死亡日と「知った日」は別の事実として保持し、未入力を補完しない。死亡日・「知った日」・生年月日を変更する場合、未来の死亡日、死亡日より前または未来の「知った日」、死亡日より後の生年月日は 400。`profile` は丸ごと置換（省略項目は UNKNOWN、`null` で未回答に戻す）。profile / 生年月日 / 死亡日 / 知った日の変更で、手続きと期限を同じ Transaction で洗い出し直す。ownerPersonId は含められない（変更したい場合は別途対応する）。
       tags:
         - cases
       security:
@@ -7248,6 +7413,56 @@ paths:
                   pattern: ^\d{4}-\d{2}-\d{2}$
                   format: date
                   example: 2026-04-01
+                profile:
+                  nullable: true
+                  type: object
+                  properties:
+                    healthInsurance:
+                      type: string
+                      enum:
+                        - NATIONAL
+                        - EMPLOYEE
+                        - LATE_ELDERLY
+                        - UNKNOWN
+                    pension:
+                      type: string
+                      enum:
+                        - EMPLOYEES
+                        - NATIONAL_ONLY
+                        - NONE
+                        - UNKNOWN
+                    occupation:
+                      type: string
+                      enum:
+                        - EMPLOYEE
+                        - SELF_EMPLOYED
+                        - NONE
+                        - UNKNOWN
+                    realEstate:
+                      type: string
+                      enum:
+                        - YES
+                        - NO
+                        - UNKNOWN
+                    car:
+                      type: string
+                      enum:
+                        - YES
+                        - NO
+                        - UNKNOWN
+                    mortgage:
+                      type: string
+                      enum:
+                        - YES
+                        - NO
+                        - UNKNOWN
+                    answeredAt:
+                      type: string
+                      format: date-time
+                      pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                  required:
+                    - answeredAt
+                  additionalProperties: false
                 ownerName:
                   type: string
                   minLength: 1
@@ -7290,6 +7505,61 @@ paths:
                       knownAt:
                         nullable: true
                         type: string
+                      profile:
+                        type: object
+                        properties:
+                          healthInsurance:
+                            type: string
+                            enum:
+                              - NATIONAL
+                              - EMPLOYEE
+                              - LATE_ELDERLY
+                              - UNKNOWN
+                          pension:
+                            type: string
+                            enum:
+                              - EMPLOYEES
+                              - NATIONAL_ONLY
+                              - NONE
+                              - UNKNOWN
+                          occupation:
+                            type: string
+                            enum:
+                              - EMPLOYEE
+                              - SELF_EMPLOYED
+                              - NONE
+                              - UNKNOWN
+                          realEstate:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          car:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          mortgage:
+                            type: string
+                            enum:
+                              - YES
+                              - NO
+                              - UNKNOWN
+                          answeredAt:
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                        required:
+                          - healthInsurance
+                          - pension
+                          - occupation
+                          - realEstate
+                          - car
+                          - mortgage
+                          - answeredAt
+                        additionalProperties: false
                       ownerName:
                         type: string
                       relationshipToDeceased:
@@ -9637,6 +9907,97 @@ paths:
                             - extendable
                             - critical
                           additionalProperties: false
+                        conditional:
+                          type: boolean
+                        submitToSource:
+                          nullable: true
+                          type: string
+                          enum:
+                            - RULE
+                            - RESEARCH
+                            - MANUAL
+                        targetDate:
+                          nullable: true
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            taskId:
+                              nullable: true
+                              type: string
+                            label:
+                              type: string
+                            basisLabel:
+                              type: string
+                            startDate:
+                              nullable: true
+                              type: string
+                            dueDate:
+                              nullable: true
+                              type: string
+                            daysRemaining:
+                              nullable: true
+                              type: number
+                            severity:
+                              nullable: true
+                              type: string
+                              enum:
+                                - NORMAL
+                                - SOON
+                                - URGENT
+                                - OVERDUE
+                            confirmation:
+                              type: string
+                              enum:
+                                - CONFIRMED
+                                - UNCONFIRMED
+                            unresolvedReason:
+                              nullable: true
+                              type: string
+                              enum:
+                                - MISSING_BASIS_DATE
+                                - RULE_UNCONFIRMED
+                            jurisdiction:
+                              type: string
+                            timezone:
+                              type: string
+                            ruleId:
+                              type: string
+                            ruleVersion:
+                              type: string
+                            sourceUrl:
+                              nullable: true
+                              type: string
+                            sourceCheckedAt:
+                              nullable: true
+                              type: string
+                              format: date-time
+                              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            extendable:
+                              nullable: true
+                              type: boolean
+                            critical:
+                              type: boolean
+                          required:
+                            - id
+                            - taskId
+                            - label
+                            - basisLabel
+                            - startDate
+                            - dueDate
+                            - daysRemaining
+                            - severity
+                            - confirmation
+                            - unresolvedReason
+                            - jurisdiction
+                            - timezone
+                            - ruleId
+                            - ruleVersion
+                            - sourceUrl
+                            - sourceCheckedAt
+                            - extendable
+                            - critical
+                          additionalProperties: false
                         evidences:
                           type: array
                           items:
@@ -9742,6 +10103,9 @@ paths:
                         - completionReportedBy
                         - completionReportedAt
                         - deadline
+                        - conditional
+                        - submitToSource
+                        - targetDate
                         - evidences
                         - allowedActions
                         - blockedActions
@@ -10126,6 +10490,97 @@ paths:
                           - extendable
                           - critical
                         additionalProperties: false
+                      conditional:
+                        type: boolean
+                      submitToSource:
+                        nullable: true
+                        type: string
+                        enum:
+                          - RULE
+                          - RESEARCH
+                          - MANUAL
+                      targetDate:
+                        nullable: true
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          taskId:
+                            nullable: true
+                            type: string
+                          label:
+                            type: string
+                          basisLabel:
+                            type: string
+                          startDate:
+                            nullable: true
+                            type: string
+                          dueDate:
+                            nullable: true
+                            type: string
+                          daysRemaining:
+                            nullable: true
+                            type: number
+                          severity:
+                            nullable: true
+                            type: string
+                            enum:
+                              - NORMAL
+                              - SOON
+                              - URGENT
+                              - OVERDUE
+                          confirmation:
+                            type: string
+                            enum:
+                              - CONFIRMED
+                              - UNCONFIRMED
+                          unresolvedReason:
+                            nullable: true
+                            type: string
+                            enum:
+                              - MISSING_BASIS_DATE
+                              - RULE_UNCONFIRMED
+                          jurisdiction:
+                            type: string
+                          timezone:
+                            type: string
+                          ruleId:
+                            type: string
+                          ruleVersion:
+                            type: string
+                          sourceUrl:
+                            nullable: true
+                            type: string
+                          sourceCheckedAt:
+                            nullable: true
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          extendable:
+                            nullable: true
+                            type: boolean
+                          critical:
+                            type: boolean
+                        required:
+                          - id
+                          - taskId
+                          - label
+                          - basisLabel
+                          - startDate
+                          - dueDate
+                          - daysRemaining
+                          - severity
+                          - confirmation
+                          - unresolvedReason
+                          - jurisdiction
+                          - timezone
+                          - ruleId
+                          - ruleVersion
+                          - sourceUrl
+                          - sourceCheckedAt
+                          - extendable
+                          - critical
+                        additionalProperties: false
                       evidences:
                         type: array
                         items:
@@ -10231,6 +10686,9 @@ paths:
                       - completionReportedBy
                       - completionReportedAt
                       - deadline
+                      - conditional
+                      - submitToSource
+                      - targetDate
                       - evidences
                       - allowedActions
                       - blockedActions
@@ -10298,7 +10756,7 @@ paths:
     post:
       operationId: initializeTasks
       summary: 初期手続きを生成する
-      description: 同じ定義から二度作らない。独立Outbox workerによる自動生成と、この明示的APIのどちらから呼んでも冪等に動く。
+      description: 通常は Case 作成の Transaction 内で同期生成されるため、ここは補正・再実行用（冪等。同じ定義から二度作らない）。
       tags:
         - tasks
       security:
@@ -10643,6 +11101,97 @@ paths:
                           - extendable
                           - critical
                         additionalProperties: false
+                      conditional:
+                        type: boolean
+                      submitToSource:
+                        nullable: true
+                        type: string
+                        enum:
+                          - RULE
+                          - RESEARCH
+                          - MANUAL
+                      targetDate:
+                        nullable: true
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          taskId:
+                            nullable: true
+                            type: string
+                          label:
+                            type: string
+                          basisLabel:
+                            type: string
+                          startDate:
+                            nullable: true
+                            type: string
+                          dueDate:
+                            nullable: true
+                            type: string
+                          daysRemaining:
+                            nullable: true
+                            type: number
+                          severity:
+                            nullable: true
+                            type: string
+                            enum:
+                              - NORMAL
+                              - SOON
+                              - URGENT
+                              - OVERDUE
+                          confirmation:
+                            type: string
+                            enum:
+                              - CONFIRMED
+                              - UNCONFIRMED
+                          unresolvedReason:
+                            nullable: true
+                            type: string
+                            enum:
+                              - MISSING_BASIS_DATE
+                              - RULE_UNCONFIRMED
+                          jurisdiction:
+                            type: string
+                          timezone:
+                            type: string
+                          ruleId:
+                            type: string
+                          ruleVersion:
+                            type: string
+                          sourceUrl:
+                            nullable: true
+                            type: string
+                          sourceCheckedAt:
+                            nullable: true
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          extendable:
+                            nullable: true
+                            type: boolean
+                          critical:
+                            type: boolean
+                        required:
+                          - id
+                          - taskId
+                          - label
+                          - basisLabel
+                          - startDate
+                          - dueDate
+                          - daysRemaining
+                          - severity
+                          - confirmation
+                          - unresolvedReason
+                          - jurisdiction
+                          - timezone
+                          - ruleId
+                          - ruleVersion
+                          - sourceUrl
+                          - sourceCheckedAt
+                          - extendable
+                          - critical
+                        additionalProperties: false
                       evidences:
                         type: array
                         items:
@@ -10748,6 +11297,9 @@ paths:
                       - completionReportedBy
                       - completionReportedAt
                       - deadline
+                      - conditional
+                      - submitToSource
+                      - targetDate
                       - evidences
                       - allowedActions
                       - blockedActions
@@ -11119,6 +11671,97 @@ paths:
                           - extendable
                           - critical
                         additionalProperties: false
+                      conditional:
+                        type: boolean
+                      submitToSource:
+                        nullable: true
+                        type: string
+                        enum:
+                          - RULE
+                          - RESEARCH
+                          - MANUAL
+                      targetDate:
+                        nullable: true
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          taskId:
+                            nullable: true
+                            type: string
+                          label:
+                            type: string
+                          basisLabel:
+                            type: string
+                          startDate:
+                            nullable: true
+                            type: string
+                          dueDate:
+                            nullable: true
+                            type: string
+                          daysRemaining:
+                            nullable: true
+                            type: number
+                          severity:
+                            nullable: true
+                            type: string
+                            enum:
+                              - NORMAL
+                              - SOON
+                              - URGENT
+                              - OVERDUE
+                          confirmation:
+                            type: string
+                            enum:
+                              - CONFIRMED
+                              - UNCONFIRMED
+                          unresolvedReason:
+                            nullable: true
+                            type: string
+                            enum:
+                              - MISSING_BASIS_DATE
+                              - RULE_UNCONFIRMED
+                          jurisdiction:
+                            type: string
+                          timezone:
+                            type: string
+                          ruleId:
+                            type: string
+                          ruleVersion:
+                            type: string
+                          sourceUrl:
+                            nullable: true
+                            type: string
+                          sourceCheckedAt:
+                            nullable: true
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          extendable:
+                            nullable: true
+                            type: boolean
+                          critical:
+                            type: boolean
+                        required:
+                          - id
+                          - taskId
+                          - label
+                          - basisLabel
+                          - startDate
+                          - dueDate
+                          - daysRemaining
+                          - severity
+                          - confirmation
+                          - unresolvedReason
+                          - jurisdiction
+                          - timezone
+                          - ruleId
+                          - ruleVersion
+                          - sourceUrl
+                          - sourceCheckedAt
+                          - extendable
+                          - critical
+                        additionalProperties: false
                       evidences:
                         type: array
                         items:
@@ -11224,6 +11867,9 @@ paths:
                       - completionReportedBy
                       - completionReportedAt
                       - deadline
+                      - conditional
+                      - submitToSource
+                      - targetDate
                       - evidences
                       - allowedActions
                       - blockedActions
@@ -11574,6 +12220,97 @@ paths:
                           - extendable
                           - critical
                         additionalProperties: false
+                      conditional:
+                        type: boolean
+                      submitToSource:
+                        nullable: true
+                        type: string
+                        enum:
+                          - RULE
+                          - RESEARCH
+                          - MANUAL
+                      targetDate:
+                        nullable: true
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          taskId:
+                            nullable: true
+                            type: string
+                          label:
+                            type: string
+                          basisLabel:
+                            type: string
+                          startDate:
+                            nullable: true
+                            type: string
+                          dueDate:
+                            nullable: true
+                            type: string
+                          daysRemaining:
+                            nullable: true
+                            type: number
+                          severity:
+                            nullable: true
+                            type: string
+                            enum:
+                              - NORMAL
+                              - SOON
+                              - URGENT
+                              - OVERDUE
+                          confirmation:
+                            type: string
+                            enum:
+                              - CONFIRMED
+                              - UNCONFIRMED
+                          unresolvedReason:
+                            nullable: true
+                            type: string
+                            enum:
+                              - MISSING_BASIS_DATE
+                              - RULE_UNCONFIRMED
+                          jurisdiction:
+                            type: string
+                          timezone:
+                            type: string
+                          ruleId:
+                            type: string
+                          ruleVersion:
+                            type: string
+                          sourceUrl:
+                            nullable: true
+                            type: string
+                          sourceCheckedAt:
+                            nullable: true
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          extendable:
+                            nullable: true
+                            type: boolean
+                          critical:
+                            type: boolean
+                        required:
+                          - id
+                          - taskId
+                          - label
+                          - basisLabel
+                          - startDate
+                          - dueDate
+                          - daysRemaining
+                          - severity
+                          - confirmation
+                          - unresolvedReason
+                          - jurisdiction
+                          - timezone
+                          - ruleId
+                          - ruleVersion
+                          - sourceUrl
+                          - sourceCheckedAt
+                          - extendable
+                          - critical
+                        additionalProperties: false
                       evidences:
                         type: array
                         items:
@@ -11679,6 +12416,9 @@ paths:
                       - completionReportedBy
                       - completionReportedAt
                       - deadline
+                      - conditional
+                      - submitToSource
+                      - targetDate
                       - evidences
                       - allowedActions
                       - blockedActions
@@ -12030,6 +12770,97 @@ paths:
                           - extendable
                           - critical
                         additionalProperties: false
+                      conditional:
+                        type: boolean
+                      submitToSource:
+                        nullable: true
+                        type: string
+                        enum:
+                          - RULE
+                          - RESEARCH
+                          - MANUAL
+                      targetDate:
+                        nullable: true
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          taskId:
+                            nullable: true
+                            type: string
+                          label:
+                            type: string
+                          basisLabel:
+                            type: string
+                          startDate:
+                            nullable: true
+                            type: string
+                          dueDate:
+                            nullable: true
+                            type: string
+                          daysRemaining:
+                            nullable: true
+                            type: number
+                          severity:
+                            nullable: true
+                            type: string
+                            enum:
+                              - NORMAL
+                              - SOON
+                              - URGENT
+                              - OVERDUE
+                          confirmation:
+                            type: string
+                            enum:
+                              - CONFIRMED
+                              - UNCONFIRMED
+                          unresolvedReason:
+                            nullable: true
+                            type: string
+                            enum:
+                              - MISSING_BASIS_DATE
+                              - RULE_UNCONFIRMED
+                          jurisdiction:
+                            type: string
+                          timezone:
+                            type: string
+                          ruleId:
+                            type: string
+                          ruleVersion:
+                            type: string
+                          sourceUrl:
+                            nullable: true
+                            type: string
+                          sourceCheckedAt:
+                            nullable: true
+                            type: string
+                            format: date-time
+                            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                          extendable:
+                            nullable: true
+                            type: boolean
+                          critical:
+                            type: boolean
+                        required:
+                          - id
+                          - taskId
+                          - label
+                          - basisLabel
+                          - startDate
+                          - dueDate
+                          - daysRemaining
+                          - severity
+                          - confirmation
+                          - unresolvedReason
+                          - jurisdiction
+                          - timezone
+                          - ruleId
+                          - ruleVersion
+                          - sourceUrl
+                          - sourceCheckedAt
+                          - extendable
+                          - critical
+                        additionalProperties: false
                       evidences:
                         type: array
                         items:
@@ -12135,6 +12966,9 @@ paths:
                       - completionReportedBy
                       - completionReportedAt
                       - deadline
+                      - conditional
+                      - submitToSource
+                      - targetDate
                       - evidences
                       - allowedActions
                       - blockedActions
@@ -12378,8 +13212,8 @@ paths:
   /cases/{caseId}/deadlines/reevaluate:
     post:
       operationId: reevaluateDeadlines
-      summary: 起算日の変更を期限へ反映する
-      description: 死亡日や「知った日」の訂正後に、影響する期限を版付きで作り直す。
+      summary: 起算日・故人の状況の変更を手続きと期限へ反映する
+      description: 死亡日・「知った日」・生年月日・profile の訂正後に、影響する手続きと期限を作り直す。作成・PATCH 時にも同じ処理が同じ Transaction で同期実行されるため、ここはカタログ差し替え後などの再実行用。
       tags:
         - tasks
       security:
@@ -12411,7 +13245,7 @@ paths:
             maxLength: 128
       responses:
         "200":
-          description: 更新した期限のID
+          description: 変更した手続き・期限のID
           content:
             application/json:
               schema:
@@ -12424,8 +13258,18 @@ paths:
                         type: array
                         items:
                           type: string
+                      created:
+                        type: array
+                        items:
+                          type: string
+                      removed:
+                        type: array
+                        items:
+                          type: string
                     required:
                       - updated
+                      - created
+                      - removed
                     additionalProperties: false
                   meta:
                     type: object
@@ -17312,6 +18156,61 @@ paths:
                           knownAt:
                             nullable: true
                             type: string
+                          profile:
+                            type: object
+                            properties:
+                              healthInsurance:
+                                type: string
+                                enum:
+                                  - NATIONAL
+                                  - EMPLOYEE
+                                  - LATE_ELDERLY
+                                  - UNKNOWN
+                              pension:
+                                type: string
+                                enum:
+                                  - EMPLOYEES
+                                  - NATIONAL_ONLY
+                                  - NONE
+                                  - UNKNOWN
+                              occupation:
+                                type: string
+                                enum:
+                                  - EMPLOYEE
+                                  - SELF_EMPLOYED
+                                  - NONE
+                                  - UNKNOWN
+                              realEstate:
+                                type: string
+                                enum:
+                                  - YES
+                                  - NO
+                                  - UNKNOWN
+                              car:
+                                type: string
+                                enum:
+                                  - YES
+                                  - NO
+                                  - UNKNOWN
+                              mortgage:
+                                type: string
+                                enum:
+                                  - YES
+                                  - NO
+                                  - UNKNOWN
+                              answeredAt:
+                                type: string
+                                format: date-time
+                                pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                            required:
+                              - healthInsurance
+                              - pension
+                              - occupation
+                              - realEstate
+                              - car
+                              - mortgage
+                              - answeredAt
+                            additionalProperties: false
                           ownerName:
                             type: string
                           relationshipToDeceased:

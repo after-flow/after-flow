@@ -109,8 +109,8 @@ describeFirestore('案件の作成', () => {
     const caseId = created.body.data.id
 
     const audits = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/auditEvents`).get()
-    assert.equal(audits.size, 1)
-    assert.equal(audits.docs[0]?.get('type'), 'case.created')
+    // 初期手続きの同期生成（task.rule_synced）が同じ Transaction で走る。
+    assert.deepEqual(audits.docs.map(d => d.get('type')).sort(), ['case.created', 'task.rule_synced'])
 
     const outbox = await firestore()
       .collection(`tenants/${tenantId}/${INFRASTRUCTURE_COLLECTIONS.outbox}`)
@@ -454,14 +454,14 @@ describeFirestore('本人を同時登録して案件を作成する', () => {
     assert.equal(fetched.body.data.selfPersonId, ownerPersonId)
   })
 
-  it('監査は case.created と person.created の2件、case.context_changed は無い。Outbox は case.created 1件', async () => {
+  it('監査は case.created・person.created・task.rule_synced の3件、case.context_changed は無い。Outbox は case.created 1件', async () => {
     const { app, tenantId } = await setup()
     const created = await call(app, '/cases', post(ownerPersonBody, 'idem-owner-0002'))
     const caseId = created.body.data.id
 
     const audits = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/auditEvents`).get()
     const types = audits.docs.map(d => d.get('type')).sort()
-    assert.deepEqual(types, ['case.created', 'person.created'])
+    assert.deepEqual(types, ['case.created', 'person.created', 'task.rule_synced'])
 
     const outbox = await firestore().collection(`tenants/${tenantId}/${INFRASTRUCTURE_COLLECTIONS.outbox}`).get()
     assert.equal(outbox.size, 1)
@@ -592,7 +592,7 @@ describeFirestore('本人を同時登録して案件を作成する', () => {
 })
 
 describeFirestore('本人フラグ無しでの作成（後方互換）', () => {
-  it('ownerPersonId/selfPersonId は null、persons は0件、監査は既存どおり1件', async () => {
+  it('ownerPersonId/selfPersonId は null、persons は0件、監査は case.created と task.rule_synced の2件', async () => {
     const { app, tenantId } = await setup()
     const created = await call(app, '/cases', post(validBody, 'idem-compat-0001'))
     assert.equal(created.status, 201)
@@ -607,8 +607,7 @@ describeFirestore('本人フラグ無しでの作成（後方互換）', () => {
     assert.equal(persons.size, 0)
 
     const audits = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/auditEvents`).get()
-    assert.equal(audits.size, 1)
-    assert.equal(audits.docs[0]?.get('type'), 'case.created')
+    assert.deepEqual(audits.docs.map(d => d.get('type')).sort(), ['case.created', 'task.rule_synced'])
   })
 
   it('ownerPerson: null は省略と同じ挙動', async () => {
@@ -767,5 +766,182 @@ describeFirestore('案件訂正の日付検証', () => {
       patch({ expectedVersion: 1, knownAt: '2026-04-10' }),
     )
     assert.equal(response.status, 200)
+  })
+})
+
+async function tasksOf(app: ReturnType<typeof buildApp>, caseId: string): Promise<Json[]> {
+  const list = await call(app, `/cases/${caseId}/tasks?limit=50`)
+  return list.body.data
+}
+
+function findByTitle(tasks: Json[], title: string): Json | undefined {
+  return tasks.find((task) => task.title === title)
+}
+
+describeFirestore('profile / dateOfBirth の PATCH による洗い出し', () => {
+  it('profile を答えると default no の手続きが追加され、case.profile_changed を Outbox に残す', async () => {
+    const { app, tenantId } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-profile-0001'))
+    const caseId = created.body.data.id
+    assert.equal(findByTitle(await tasksOf(app, caseId), '固定資産税の相続人代表者を届け出る'), undefined)
+
+    const patched = await call(app, `/cases/${caseId}`, patch({
+      expectedVersion: 1,
+      profile: { realEstate: 'YES', car: 'YES', answeredAt: '2026-09-20T00:00:00+09:00' },
+    }))
+    assert.equal(patched.status, 200, JSON.stringify(patched.body))
+
+    const tasks = await tasksOf(app, caseId)
+    assert.ok(findByTitle(tasks, '固定資産税の相続人代表者を届け出る'))
+    assert.ok(findByTitle(tasks, '自動車の名義を変える'))
+    const registration = findByTitle(tasks, '不動産の相続登記をする')
+    assert.equal(registration?.conditional, false)
+
+    const outbox = await firestore()
+      .collection(`tenants/${tenantId}/${INFRASTRUCTURE_COLLECTIONS.outbox}`)
+      .where('type', '==', 'case.profile_changed')
+      .get()
+    assert.equal(outbox.size, 1)
+
+    // PATCH で Task/Deadline を書き換えると ContextVersionUnitOfWork が case.context_changed
+    // 監査を必ず追加する（作成時は抑止されるが、PATCH 経路では抑止されない）。
+    const contextChanged = await firestore()
+      .collection(`tenants/${tenantId}/cases/${caseId}/auditEvents`)
+      .where('type', '==', 'case.context_changed')
+      .get()
+    assert.equal(contextChanged.size, 1)
+  })
+
+  it('未着手・無記録の手続きは profile の変更で消え、監査 task.removed_by_rule が残る', async () => {
+    const { app, tenantId } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-profile-0002'))
+    const caseId = created.body.data.id
+    assert.ok(findByTitle(await tasksOf(app, caseId), '年金の受給停止の手続きをする'))
+
+    const patched = await call(app, `/cases/${caseId}`, patch({
+      expectedVersion: 1,
+      profile: { pension: 'NONE', answeredAt: '2026-09-20T00:00:00+09:00' },
+    }))
+    assert.equal(patched.status, 200, JSON.stringify(patched.body))
+
+    const tasks = await tasksOf(app, caseId)
+    assert.equal(findByTitle(tasks, '年金の受給停止の手続きをする'), undefined)
+    assert.equal(findByTitle(tasks, '未支給年金を請求する'), undefined)
+
+    const audits = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/auditEvents`).get()
+    const removed = audits.docs.filter((d) => d.get('type') === 'task.removed_by_rule')
+    assert.equal(removed.length, 2)
+    // PATCH 経路では ContextVersionUnitOfWork が case.context_changed 監査を必ず追加する。
+    const contextChanged = audits.docs.filter((d) => d.get('type') === 'case.context_changed')
+    assert.equal(contextChanged.length, 1)
+  })
+
+  it('着手済み・記録ありの手続きは profile が変わっても残る', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-profile-0003'))
+    const caseId = created.body.data.id
+    const pensionTask = findByTitle(await tasksOf(app, caseId), '年金の受給停止の手続きをする')
+    assert.ok(pensionTask)
+
+    await call(app, `/cases/${caseId}/tasks/${pensionTask!.id}/commands`,
+      jsonRequest('POST', { command: 'start', expectedVersion: pensionTask!.version }))
+
+    await call(app, `/cases/${caseId}`, patch({
+      expectedVersion: 1,
+      profile: { pension: 'NONE', answeredAt: '2026-09-20T00:00:00+09:00' },
+    }))
+
+    const stillThere = findByTitle(await tasksOf(app, caseId), '年金の受給停止の手続きをする')
+    assert.ok(stillThere, '着手済みの Task は削除されない')
+  })
+
+  it('submitTo を手動で具体化すると、以後の profile 変更で規則の窓口に戻らない', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-profile-0004'))
+    const caseId = created.body.data.id
+    const householdTask = findByTitle(await tasksOf(app, caseId), '世帯主変更届を出す')
+    assert.ok(householdTask)
+
+    const updated = await call(app, `/cases/${caseId}/tasks/${householdTask!.id}`, jsonRequest('PATCH', {
+      expectedVersion: householdTask!.version, submitTo: '架空市役所 市民課',
+    }))
+    assert.equal(updated.status, 200, JSON.stringify(updated.body))
+    assert.equal(updated.body.data.submitToSource, 'MANUAL')
+
+    await call(app, `/cases/${caseId}`, patch({
+      expectedVersion: 1,
+      profile: { realEstate: 'YES', answeredAt: '2026-09-20T00:00:00+09:00' },
+    }))
+
+    const afterSync = findByTitle(await tasksOf(app, caseId), '世帯主変更届を出す')
+    assert.equal(afterSync?.submitTo, '架空市役所 市民課')
+    assert.equal(afterSync?.submitToSource, 'MANUAL')
+  })
+
+  it('dateOfBirth の訂正で介護保険の手続きが conditional:false になり、null に戻すと元に戻る', async () => {
+    const { app } = await setup()
+    // validBody は dateOfBirth 付き（死亡時76歳）なので、生年月日不明から始める。
+    const created = await call(app, '/cases', post({ ...validBody, dateOfBirth: null }, 'idem-profile-0005'))
+    const caseId = created.body.data.id
+    const before = findByTitle(await tasksOf(app, caseId), '介護保険の資格喪失届を出す')
+    assert.equal(before?.conditional, true)
+
+    const patched = await call(app, `/cases/${caseId}`, patch({ expectedVersion: 1, dateOfBirth: '1950-01-01' }))
+    assert.equal(patched.status, 200, JSON.stringify(patched.body))
+    const after = findByTitle(await tasksOf(app, caseId), '介護保険の資格喪失届を出す')
+    assert.equal(after?.conditional, false)
+
+    const reverted = await call(app, `/cases/${caseId}`, patch({ expectedVersion: 2, dateOfBirth: null }))
+    assert.equal(reverted.status, 200, JSON.stringify(reverted.body))
+    const afterRevert = findByTitle(await tasksOf(app, caseId), '介護保険の資格喪失届を出す')
+    assert.equal(afterRevert?.conditional, true)
+  })
+
+  it('dateOfBirth が dateOfDeath より後なら400', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-profile-0006'))
+    const response = await call(app, `/cases/${created.body.data.id}`,
+      patch({ expectedVersion: 1, dateOfBirth: '2026-04-02' }))
+    assert.equal(response.status, 400)
+    assert.deepEqual(
+      response.body.error.details.issues.map((i: Json) => [i.path, i.code]),
+      [['dateOfBirth', 'DATE_OF_BIRTH_AFTER_DATE_OF_DEATH']],
+    )
+  })
+
+  it('profile:null で未回答に戻すと CaseResource.profile キーが無くなる', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-profile-0007'))
+    const caseId = created.body.data.id
+
+    const answered = await call(app, `/cases/${caseId}`, patch({
+      expectedVersion: 1,
+      profile: { realEstate: 'YES', answeredAt: '2026-09-20T00:00:00+09:00' },
+    }))
+    assert.ok('profile' in answered.body.data)
+
+    const reset = await call(app, `/cases/${caseId}`, patch({ expectedVersion: 2, profile: null }))
+    assert.equal(reset.status, 200, JSON.stringify(reset.body))
+    assert.ok(!('profile' in reset.body.data))
+  })
+
+  it('同じ Idempotency-Key の再送で Task が増えない', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-profile-0008'))
+    const caseId = created.body.data.id
+    const before = (await tasksOf(app, caseId)).length
+
+    const key = 'idem-profile-patch-0008'
+    const body = { expectedVersion: 1, profile: { realEstate: 'YES', answeredAt: '2026-09-20T00:00:00+09:00' } }
+    const first = await call(app, `/cases/${caseId}`, patch(body, key))
+    assert.equal(first.status, 200)
+    const second = await call(app, `/cases/${caseId}`, patch(body, key))
+    assert.equal(second.status, 200)
+    assert.deepEqual(second.body.data, first.body.data)
+
+    const after = (await tasksOf(app, caseId)).length
+    // realEstate:YES で property-tax-representative / car-transfer は増えないが
+    // real-estate-registration が maybe→yes になる分は既存 Task の conditional 更新であり、件数は 1 件だけ増える。
+    assert.equal(after, before + 1)
   })
 })

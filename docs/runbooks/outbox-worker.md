@@ -69,8 +69,9 @@ tickが2周期以上出ない場合はcontainerの状態（`make ps`）とFirest
 - claim時にTransaction内で期限を再検証する。claim IDが変わったイベントを旧workerの応答では更新しない。
 - 配送保証はat-least-once。同じevent IDを受信側が永続的に重複排除する。配送タイムアウトを成功として扱わない。
 - `nextAttemptAt` の旧ISO文字列とTimestampを読み、新規更新はTimestampに統一する。イベントを削除・再作成して再送しない。
-- `case.created` は初期Task生成、`case.reference_dates_changed` は期限再評価をBackend内で実行する。
-  最新Caseを読み、古いイベントの起算日で上書きしない。AI接続・任意AI同意なしでも手動管理用の処理を続ける。
+- `case.created` / `case.reference_dates_changed` / `case.profile_changed` はいずれも洗い出し（手続き・期限の同期）をBackend内で1回実行する。
+  初期Task・期限の生成はCase作成・PATCHのTransaction内で既に同期実行されているため、ここは通常no-opの補正経路（カタログ更新後の再同期・生成漏れの補正）。
+  最新Caseを読み、古いイベントの起算日・profileで上書きしない。AI接続・任意AI同意なしでも手動管理用の処理を続ける。
 - 外部配送では毎回同意を再判定する。未接続ならPENDINGで再試行する。
 - 一時障害の再試行は `OUTBOX_DELIVERY_TIMEOUT_MS`（既定15分）で打ち切る。打ち切ったAI向けイベントは、
   先にRunを `FAILED`（`failureReason: DELIVERY_TIMEOUT:<直近の理由>`）、`task_guidance` の案内を `FAILED` に確定し、

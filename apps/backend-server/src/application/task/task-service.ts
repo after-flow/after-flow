@@ -1,9 +1,10 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { Person } from '../../domain/person/person.js'
 import type { EntityBase } from '../../domain/shared/entity.js'
 import type { DocumentEntity } from '../../domain/document/document.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import { businessToday } from '../../domain/case/case-dates.js'
+import type { ProcedureFacts } from '../../domain/case/case-profile.js'
 import type {
   DeadlineEntity,
   DeadlineFacts,
@@ -11,9 +12,10 @@ import type {
   DeadlineUnresolvedReason,
 } from '../../domain/task/deadline.js'
 import type { EvidenceEntity, EvidenceKind } from '../../domain/task/evidence.js'
-import type { BasisDates, RuleCatalog } from '../../domain/task/rule-engine.js'
-import { buildDeadlineFacts, computeDeadline, daysRemaining, severityOf } from '../../domain/task/rule-engine.js'
-import type { FlowStageId, TaskEntity, TaskStatus } from '../../domain/task/task.js'
+import type { RuleCatalog } from '../../domain/task/rule-engine.js'
+import { daysRemaining, severityOf } from '../../domain/task/rule-engine.js'
+import { targetDateOf } from '../../domain/task/target-date.js'
+import type { FlowStageId, SubmitToSource, TaskEntity, TaskStatus } from '../../domain/task/task.js'
 import type { TaskCommand } from '../../domain/task/transitions.js'
 import { ALL_TASK_COMMANDS, isAllowedTransition, targetStatus } from '../../domain/task/transitions.js'
 import { collections } from '../../domain/shared/collections.js'
@@ -23,6 +25,8 @@ import type { CommandMeta } from '../case/case-service.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
 import type { DocLocation, Page, ReadRepository, Tx, UnitOfWork } from '../ports/persistence.js'
 import { SERVER_TIME } from '../ports/persistence.js'
+import type { SyncTrigger } from './procedure-sync-service.js'
+import { ProcedureSyncService } from './procedure-sync-service.js'
 
 /**
  * 本人の意思確定の状況を読む。
@@ -111,6 +115,14 @@ export interface TaskView {
   completionReportedBy: string | null
   completionReportedAt: string | null
   deadline: DeadlineView | null
+  /** 「わからない」「未回答」であてはまる可能性ありとして残している手続き。手動・AI 由来は常に false。 */
+  conditional: boolean
+  submitToSource: SubmitToSource | null
+  /**
+   * 法定期限ではない目安の期限（申し送り 11-1）。永続しない。`id` は `target:` 接頭辞を
+   * 持ち、`ruleId` は熟慮期間ルールを継承するため種別判定には `id` を使う。critical は常に false。
+   */
+  targetDate: DeadlineView | null
   evidences: { id: string; label: string; kind: EvidenceKind; note: string | null; recordedAt: string }[]
   /** いま実行できる操作。 */
   allowedActions: TaskCommand[]
@@ -125,21 +137,12 @@ function taskLocation(caseId: string, id: string): DocLocation {
   return { collection: collections.tasks, caseId, id }
 }
 
-function deadlineLocation(caseId: string, id: string): DocLocation {
-  return { collection: collections.deadlines, caseId, id }
-}
-
 function evidenceLocation(caseId: string, id: string): DocLocation {
   return { collection: collections.evidence, caseId, id }
 }
 
-/**
- * 初期手続きの Task ID を定義から決める。
- *
- * Case 作成イベントが二重に届いても、同じ ID を指すため重複しない。
- */
-function initialTaskId(caseId: string, procedureId: string): string {
-  return createHash('sha256').update(`${caseId.length}:${caseId}/${procedureId}`).digest('hex').slice(0, 32)
+function caseLocation(id: string): DocLocation {
+  return { collection: collections.cases, caseId: null, id }
 }
 
 function todayInRuleTimezone(): string {
@@ -153,157 +156,81 @@ export class TaskService {
     private readonly access: AccessService,
     private readonly read: ReadRepository,
     private readonly uow: UnitOfWork,
+    private readonly procedureSync: ProcedureSyncService,
     private readonly decisions: InheritanceDecisionReader = UNDECIDED_INHERITANCE,
   ) {}
 
   /**
-   * Case 作成から初期手続きを生成する。
+   * 洗い出し（syncRuleTasks 相当）を実行する。
    *
-   * 直接呼び出しでも試験できるようにしてある。汎用の Outbox 配送との
-   * 統合は #10 が担当する。
+   * `generateInitialTasks`/`reevaluateDeadlines` は両方ともこれに委譲する。
+   * Case 作成・PATCH では同じ tx 内で `ProcedureSyncService.apply` が直接
+   * 呼ばれる（`CaseService`）ため、ここは `initialize`/`reevaluate` API と
+   * Outbox worker からの補正呼び出し専用。
+   */
+  private async syncRuleTasks(
+    user: AuthenticatedUser,
+    caseId: string,
+    meta: CommandMeta,
+    trigger: SyncTrigger,
+  ): Promise<{ created: string[]; updated: string[]; removed: string[] }> {
+    const access = await this.access.authorizeCase(user, caseId, 'case.write')
+    const prep = await this.procedureSync.prepare(user.tenantId, caseId)
+    const outcome = await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
+      const caseEntity = await tx.require<CaseEntity>(caseLocation(caseId))
+      const facts: ProcedureFacts & { caseId: string } = {
+        caseId,
+        dateOfDeath: caseEntity.dateOfDeath,
+        knownAt: caseEntity.knownAt,
+        dateOfBirth: caseEntity.dateOfBirth ?? null,
+        profile: caseEntity.profile ?? null,
+      }
+      return this.procedureSync.apply(tx, facts, prep, trigger)
+    })
+    return {
+      created: outcome.createdTaskIds,
+      updated: outcome.changedDeadlineIds,
+      removed: outcome.removedTaskIds,
+    }
+  }
+
+  /**
+   * Case 作成から初期手続きを生成する（補正・再実行用）。
+   *
+   * 通常は Case 作成 tx の中で同期生成される（`CaseService.create`）ため、
+   * ここが呼ばれたときは冪等に `created: []` を返す。
    */
   async generateInitialTasks(
     user: AuthenticatedUser,
     caseId: string,
     meta: CommandMeta,
   ): Promise<{ created: string[] }> {
-    const access = await this.access.authorizeCase(user, caseId, 'case.write')
-    const created = await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
-      const created: string[] = []
-      const caseEntity = await tx.require<CaseEntity>({
-        collection: collections.cases,
-        caseId: null,
-        id: caseId,
-      })
-      const dates: BasisDates = { dateOfDeath: caseEntity.dateOfDeath, knownAt: caseEntity.knownAt }
-
-      for (const procedure of this.catalog.initialProcedures) {
-        const taskId = initialTaskId(caseId, procedure.id)
-        const existing = await tx.get<TaskEntity>(taskLocation(caseId, taskId))
-        // 同じ定義から二度作らない。Case 作成の再送でも増えない。
-        if (existing) continue
-
-        tx.create<TaskEntity>(taskLocation(caseId, taskId), {
-          id: taskId,
-          title: procedure.title,
-          summary: procedure.summary,
-          status: 'NOT_STARTED',
-          stage: procedure.stage,
-          category: procedure.category,
-          submitTo: procedure.submitTo,
-          assigneeId: null,
-          source: 'RULE_ENGINE',
-          procedureId: procedure.id,
-          requiredDocuments: procedure.requiredDocuments.map((document) => ({
-            ...document,
-            documentId: null,
-            source: 'RULE_ENGINE' as const,
-          })),
-          evidenceRequired: procedure.evidenceRequired,
-          assetDisposal: procedure.assetDisposal,
-          completionReportedBy: null,
-          completionReportedAt: null,
-        })
-        created.push(taskId)
-
-        if (procedure.deadlineRuleId) {
-          this.createDeadline(tx, caseId, taskId, procedure.deadlineRuleId, dates)
-        }
-      }
-
-      if (created.length > 0) {
-        tx.audit({
-          caseId,
-          type: 'task.initial_generated',
-          target: { collection: collections.tasks.name, id: caseId, version: null },
-          detail: { count: created.length, placeholderRules: this.catalog.placeholder },
-        })
-      }
-      return created
-    })
-
+    const { created } = await this.syncRuleTasks(user, caseId, meta, 'INITIALIZE')
     return { created }
   }
 
-  private createDeadline(
-    tx: Tx,
-    caseId: string,
-    taskId: string,
-    ruleId: string,
-    dates: BasisDates,
-  ): void {
-    const rule = this.catalog.deadlineRules.find((candidate) => candidate.id === ruleId)
-    if (!rule) {
-      throw errors.internal({ internal: { reason: 'unknown deadline rule', ruleId } })
-    }
-    const deadlineId = initialTaskId(caseId, `deadline:${ruleId}:${taskId}`)
-    const facts = buildDeadlineFacts(rule, dates, { id: deadlineId, taskId })
-
-    tx.create<DeadlineEntity>(deadlineLocation(caseId, deadlineId), facts)
-  }
-
   /**
-   * 起算日の変更に伴う期限の再評価。
+   * 起算日・故人の状況の変更を手続きと期限へ反映する（補正・再実行用）。
    *
-   * 死亡日や「知った日」が訂正されたとき、影響する期限を版付きで
-   * 作り直す。古い算定結果を残すと、画面は訂正前の期限を表示し続ける。
+   * 通常は作成・PATCH の tx の中で同期実行される（`CaseService`）。
    */
   async reevaluateDeadlines(
     user: AuthenticatedUser,
     caseId: string,
     meta: CommandMeta,
-  ): Promise<{ updated: string[] }> {
-    const access = await this.access.authorizeCase(user, caseId, 'case.write')
-    const updated: string[] = []
+  ): Promise<{ updated: string[]; created: string[]; removed: string[] }> {
+    return this.syncRuleTasks(user, caseId, meta, 'REEVALUATE')
+  }
 
-    let cursor: string | undefined
-    do {
-      const page = await this.read.list<DeadlineEntity>(user.tenantId, collections.deadlines, caseId, {
-        limit: 100, cursor, orderBy: { field: 'createdAt', direction: 'asc' },
-      })
-      const changed = await this.uow.run(access.toWorkContext(meta.requestId, null), async (tx) => {
-        const changed: string[] = []
-        const caseEntity = await tx.require<CaseEntity>({
-          collection: collections.cases,
-          caseId: null,
-          id: caseId,
-        })
-        const dates: BasisDates = { dateOfDeath: caseEntity.dateOfDeath, knownAt: caseEntity.knownAt }
-
-        for (const stored of page.items) {
-          const rule = this.catalog.deadlineRules.find((candidate) => candidate.id === stored.ruleId)
-          if (!rule) continue
-          const computed = computeDeadline(rule, dates)
-          const current = await tx.require<DeadlineEntity>(deadlineLocation(caseId, stored.id))
-          if (computed.dueDate === current.dueDate && computed.startDate === current.startDate
-            && computed.basisLabel === current.basisLabel && computed.unresolvedReason === current.unresolvedReason
-            && rule.version === current.ruleVersion && current.confirmation === (rule.reviewed ? 'CONFIRMED' : 'UNCONFIRMED')) continue
-          tx.update<DeadlineEntity>(deadlineLocation(caseId, stored.id), current.version, {
-            startDate: computed.startDate,
-            dueDate: computed.dueDate,
-            basisLabel: computed.basisLabel,
-            unresolvedReason: computed.unresolvedReason,
-            ruleVersion: rule.version,
-            confirmation: rule.reviewed ? 'CONFIRMED' : 'UNCONFIRMED',
-          })
-          changed.push(stored.id)
-        }
-
-        if (changed.length > 0) {
-          tx.audit({
-            caseId,
-            type: 'deadline.reevaluated',
-            target: { collection: collections.deadlines.name, id: caseId, version: null },
-            detail: { count: changed.length },
-          })
-        }
-        return changed
-      })
-      updated.push(...changed)
-      cursor = page.nextCursor
-    } while (cursor)
-
-    return { updated }
+  /**
+   * Outbox worker からの補正呼び出し。作成・PATCH の tx で既に同期済みなら no-op。
+   */
+  async reconcileFromOutbox(
+    user: AuthenticatedUser,
+    caseId: string,
+    meta: CommandMeta,
+  ): Promise<{ updated: string[]; created: string[]; removed: string[] }> {
+    return this.syncRuleTasks(user, caseId, meta, 'OUTBOX')
   }
 
   async create(
@@ -353,12 +280,15 @@ export class TaskService {
     options: { limit: number; cursor?: string | undefined },
   ): Promise<Page<TaskView>> {
     const access = await this.access.authorizeCase(user, caseId, 'case.read')
-    const page = await this.read.list<TaskEntity>(user.tenantId, collections.tasks, caseId, {
-      limit: options.limit,
-      cursor: options.cursor,
-    })
+    const [page, caseEntity] = await Promise.all([
+      this.read.list<TaskEntity>(user.tenantId, collections.tasks, caseId, {
+        limit: options.limit,
+        cursor: options.cursor,
+      }),
+      this.requireCaseEntity(user.tenantId, caseId),
+    ])
     const items = await Promise.all(
-      page.items.map((entity) => this.viewOf(user, access, caseId, entity)),
+      page.items.map((entity) => this.viewOf(user, access, caseId, entity, caseEntity)),
     )
     return page.nextCursor === undefined ? { items } : { items, nextCursor: page.nextCursor }
   }
@@ -396,6 +326,9 @@ export class TaskService {
       if (input.summary !== undefined && input.summary !== current.summary) patch.summary = input.summary
       if (input.submitTo !== undefined && (input.submitTo ?? null) !== current.submitTo) {
         patch.submitTo = input.submitTo ?? null
+        // 非 null を送ったときだけ具体化とみなし、以後の洗い出しで上書きしない。
+        // null を送ったときは「規則の窓口に戻す」意図として RULE のまま（次の洗い出しで埋め直す）。
+        patch.submitToSource = input.submitTo == null ? 'RULE' : 'MANUAL'
       }
       if (Object.keys(patch).length === 0) return
 
@@ -590,9 +523,18 @@ export class TaskService {
     caseId: string,
     taskId: string,
   ): Promise<TaskView> {
-    const entity = await this.read.get<TaskEntity>(user.tenantId, taskLocation(caseId, taskId))
+    const [entity, caseEntity] = await Promise.all([
+      this.read.get<TaskEntity>(user.tenantId, taskLocation(caseId, taskId)),
+      this.requireCaseEntity(user.tenantId, caseId),
+    ])
     if (!entity) throw errors.notFound()
-    return this.viewOf(user, access, caseId, entity)
+    return this.viewOf(user, access, caseId, entity, caseEntity)
+  }
+
+  private async requireCaseEntity(tenantId: string, caseId: string): Promise<CaseEntity> {
+    const caseEntity = await this.read.get<CaseEntity>(tenantId, caseLocation(caseId))
+    if (!caseEntity) throw errors.notFound()
+    return caseEntity
   }
 
   private async viewOf(
@@ -600,6 +542,7 @@ export class TaskService {
     access: CaseAccess,
     caseId: string,
     entity: TaskEntity,
+    caseEntity: CaseEntity,
   ): Promise<TaskView> {
     const today = todayInRuleTimezone()
     const [evidences, deadlines, decided, dependencies] = await Promise.all([
@@ -648,6 +591,16 @@ export class TaskService {
     }
 
     const deadlineEntity = deadlines.items[0] ?? null
+    const procedure = entity.procedureId
+      ? this.catalog.initialProcedures.find((candidate) => candidate.id === entity.procedureId)
+      : undefined
+    const targetDateFacts = procedure
+      ? targetDateOf(
+          this.catalog, procedure,
+          { dateOfDeath: caseEntity.dateOfDeath, knownAt: caseEntity.knownAt },
+          entity.id,
+        )
+      : null
 
     return {
       id: entity.id,
@@ -668,6 +621,9 @@ export class TaskService {
       completionReportedBy: entity.completionReportedBy,
       completionReportedAt: entity.completionReportedAt,
       deadline: deadlineEntity ? toDeadlineView(deadlineEntity, today) : null,
+      conditional: entity.conditional ?? false,
+      submitToSource: entity.submitToSource ?? null,
+      targetDate: targetDateFacts ? toDeadlineView(targetDateFacts, today) : null,
       evidences: evidences.map((evidence) => ({
         id: evidence.id,
         label: evidence.label,

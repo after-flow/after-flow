@@ -12,9 +12,10 @@ export type CaseDateIssueCode =
   | 'DATE_OF_DEATH_IN_FUTURE'
   | 'KNOWN_AT_BEFORE_DATE_OF_DEATH'
   | 'KNOWN_AT_IN_FUTURE'
+  | 'DATE_OF_BIRTH_AFTER_DATE_OF_DEATH'
 
 export interface CaseDateIssue {
-  path: 'dateOfDeath' | 'knownAt'
+  path: 'dateOfDeath' | 'knownAt' | 'dateOfBirth'
   code: CaseDateIssueCode
   message: string
 }
@@ -22,6 +23,7 @@ export interface CaseDateIssue {
 export interface CaseDates {
   dateOfDeath: string
   knownAt: string | null
+  dateOfBirth?: string | null
 }
 
 /** 業務タイムゾーンでの暦日（YYYY-MM-DD）。 */
@@ -33,8 +35,8 @@ export function businessToday(now: Date): string {
  * 違反をすべて集めて返す（1 件も無ければ空配列）。
  *
  * 等号は許容する: dateOfDeath == today、knownAt == dateOfDeath、
- * knownAt == today はすべて有効。dateOfBirth との前後関係はここでは見ない
- * （申し送りの対象外）。
+ * knownAt == today、dateOfBirth == dateOfDeath はすべて有効。
+ * dateOfBirth が null（未入力）のときは検査しない。
  */
 export function findCaseDateIssues(dates: CaseDates, today: string): CaseDateIssue[] {
   const issues: CaseDateIssue[] = []
@@ -59,6 +61,13 @@ export function findCaseDateIssues(dates: CaseDates, today: string): CaseDateIss
         message: '相続の開始を知った日は未来の日付にできません。',
       })
     }
+  }
+  if (dates.dateOfBirth != null && dates.dateOfBirth > dates.dateOfDeath) {
+    issues.push({
+      path: 'dateOfBirth',
+      code: 'DATE_OF_BIRTH_AFTER_DATE_OF_DEATH',
+      message: '生年月日は死亡日より後にできません。',
+    })
   }
   return issues
 }

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 import { createServer } from '../src/composition.js'
+import { PRODUCTION_MIN_CATALOG } from './helpers/production-catalog-fixture.js'
 
 const TOKEN = 'ops-readiness-token-0123456789'
 
@@ -28,10 +29,7 @@ function ruleCatalogFixture(dir: string, overrides: Partial<{ placeholder: boole
   writeFileSync(
     file,
     JSON.stringify({
-      placeholder: false,
-      deadlineRules: [],
-      initialProcedures: [],
-      deliberationDeadlineRuleId: null,
+      ...PRODUCTION_MIN_CATALOG,
       ...overrides,
     }),
   )

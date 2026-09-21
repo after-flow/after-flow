@@ -5,6 +5,7 @@ import { OutboxDispatcher } from './application/agent/outbox-dispatcher.js'
 import { acknowledgeLocally, caseTaskHandler, combineLocalHandlers, runOutboxWorker } from './application/agent/outbox-worker.js'
 import { RunReconciler } from './application/agent/run-reconciler.js'
 import { TaskService } from './application/task/task-service.js'
+import { ProcedureSyncService } from './application/task/procedure-sync-service.js'
 import { StoredInheritanceDecisionReader } from './application/decision/decision-service.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
@@ -41,7 +42,9 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   const uow = new ContextVersionUnitOfWork(new FirestoreUnitOfWork(db))
   const access = new AccessService(read)
   const consent = new ConsentService(readConsentCatalog(env), access, read, uow)
-  const tasks = new TaskService(readRuleCatalog(env), access, read, uow, new StoredInheritanceDecisionReader(read))
+  const ruleCatalog = readRuleCatalog(env)
+  const procedureSync = new ProcedureSyncService(ruleCatalog, read)
+  const tasks = new TaskService(ruleCatalog, access, read, uow, procedureSync, new StoredInheritanceDecisionReader(read))
   const unavailable: AgentJobClient = { deliver: async () => ({ status: 'RETRYABLE', reason: 'AI_NOT_CONNECTED' }) }
   const authorization = readExecutionAuthorization(env)
   const execution = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow))

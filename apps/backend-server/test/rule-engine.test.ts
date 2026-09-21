@@ -12,6 +12,7 @@ function reviewedRule(overrides: Partial<DeadlineRule> = {}): DeadlineRule {
     basis: 'KNOWN_AT',
     period: { unit: 'DAY', count: 7, includeFirstDay: false },
     basisLabel: '相続の開始を知った日の翌日から数えて7日以内',
+    knownAtLabel: '相続の開始を知った日',
     legalNature: 'JURISDICTIONAL',
     jurisdiction: '架空市',
     reviewed: true,
@@ -19,6 +20,7 @@ function reviewedRule(overrides: Partial<DeadlineRule> = {}): DeadlineRule {
     sourceCheckedAt: '2026-09-20T00:00:00+09:00',
     extendable: false,
     critical: true,
+    reviewedBy: { name: 'テスト 実装者', qualification: 'ENGINEER' },
     ...overrides,
   }
 }
@@ -94,7 +96,7 @@ describe('期限の算定', () => {
     assert.equal(result.startDate, '2026-04-01')
     assert.equal(result.dueDate, '2026-04-08')
     assert.equal(result.unresolvedReason, null)
-    assert.ok(result.basisLabel.endsWith('（相続の開始を知った日が未入力のため、亡くなった日から数えています）'))
+    assert.ok(result.basisLabel.endsWith('。相続の開始を知った日が未入力のため、亡くなった日から数えています'))
   })
 
   it('両方の起算日が未入力なら期限を出さない', () => {

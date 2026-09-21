@@ -82,6 +82,9 @@ export interface TaskEvidenceResource {
   recordedAt: ISODateTime
 }
 
+/** submitTo の出所。洗い出しが上書きしてよいのは RULE のときだけ。 */
+export type SubmitToSourceResource = 'RULE' | 'RESEARCH' | 'MANUAL'
+
 export interface TaskRequiredDocumentResource {
   id: string
   label: string
@@ -112,6 +115,15 @@ export interface TaskResource {
   completionReportedBy: string | null
   completionReportedAt: ISODateTime | null
   deadline: DeadlineResource | null
+  /** 「わからない」「未回答」であてはまる可能性ありとして残している手続き。手動・AI 由来は常に false。 */
+  conditional: boolean
+  submitToSource: SubmitToSourceResource | null
+  /**
+   * 法定期限ではない目安の期限（申し送り 11-1）。永続しない、その場算定の値。
+   * `id` は `target:` 接頭辞を持つ。`ruleId` は熟慮期間ルールを継承するので、
+   * 種別の判定には `ruleId` ではなく `id` の接頭辞を使うこと。critical は常に false。
+   */
+  targetDate: DeadlineResource | null
   evidences: TaskEvidenceResource[]
   /** いま実行できる操作。フロントは自前で判定しない。 */
   allowedActions: TaskCommandResource[]
