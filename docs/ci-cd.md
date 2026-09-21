@@ -35,7 +35,7 @@ CI runの`event=push`、`head_branch=main`、workflow path、repositoryとhead_r
 | Firestore integration | Emulator上の永続化・業務API・認可・版競合 | `pnpm test:firestore` |
 | Workflow lint | actionlintとrunner内ShellCheckでActions/shell検証 | `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7`、`"$(go env GOPATH)/bin/actionlint"` |
 | Dependency audit | lockfile全依存のhigh/critical脆弱性 | `pnpm audit --audit-level high` |
-| Docker smoke | 開発3サービス・MSW配信・公開/内部HTTP・AI分離 | `make up && node scripts/smoke-compose.mjs` |
+| Docker smoke | 開発3サービス・MSW配信・公開/内部HTTP・Firestore/Storage Emulator・AI分離 | `make up && node scripts/smoke-compose.mjs && make data-check` |
 | Production containers | 本番3イメージ・SPA deep link・static assets・API proxy・AI分離 | `make production-check` |
 
 `pnpm install --frozen-lockfile`で準備します。Docker内で型・Lint・テスト・buildをまとめて実行する場合は`make check`です。
@@ -44,7 +44,7 @@ CI runの`event=push`、`head_branch=main`、workflow path、repositoryとhead_r
 
 rootの`pnpm test`はCI補助コードのテスト後に、`test`スクリプトを持つ全workspaceを実行します。
 Web/AIのtest runnerは`src`以下の`.test.ts/.test.tsx/.test.mjs`を再帰的に探し、0件の場合は失敗します。
-Backendは既存の`test/**/*.test.ts`を実行します。Emulator依存のテストはこのジョブではskipし、別の必須Firestore integrationジョブで実行します。
+AIは加えて`test/**/*.test.ts`の基盤テストも実行します。Backendは既存の`test/**/*.test.ts`を実行します。Emulator依存のテストはこのジョブではskipし、別の必須Firestore integrationジョブで実行します。
 `public-contracts`は現在型のみで、型検査・ビルドを実行します。`internal-contracts`もBackendより先にbuildします。
 本番buildではBackendは`src`のみ、AIはテスト・test-supportを除外し、型検査ではテストも含めます。
 

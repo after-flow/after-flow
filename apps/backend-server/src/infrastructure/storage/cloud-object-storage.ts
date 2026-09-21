@@ -8,6 +8,24 @@ import { LocalObjectStorage } from './local-object-storage.js'
 const hash = (content: Uint8Array) => createHash('sha256').update(content).digest('hex')
 const hasCode = (error: unknown, code: number) => !!error && typeof error === 'object' && 'code' in error && Number(error.code) === code
 
+function readEmulatorEndpoint(env: NodeJS.ProcessEnv): string | undefined {
+  // Node SDKが暗黙に読む実験的変数は、設定objectと実接続先がずれるため使わない。
+  if (env.STORAGE_EMULATOR_HOST) {
+    throw new Error('STORAGE_EMULATOR_HOST is not supported; use DOCUMENT_STORAGE_EMULATOR_ENDPOINT')
+  }
+  const value = env.DOCUMENT_STORAGE_EMULATOR_ENDPOINT
+  if (!value) return undefined
+  if (env.NODE_ENV === 'production') throw new Error('Production document storage must not use an emulator endpoint')
+  let endpoint: URL
+  try { endpoint = new URL(value) }
+  catch { throw new Error('Invalid DOCUMENT_STORAGE_EMULATOR_ENDPOINT') }
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password ||
+      endpoint.pathname !== '/' || endpoint.search || endpoint.hash) {
+    throw new Error('Invalid DOCUMENT_STORAGE_EMULATOR_ENDPOINT')
+  }
+  return endpoint.origin
+}
+
 /** Backend専用のADC。公開URL/署名URLを作らず、元の世代だけを読み取り・回収する。 */
 export class CloudObjectStorage implements ObjectStorage {
   constructor(private readonly bucket: Pick<Bucket, 'file'>) {}
@@ -57,11 +75,19 @@ export class CloudObjectStorage implements ObjectStorage {
 
 export function createDocumentStorage(env: NodeJS.ProcessEnv): ObjectStorage | null {
   const bucket = env.DOCUMENT_STORAGE_BUCKET, root = env.DOCUMENT_STORAGE_ROOT
+  const emulatorEndpoint = readEmulatorEndpoint(env)
   if (bucket && root) throw new Error('Select exactly one document storage backend')
+  if (emulatorEndpoint && !bucket) throw new Error('DOCUMENT_STORAGE_EMULATOR_ENDPOINT requires DOCUMENT_STORAGE_BUCKET')
   if (bucket) {
     if (!/^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$/.test(bucket)) throw new Error('Invalid DOCUMENT_STORAGE_BUCKET')
-    if (env.STORAGE_EMULATOR_HOST) throw new Error('Production document storage must not use an emulator endpoint')
-    return new CloudObjectStorage(new Storage({ retryOptions: { totalTimeout: 30, maxRetries: 3 } }).bucket(bucket))
+    return new CloudObjectStorage(new Storage({
+      ...(emulatorEndpoint ? {
+        apiEndpoint: emulatorEndpoint,
+        projectId: env.STORAGE_PROJECT_ID ?? env.FIRESTORE_PROJECT_ID ?? 'after-flow-local',
+        useAuthWithCustomEndpoint: false,
+      } : {}),
+      retryOptions: { totalTimeout: 30, maxRetries: 3 },
+    }).bucket(bucket))
   }
   return root ? new LocalObjectStorage(root) : null
 }

@@ -31,6 +31,8 @@ export interface CaseResource {
   /** 申告された続柄。法的な相続人の認定ではない。 */
   relationshipToDeceased: string
   municipality: string | null
+  /** Owner-managed pause of AI task proposals. null means unrestricted. */
+  aiPlanningRestriction: { reason: string } | null
   status: CaseStatus
   /** 楽観ロックの版。更新時に expectedVersion として送り返す。 */
   version: number

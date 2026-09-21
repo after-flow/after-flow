@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { runSummarySchema } from '@aftercare/internal-contracts'
 import { expectedVersionSchema, idSchema, isoDateTimeSchema } from './common.js'
 
 export const agentOperationSchema = z.enum([
@@ -31,6 +32,7 @@ export const agentRunResourceSchema = z.object({
   waiting: z.boolean(),
   waitingFor: z.string().nullable(),
   failureReason: z.string().nullable(),
+  outcome: runSummarySchema.extend({ resultId: idSchema, attemptId: idSchema, caseVersion: z.number().int().positive() }).nullable(),
   caseVersionAtAccept: z.number().int(),
   startedAt: isoDateTimeSchema.nullable(),
   finishedAt: isoDateTimeSchema.nullable(),
@@ -53,3 +55,9 @@ export const acceptAgentRunBodySchema = z
 export const agentRunActionBodySchema = z
   .object({ expectedVersion: expectedVersionSchema })
   .strict()
+
+
+export const answerPlanningQuestionsSchema = z.object({
+  expectedVersion: expectedVersionSchema, resultId: idSchema,
+  answers: z.array(z.object({ questionIndex: z.number().int().min(0).max(19), answer: z.string().trim().min(1).max(1000) }).strict()).min(1).max(20),
+}).strict().refine(value => new Set(value.answers.map(answer => answer.questionIndex)).size === value.answers.length, 'Duplicate answer index')
