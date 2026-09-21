@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { orcaSdkProvider } from '../orcarouter/models.js'
 import type { AiServiceComposition } from './composition.js'
 import type { ProviderMetric } from '../mastra/authorized-models.js'
+import type { GroundingRules } from '../../orchestration/playbooks/guidance-grounding.js'
 
 const modeSchema = z.enum(['auto', 'disabled', 'hackathon'])
 const envSchema = z.object({
@@ -18,6 +19,31 @@ const envSchema = z.object({
 const REVIEW_REFERENCE = 'hackathon-demo-2026-09-21; OrcaRouter gateway and public provider terms must be reviewed before production'
 const CATALOG_ID = 'kyoukaikenpo-burial-benefit'
 const POLICY_IDS = ['orca-core-primary', 'orca-core-fallback'] as const
+
+/** 協会けんぽの支部名に使われる都道府県名。 */
+const PREFECTURES = ['北海道', '青森', '岩手', '宮城', '秋田', '山形', '福島', '茨城', '栃木', '群馬', '埼玉', '千葉', '東京', '神奈川',
+  '新潟', '富山', '石川', '福井', '山梨', '長野', '岐阜', '静岡', '愛知', '三重', '滋賀', '京都', '大阪', '兵庫', '奈良', '和歌山',
+  '鳥取', '島根', '岡山', '広島', '山口', '徳島', '香川', '愛媛', '高知', '福岡', '佐賀', '長崎', '熊本', '大分', '宮崎', '鹿児島', '沖縄']
+
+/**
+ * 実出力の診断で見つかった誤りの型（窓口の追加、住所からの支部推測、起算日の取り違え）を、
+ * 引用に同じ記載が無い限り表示しない（#163）。
+ */
+export const BURIAL_GROUNDING_RULES: GroundingRules = {
+  // 給付の名称（埋葬料・埋葬費）は入れない。公式ページの支給額の区分は「埋葬費」の語を使わずに説明しており、
+  // 正しい主張まで除いてしまう。名称の取り違えは起算日の禁止パターンで検出する。
+  guardedTerms: ['窓口', '持参', '郵送', '電子申請', '市役所', '区役所', '役場'],
+  prohibited: [
+    { id: 'prefecture-branch', pattern: `(?:${PREFECTURES.join('|')})(?:都|府|県)?支部`,
+      message: '提出先の支部は、亡くなった方が加入していた支部です。資格情報のお知らせやマイナポータルで確認してください。' },
+    { id: 'residence-branch', pattern: '(?:住所|住民票|お住まい|居住|市区町村|最寄り|近く)[^。]{0,20}支部|支部[^。]{0,20}(?:住所|お住まい|居住地)',
+      message: '提出先の支部は住所では決まりません。亡くなった方が加入していた支部を確認してください。' },
+    { id: 'burial-cost-death-date', pattern: '埋葬費[^。、]*死亡(?:した)?(?:年月)?日の翌日',
+      message: '埋葬費の申請期限の起算日は公式資料で確認してください。' },
+    { id: 'burial-allowance-burial-date', pattern: '埋葬料[^。、]*埋葬(?:を行った|した)?(?:年月)?日の翌日',
+      message: '埋葬料の申請期限の起算日は公式資料で確認してください。' },
+  ],
+}
 
 /**
  * Explicit hackathon composition. It is enabled automatically only in non-production
@@ -56,7 +82,7 @@ export function readHackathonComposition(
     dataClasses: ['minimized_case', 'public_research'] as ('minimized_case' | 'public_research')[],
     approvedAt, expiresAt, reviewReference: REVIEW_REFERENCE, trainingUse: false as const, retentionDays: 0,
     capabilities: { tools: true as const, structuredOutput: true as const, japanese: true as const },
-    currency: 'USD', maxInputTokens: 16_000, maxOutputTokens: 1_000,
+    currency: 'USD', maxInputTokens: 16_000, maxOutputTokens: 4_000,
     // Conservative demo reservation bounds, not a billing quote.
     inputMicrosPerToken: 10, outputMicrosPerToken: 20,
   }))
@@ -64,10 +90,22 @@ export function readHackathonComposition(
     id: 'burial-benefit-guidance', version: 'hackathon-v1', reviewedAt: approvedAt,
     procedure: '健康保険の埋葬料（費）支給申請', institution: '全国健康保険協会', jurisdiction: '日本', municipality: null,
     taskTitles: ['健康保険の埋葬料（費）を確認する'], taskCategories: ['insurance-benefit'], sourceCatalogIds: [CATALOG_ID],
+    // 案内の各区分（提出先・必要書類・手順・期限）に根拠の問いが対応するように分ける（#163）。
     questions: [
       { id: 'eligibility', text: '申請できる人と支給条件を確認してください。' },
+      { id: 'benefit-kinds', text: '埋葬料・埋葬費・家族埋葬料の違いと、どれに当たるかの条件を確認してください。' },
+      { id: 'amount', text: '支給額を給付の種類ごとに確認してください。' },
       { id: 'documents', text: '主な必要書類と条件による追加書類を確認してください。' },
-      { id: 'deadline', text: '申請期限と起算日を確認してください。' },
+      { id: 'deadline', text: '申請期限と起算日を給付の種類ごとに確認してください。' },
+      { id: 'submission', text: '申請書の提出先と提出方法を確認してください。' },
+    ],
+    groundingRules: BURIAL_GROUNDING_RULES,
+    // 協会けんぽの公式ページ（reviewReference）から作成した、案件への適用で確かめる事項。
+    // Backendにこれらを確認済みとして記録する項目がまだ無いため、現在は常に未確認として残る。
+    applicabilityChecks: [
+      { id: 'enrollment', question: '亡くなった方が協会けんぽに加入していたか、加入していた支部はどこかを確認してください。' },
+      { id: 'deceased-status', question: '亡くなった方が被保険者本人か被扶養者かを確認してください（被扶養者の場合は家族埋葬料）。' },
+      { id: 'applicant', question: '申請する方が亡くなった方に生計を維持されていたか（埋葬料）、実際に埋葬を行った方か（埋葬費）を確認してください。' },
     ],
   }
   return {
@@ -82,15 +120,15 @@ export function readHackathonComposition(
       insecureHttpAllowedHosts: [new URL(input.BACKEND_INTERNAL_URL).hostname],
     },
     runtimeEncryptionKey: input.AI_RUNTIME_ENCRYPTION_KEY,
-    budget: { tools: 20, research: 2, searches: 6, reads: 12, inferenceAttempts: 8, replans: 2,
-      tokens: 136_000, costMicros: 1_440_000, activeMs: 120_000 },
+    budget: { tools: 20, research: 2, searches: 6, reads: 12, inferenceAttempts: 12, replans: 2,
+      tokens: 240_000, costMicros: 2_880_000, activeMs: 120_000 },
     sectionTimeoutMs: 120_000,
     policies,
     orca: { apiKey: input.ORCAROUTER_API_KEY, timeoutMs: 30_000 },
     // The Backend control endpoint is rechecked by session.guard before every transfer.
     // This local provider list is a hackathon assumption, never a production consent record.
     grant: async () => ({ revision: 'hackathon-v1', providerPolicyIds: [...POLICY_IDS],
-      dataClasses: ['minimized_case', 'public_research'], expiresAt: new Date(Date.now() + 30_000).toISOString(), maxRetentionDays: 0 }),
+      dataClasses: ['minimized_case', 'public_research'], expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), maxRetentionDays: 0 }),
     recordMetric: async (metric: ProviderMetric, identity) => writeMetric({ event: 'ai_provider_attempt', ...identity, ...metric }),
     catalogs: [{
       id: CATALOG_ID, version: '2026-09-21', reviewedAt: approvedAt, expiresAt,

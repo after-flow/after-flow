@@ -9,12 +9,13 @@ import { contentHash } from '../../src/orchestration/context/builder.js'
 import type { ReviewedTaskTemplate } from '../../src/orchestration/playbooks/planning-output.js'
 import { scriptedModel } from '../helpers/scripted-model.js'
 import { createResearchTools } from '../../src/infrastructure/mastra/tools/research.js'
+import { sourceDocument } from '../helpers/source-document.js'
 
 const template: ReviewedTaskTemplate = { id: 'template', version: 'v1', reviewedAt: '2026-09-01T00:00:00Z', expiresAt: new Date(Date.now() + 600000).toISOString(), reviewReference: 'synthetic', sourceCatalogIds: ['catalog'],
   task: { title: '合成手続き', summary: '合成窓口に確認', stage: 'government', category: 'fixture', submitTo: '架空機関', evidenceRequired: true, assetDisposal: false },
   prerequisites: [{ group: 'case', field: 'municipality', value: '架空市', state: 'user_reported' }], requiredDocuments: ['合成資料'] }
 const candidate = { id: 'source', catalogId: 'catalog', title: '合成資料', issuer: '架空機関', url: 'https://official.example/fixture' }
-const source = { ...candidate, text: '合成手続きの確認に合成資料を用いる。', location: '1項', fetchedAt: new Date().toISOString(), updatedAt: null }
+const source = sourceDocument(candidate, '合成手続きの確認に合成資料を用いる。')
 function artifact() {
   const content = { operation: 'case_planning', planningRestriction: null, case: { id: 'case', version: 1, municipality: '架空市' }, documents: [],
     tasks: [{ id: 'existing', version: 2, title: '既存の手動手続き', source: 'MANUAL', submitTo: '架空機関', dependencyTaskIds: [] }],
@@ -27,7 +28,7 @@ const draft = { tasks: [{ templateId: 'template', sourceIds: ['source'], depende
 test('planning approval resumes a stored plan without re-running agents or submitting twice', { skip: !process.env.AI_RUNTIME_EMULATOR_HOST }, async () => {
   for (const reviewState of ['current', 'changed', 'expired', 'restricted'] as const) {
   const signal = new AbortController().signal
-  const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief' }) } }, { text: JSON.stringify(draft) }])
+  const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief', questionIds: ['requirements'], sourceCatalogIds: ['catalog'] }) } }, { text: JSON.stringify(draft) }])
   const research = scriptedModel([{ tool: 'searchOfficialSources', input: { query: '必要資料' } }, { tool: 'readOfficialSource', input: { sourceId: 'source' } },
     { text: JSON.stringify({ status: 'complete', answers: [{ questionId: 'requirements', text: '合成資料', sourceIds: ['source'], applicability: '架空市' }], missing: [], conflicts: [] }) }])
   const brief = { briefId: 'brief', procedure: '合成手続き', institution: '架空機関', jurisdiction: '架空市', sourceCatalogIds: ['catalog'], questions: [{ id: 'requirements', text: '必要な資料' }] }

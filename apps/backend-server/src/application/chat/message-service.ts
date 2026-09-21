@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { collections } from '../../domain/shared/collections.js'
-import type { GuidanceEntity, GuidanceSource } from '../../domain/task/guidance.js'
+import type { GuidanceCitation, GuidanceEntity, GuidanceSource } from '../../domain/task/guidance.js'
 import type { TaskEntity } from '../../domain/task/task.js'
 import { errors } from '../../shared/app-error.js'
 import type { AgentRunService } from '../agent/agent-run-service.js'
@@ -37,6 +37,8 @@ export interface GuidanceView {
   formExampleLabel: string | null
   note: string | null
   sources: GuidanceSource[]
+  /** 項目ごとの根拠となる公式資料の引用。 */
+  citations: GuidanceCitation[]
   /** 調べきれなかった項目。空でないときは全件確認済みではない。 */
   missing: string[]
   failureReason: string | null
@@ -81,6 +83,7 @@ export function toGuidanceView(entity: GuidanceEntity): GuidanceView {
     formExampleLabel: entity.formExampleLabel,
     note: entity.note,
     sources: entity.sources,
+    citations: entity.citations ?? [],
     missing: entity.missing,
     failureReason: entity.failureReason,
     researchedBy: entity.researchedBy,
@@ -247,6 +250,7 @@ export class MessageService {
         formExampleLabel: null,
         note: null,
         sources: [],
+        citations: [],
         missing: [],
         failureReason: null,
         researchedBy: null,

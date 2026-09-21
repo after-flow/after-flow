@@ -18038,6 +18038,35 @@ paths:
                             - url
                             - checkedAt
                           additionalProperties: false
+                      citations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            item:
+                              type: string
+                              enum:
+                                - where
+                                - bring
+                                - steps
+                            index:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            sourceUrl:
+                              type: string
+                            sectionHeading:
+                              nullable: true
+                              type: string
+                            quote:
+                              type: string
+                          required:
+                            - item
+                            - index
+                            - sourceUrl
+                            - sectionHeading
+                            - quote
+                          additionalProperties: false
                       missing:
                         type: array
                         items:
@@ -18071,6 +18100,7 @@ paths:
                       - formExampleLabel
                       - note
                       - sources
+                      - citations
                       - missing
                       - failureReason
                       - researchedBy
@@ -18227,6 +18257,35 @@ paths:
                             - url
                             - checkedAt
                           additionalProperties: false
+                      citations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            item:
+                              type: string
+                              enum:
+                                - where
+                                - bring
+                                - steps
+                            index:
+                              type: integer
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            sourceUrl:
+                              type: string
+                            sectionHeading:
+                              nullable: true
+                              type: string
+                            quote:
+                              type: string
+                          required:
+                            - item
+                            - index
+                            - sourceUrl
+                            - sectionHeading
+                            - quote
+                          additionalProperties: false
                       missing:
                         type: array
                         items:
@@ -18260,6 +18319,7 @@ paths:
                       - formExampleLabel
                       - note
                       - sources
+                      - citations
                       - missing
                       - failureReason
                       - researchedBy

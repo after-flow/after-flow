@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { guidanceCitationSchema } from '@aftercare/internal-contracts'
 import type { AgentResultIntake } from '../../../../application/chat/result-intake.js'
 import { errors } from '../../../../shared/app-error.js'
 import type { AppEnv } from '../../../http/context.js'
@@ -39,6 +40,7 @@ const guidanceResultSchema = envelopeSchema.extend({
   formExampleLabel: z.string().max(120).nullish(),
   note: z.string().max(2000).nullish(),
   sources: z.array(sourceSchema).max(20).default([]),
+  citations: z.array(guidanceCitationSchema).max(150).default([]),
   missing: z.array(z.string().max(200)).max(50).default([]),
   failureReason: z.string().max(500).nullish(),
 })

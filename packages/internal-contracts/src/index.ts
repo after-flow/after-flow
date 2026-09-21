@@ -1,6 +1,31 @@
 import { z } from 'zod'
 
 export const INTERNAL_LIMITS = { bodyBytes: 131072, timeoutMs: 10000, authorizationSeconds: 300, requestSeconds: 60 } as const
+/** Shared task-guidance limits used by both model output validation and Backend transport. */
+export const TASK_GUIDANCE_LIMITS = {
+  targetChars: 200,
+  whereChars: 500,
+  bringItemChars: 200,
+  stepChars: 500,
+  missingItemChars: 200,
+  bringItems: 50,
+  stepItems: 50,
+  missingItems: 50,
+  sources: 20,
+  citations: 150,
+  quoteChars: 200,
+} as const
+/** Compatibility view for guidance harness code; every transport limit has one source. */
+export const GUIDANCE_LIMITS = Object.freeze({
+  where: TASK_GUIDANCE_LIMITS.whereChars,
+  bringItem: TASK_GUIDANCE_LIMITS.bringItemChars,
+  stepItem: TASK_GUIDANCE_LIMITS.stepChars,
+  missingItem: TASK_GUIDANCE_LIMITS.missingItemChars,
+  items: TASK_GUIDANCE_LIMITS.stepItems,
+  sources: TASK_GUIDANCE_LIMITS.sources,
+  citations: TASK_GUIDANCE_LIMITS.citations,
+  quote: TASK_GUIDANCE_LIMITS.quoteChars,
+})
 export const internalId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
 /** ルールのバージョン（例 "1.0.0", "0.0.0-draft"）。internalId と違い "." を許す。 */
 export const internalRuleVersion = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/)
@@ -36,14 +61,23 @@ export type ContextArtifact = z.infer<typeof artifactEnvelopeSchema>
 
 const basisSchema = z.object({ type: z.enum(['DOCUMENT', 'TASK', 'MESSAGE']), id: internalId, version: z.number().int().positive() }).strict()
 const resultBase = contextProofSchema.extend({ resultId: internalId, basis: z.array(basisSchema).max(20).default([]) })
+/** A validated quote that supports one user-visible guidance item. */
+export const guidanceCitationSchema = z.object({
+  item: z.enum(['where', 'bring', 'steps']), index: z.number().int().min(0).max(TASK_GUIDANCE_LIMITS.stepItems - 1),
+  sourceUrl: z.string().url().max(2000), sectionHeading: z.string().min(1).max(200).nullable(),
+  quote: z.string().min(1).max(TASK_GUIDANCE_LIMITS.quoteChars),
+}).strict()
+export type GuidanceCitation = z.infer<typeof guidanceCitationSchema>
 const guidanceSchema = resultBase.extend({
   kind: z.literal('task_guidance'), status: z.enum(['COMPLETED', 'PARTIAL', 'FAILED']),
-  target: z.string().max(200).nullable().optional(), where: z.string().max(500).nullable().optional(),
-  bring: z.array(z.string().max(200)).max(50).default([]), steps: z.array(z.string().max(500)).max(50).default([]),
+  target: z.string().max(TASK_GUIDANCE_LIMITS.targetChars).nullable().optional(), where: z.string().max(TASK_GUIDANCE_LIMITS.whereChars).nullable().optional(),
+  bring: z.array(z.string().max(TASK_GUIDANCE_LIMITS.bringItemChars)).max(TASK_GUIDANCE_LIMITS.bringItems).default([]),
+  steps: z.array(z.string().max(TASK_GUIDANCE_LIMITS.stepChars)).max(TASK_GUIDANCE_LIMITS.stepItems).default([]),
   formExampleUrl: z.string().url().max(2000).nullable().optional(), formExampleLabel: z.string().max(120).nullable().optional(),
   note: z.string().max(2000).nullable().optional(),
-  sources: z.array(z.object({ label: z.string().min(1).max(120), url: z.string().url().max(2000), checkedAt: z.string().datetime() }).strict()).max(20).default([]),
-  missing: z.array(z.string().max(200)).max(50).default([]), failureReason: z.string().max(500).nullable().optional(),
+  sources: z.array(z.object({ label: z.string().min(1).max(120), url: z.string().url().max(2000), checkedAt: z.string().datetime() }).strict()).max(TASK_GUIDANCE_LIMITS.sources).default([]),
+  missing: z.array(z.string().max(TASK_GUIDANCE_LIMITS.missingItemChars)).max(TASK_GUIDANCE_LIMITS.missingItems).default([]), failureReason: z.string().max(500).nullable().optional(),
+  citations: z.array(guidanceCitationSchema).max(TASK_GUIDANCE_LIMITS.citations).default([]),
 }).strict()
 const chatSchema = resultBase.extend({ kind: z.literal('chat_reply'), body: z.string().min(1).max(10000), professionalNotice: z.boolean().default(false) }).strict()
 export const runSummarySchema = z.object({

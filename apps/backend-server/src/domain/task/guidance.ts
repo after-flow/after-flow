@@ -24,6 +24,20 @@ export interface GuidanceSource {
   checkedAt: string
 }
 
+/**
+ * 案内の1項目が公式資料のどこに基づくか（#163）。
+ * AI Serverが本文との逐語一致を確かめた引用だけが入る。
+ */
+export interface GuidanceCitation {
+  /** 根拠を示す案内の区分と、その区分内の項目番号（0始まり）。 */
+  item: 'where' | 'bring' | 'steps'
+  index: number
+  /** 見出しのアンカーがあれば付いたURL。 */
+  sourceUrl: string
+  sectionHeading: string | null
+  quote: string
+}
+
 export interface GuidanceEntity extends EntityBase {
   taskId: string
   status: GuidanceStatus
@@ -37,6 +51,8 @@ export interface GuidanceEntity extends EntityBase {
   formExampleLabel: string | null
   note: string | null
   sources: GuidanceSource[]
+  /** 項目ごとの根拠。導入前に保存した案内には無い。 */
+  citations?: GuidanceCitation[]
   /** 調べきれなかった項目。失うと、利用者は全部確認済みだと誤解する。 */
   missing: string[]
   /** FAILED のときの理由。利用者に見せる文言。 */
