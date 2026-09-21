@@ -36,7 +36,8 @@ export const qk = {
   overview: (id: string) => ['cases', id, 'overview'] as const,
   documents: (id: string) => ['cases', id, 'documents'] as const,
   document: (id: string) => ['documents', id] as const,
-  documentContent: (id: string) => ['documents', id, 'content'] as const,
+  // ['documents'] の下に置かない。読み取りが終わるたびに ['documents'] ごと取り直すため、原本まで再取得されてしまう
+  documentContent: (id: string) => ['document-content', id] as const,
   tasks: (id: string) => ['cases', id, 'tasks'] as const,
   task: (id: string) => ['tasks', id] as const,
   deadlines: (id: string) => ['cases', id, 'deadlines'] as const,

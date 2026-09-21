@@ -62,10 +62,10 @@ export function HomeScreen() {
   const pending = (approvals.data?.items ?? [])
     .filter((a) => a.status === 'PENDING')
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const fresh = (insights.data?.items ?? []).filter((i) => i.status === 'NEW' && isDisplayableInsight(i))
-  // 止まっている手続き・前提の変化は「前回からの続き」に出すので、確認の件数には重ねて数えない
-  const carried = fresh.filter(isCarriedOver)
-  const newInsights = fresh.filter((i) => !isCarriedOver(i))
+  const newInsights = (insights.data?.items ?? []).filter((i) => i.status === 'NEW' && isDisplayableInsight(i))
+  // 止まっている手続き・前提の変化は「前回からの続き」にも出す。
+  // 件数はサイドバー・「AIからの確認」のタブとそろえるため、ここでも数に含める
+  const carried = newInsights.filter(isCarriedOver)
   const reviewCount = pending.length + newInsights.length
   const running = overview.data.recentAgentRuns.filter((r) => r.status === 'RUNNING')
 

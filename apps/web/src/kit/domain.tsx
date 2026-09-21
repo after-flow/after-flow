@@ -288,9 +288,10 @@ export function Due({
     return (
       <span className="inline-flex flex-col items-end leading-tight whitespace-nowrap">
         <span className="text-[0.94rem] font-bold text-rd-warning-text">早めに</span>
+        {/* 何の期限かは、一覧の見出し・手続きの詳細で説明している。ここは日付だけにして列の幅に収める */}
         {withDate && (
           <span className="hidden text-[0.8rem] text-rd-text-3 sm:block">
-            判断の期限 {formatDate(prep.dueDate, { weekday: true })}より前に
+            {formatDate(prep.dueDate, { weekday: true })}より前に
           </span>
         )}
       </span>

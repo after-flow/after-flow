@@ -518,7 +518,7 @@ function BringList({ caseId, base, task }: { caseId: string; base: string; task:
   const save = (next: RequiredDocument[]) => void update.mutateAsync({ taskId: task.id, requiredDocuments: next }).catch(() => {})
   const toggle = (id: string) => save(docs.map((r) => (r.id === id ? { ...r, collected: !r.collected } : r)))
   const addChecked = (label: string) =>
-    save([...docs, { id: `bring_${crypto.randomUUID().slice(0, 8)}`, label, collected: true, source: 'AI' }])
+    save([...docs, { id: `bring_${Math.random().toString(36).slice(2, 10)}`, label, collected: true, source: 'AI' }])
 
   return (
     <div className="mt-1">
@@ -566,7 +566,7 @@ function AssigneeSelect({ caseId, task, ownerName }: { caseId: string; task: Tas
 
   return (
     <select
-      className={`${inputClass} h-9 py-0`}
+      className={inputClass.replace('h-11', 'h-9')}
       aria-label="担当"
       value={task.assigneeId ?? ''}
       disabled={assign.isPending || !persons.data}

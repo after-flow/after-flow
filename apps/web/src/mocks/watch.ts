@@ -11,6 +11,7 @@ import { db } from './db'
  *     手続きが更新されたら、その気づきは片づいたものとして消す。
  *  2. 前提の変化（INCONSISTENCY）
  *     - 相続人が増えた・減った：相続の方法の記録と、遺産分割の話し合いに関わる
+ *       （はじめの家族の登録は含めない。誰かの方法が記録されたか、「相続の方法を決める」に手を付けた後だけ）
  *     - 相続放棄を選んだ方がいる：次の順位の方が相続人になる場合がある（法的判断なので専門家へ）
  *
  * 手続きの一覧や期限そのものは書き換えない。知らせるだけで、判断は利用者に任せる。
@@ -98,11 +99,18 @@ export function watchCase(caseId: string) {
   )
   const before = heirSnapshots.get(caseId)
   heirSnapshots.set(caseId, heirs)
-  // 最初に見たときは比べる相手がいない。ケースを作った直後に本人を登録するのも「変化」ではない
-  if (before && before.size > 0) {
+  /*
+    相続人の一覧が「固まってから」の変化だけを知らせる。
+    ケースを作った直後に家族を順に登録していくのは、はじめの登録であって前提の変化ではない。
+    誰かの相続の方法が記録された、または「相続の方法を決める」に手を付けた後を、固まったとみなす。
+  */
+  const decision = decisionTask(caseId)
+  const settled =
+    (before != null && [...before.keys()].some((id) => db.decisions[id] != null)) ||
+    (decision != null && decision.status !== 'NOT_STARTED')
+  if (before && before.size > 0 && settled) {
     const added = [...heirs].filter(([id, name]) => !before.has(id) && name !== kase.ownerName)
     const removed = [...before].filter(([id]) => !heirs.has(id))
-    const decision = decisionTask(caseId)
     for (const [id, name] of added) {
       db.insights.push({
         id: `ins_w_heir_add_${id}_${now}`,
@@ -148,7 +156,6 @@ export function watchCase(caseId: string) {
     }
     if (renunciationNotified.has(personId)) continue
     renunciationNotified.add(personId)
-    const decision = decisionTask(caseId)
     db.insights.push({
       id: `ins_w_renounce_${personId}_${now}`,
       caseId,
