@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@ai-sdk/provider-utils@3.0.37>undici': 6.28.1
+
 importers:
 
   .:
@@ -23,6 +26,9 @@ importers:
       '@aftercare/internal-contracts':
         specifier: workspace:*
         version: link:../../packages/internal-contracts
+      '@ai-sdk/openai-compatible':
+        specifier: 1.0.54
+        version: 1.0.54(zod@4.6.5)
       '@google-cloud/firestore':
         specifier: 9.2.0
         version: 9.2.0
@@ -198,6 +204,18 @@ packages:
       express:
         optional: true
 
+  '@ai-sdk/openai-compatible@1.0.54':
+    resolution: {integrity: sha512-3wY1L21FLhfKN6I1nQeWgFzDCeBiRxXwU2guE9BCixSLfOPtkJ0vyF7zo7lbnAg1y7tz6RDPq/o+AJf6QSL55g==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/provider-utils@3.0.37':
+    resolution: {integrity: sha512-mLx1SgE20xKQ87xME+9uG6pFlYPTqGDrMFrZ6XcytDnmbWGwmCIh2Xb9zFrfXUrKycSFRDet4Zovj388L9b1dg==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/provider-utils@4.0.40':
     resolution: {integrity: sha512-OL5IrpUm9Y8Dwy+w/vvFwPotS6m52O9W0op2oXgXdCROMJIBalBI0oro6OIBYkPxvm5Xg02GSkoQN25RlR0bnw==}
     engines: {node: '>=18'}
@@ -212,6 +230,10 @@ packages:
 
   '@ai-sdk/provider@2.0.3':
     resolution: {integrity: sha512-h88OPkavHTiN9tMn2l5awAznGB0lXzjcLhgR1/rvjB2zlLprsNxbM2tt6OJsHUxduLC3klq0/eqaSf6fX5XVww==}
+    engines: {node: '>=18'}
+
+  '@ai-sdk/provider@2.0.4':
+    resolution: {integrity: sha512-B0M50w0W43jTzZGyZrNwwaK1M79aKPw6PD/dQhkBR7vkR68yCINWBo2CbBLJrbrqYc46TaiSfsTiT+S9EmVl0w==}
     engines: {node: '>=18'}
 
   '@ai-sdk/provider@3.0.14':
@@ -2133,6 +2155,10 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
+  undici@6.28.1:
+    resolution: {integrity: sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==}
+    engines: {node: '>=18.17'}
+
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
     engines: {node: '>=18'}
@@ -2310,6 +2336,20 @@ snapshots:
     optionalDependencies:
       '@grpc/grpc-js': 1.14.5
 
+  '@ai-sdk/openai-compatible@1.0.54(zod@4.6.5)':
+    dependencies:
+      '@ai-sdk/provider': 2.0.4
+      '@ai-sdk/provider-utils': 3.0.37(zod@4.6.5)
+      zod: 4.6.5
+
+  '@ai-sdk/provider-utils@3.0.37(zod@4.6.5)':
+    dependencies:
+      '@ai-sdk/provider': 2.0.4
+      '@standard-schema/spec': 1.1.0
+      eventsource-parser: 3.1.1
+      undici: 6.28.1
+      zod: 4.6.5
+
   '@ai-sdk/provider-utils@4.0.40(zod@4.6.5)':
     dependencies:
       '@ai-sdk/provider': 3.0.14
@@ -2326,6 +2366,10 @@ snapshots:
       zod: 4.6.5
 
   '@ai-sdk/provider@2.0.3':
+    dependencies:
+      json-schema: 0.4.0
+
+  '@ai-sdk/provider@2.0.4':
     dependencies:
       json-schema: 0.4.0
 
@@ -4261,6 +4305,8 @@ snapshots:
   typescript@6.0.3: {}
 
   undici-types@7.18.2: {}
+
+  undici@6.28.1: {}
 
   unicorn-magic@0.3.0: {}
 

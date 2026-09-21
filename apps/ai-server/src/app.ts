@@ -5,7 +5,7 @@ import type { ExecutionOptions } from './presentation/routes/internal/v1/executi
 
 export function createApp(options: ExecutionOptions = {}) {
   const app = new Hono()
-  app.route('/internal/v1', healthRoutes)
+  app.route('/internal/v1', healthRoutes(Boolean(options.runtime)))
   app.route('/internal/v1', executionRoutes(options))
   return app
 }

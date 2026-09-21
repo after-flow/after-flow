@@ -1,8 +1,15 @@
-export function formatDate(value?: string): string {
+/**
+ * 日付の表示。weekday を付けると「9月28日（月）」のように曜日を添える。
+ * 期限には曜日を付ける：役所は土日に閉まっているので、窓口へ行く日を決めるのに欠かせない。
+ *
+ * YYYY-MM-DD はその土地の暦日として読む（UTC として読むと、時差のある地域で1日ずれる）。
+ */
+export function formatDate(value?: string, opts?: { weekday?: boolean }): string {
   if (!value) return '—'
-  const d = new Date(value)
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value)
   if (Number.isNaN(d.getTime())) return value
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+  const w = opts?.weekday ? `（${'日月火水木金土'[d.getDay()]}）` : ''
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日${w}`
 }
 
 export function formatDateTime(value?: string): string {

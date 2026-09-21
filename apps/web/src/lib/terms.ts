@@ -55,4 +55,3 @@ export const GLOSSARY: Record<string, { plain: string; detail: string }> = {
   },
 }
 
-export const GLOSSARY_KEYS = Object.keys(GLOSSARY)

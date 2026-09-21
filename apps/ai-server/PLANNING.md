@@ -9,7 +9,7 @@
 
 `planning-execution-v1` と `createPlanningHandler` が候補生成→1件の正式提案→永続承認待ち→別attemptでの再開→正式版/hashの確認→Backendへの結果報告を接続する。最初に承認されたTaskが案件状態を変えるため、残りの候補を古いContextで連続適用しない。残り・質問・却下・変更がある場合はNEEDS_ATTENTION。回答または再試行で同じRunの新attemptを開始し、最新状態から再計画する。
 
-WAIT再開は保存済み計画を使用し、Orch/Agent/提案送信を繰り返さない。新しいattemptへSnapshotをforkするのはRuntimeの認可と所有権確認後だけ。RETRYは共有予算内で最新Contextから再計画し、CHECKPOINTによる任意位置の再適用は拒否する。Provider/Orch/Templateが未提供の既定プロセスでは503を維持する。
+WAIT再開は保存済み計画を使用し、Agent/提案送信を繰り返さない。新しいattemptへSnapshotをforkするのはRuntimeの認可と所有権確認後だけ。RETRYは共有予算内で最新Contextから再計画し、CHECKPOINTによる任意位置の再適用は拒否する。開発Composeはハッカソン用Provider/Templateを接続し、設定が無いプロセスでは503を維持する。
 
 検証: 実Mastraの2 Agent fixture、既存/過去案の重複抑止、前提不足、別Case依存、独自期限拒否。Firestore統合試験で承認時の必要書類/依存反映と不明/循環依存の拒否を検証。
 

@@ -1,5 +1,7 @@
 # 死亡後手続きAIエージェント：TypeScriptアーキテクチャ仕様
 
+> OrcaRouter接続の更新（2026-09-21）: 実製品は推論ゲートウェイ。本文の旧Orch業務Route APIの仮定に代わり、明示モデルへの実推論を接続する。詳細・検証範囲は [OrcaRouter接続](../apps/ai-server/ORCAROUTER.md) を参照。業務経路は引き続きWorkflow/Playbookで制限する。
+
 文書バージョン: 1.1  
 作成日: 2026-09-20 / Asia/Tokyo  
 対象: Codexによる新規実装・既存Go/Echo設計からの置き換え  
