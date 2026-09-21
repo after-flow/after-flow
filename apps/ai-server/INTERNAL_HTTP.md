@@ -16,8 +16,8 @@
 Backend Clientは別のAI→Backend service tokenとBackend originをcomposition rootから受け取る。
 秘密値をモデル入力、エラー本文、通常ログに渡さない。private ingress/IAMは配備時に別途設定する。
 
-`ExecutionRuntime`は永続WorkerのPort。**production実装はまだ注入しない**。
-未設定の場合、livenessは200、実行受付・Snapshot照会は503になる。404や503を配送成功に変換しない。
+`ExecutionRuntime`は永続WorkerのPort。開発ComposeではAI専用Emulatorへ接続し、production用のproject/IAM/保持設定はまだ注入しない。
+未設定の場合、livenessは200、readiness・実行受付・Snapshot照会は503になる。404や503を配送成功に変換しない。
 
 [Runtime](RUNTIME.md)で、Backend control/contextによるcapability検証・operation一致確認、
 永続receipt、Job衝突拒否、旧attempt拒否を実装した。実Provider/業務Handler接続後にcomposition rootから注入する。

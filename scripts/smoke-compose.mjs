@@ -36,14 +36,38 @@ docker('compose', 'exec', '-T', 'backend-server', 'node', '--input-type=module',
   const health = await response.json()
   assert.equal(health.data.service, 'ai-server')
   assert.equal(health.data.status, 'ok')
+  const ready = await fetch('http://ai-server:8081/internal/v1/ready', {
+    signal: AbortSignal.timeout(5_000),
+  })
+  assert.ok([200, 503].includes(ready.status))
+  if (ready.status === 200) {
+    assert.equal((await ready.json()).data.execution, 'connected')
+    const now = Math.floor(Date.now() / 1000)
+    const body = { cancelId: 'compose-smoke-cancel', runId: 'compose-smoke-run', jobId: 'compose-smoke-job',
+      executionAttempt: 'compose-smoke-attempt', issuedAt: now, expiresAt: now + 60 }
+    const cancel = await fetch('http://ai-server:8081/internal/v1/runs/compose-smoke-run/cancel', {
+      method: 'POST', signal: AbortSignal.timeout(5_000), body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json', Authorization: \`Bearer \${process.env.AI_SERVICE_TOKEN}\`,
+        'X-Audience': process.env.AI_SERVICE_AUDIENCE || 'ai-server', 'X-Request-Id': body.cancelId, 'Idempotency-Key': body.cancelId },
+    })
+    assert.equal(cancel.status, 200)
+  }
   const publicRoute = await fetch('http://ai-server:8081/api/v1/health', {
     signal: AbortSignal.timeout(5_000),
   })
   assert.equal(publicRoute.status, 404)
 `)
 
+docker('compose', 'exec', '-T', 'ai-server', 'node', '--input-type=module', '-e', `
+  import assert from 'node:assert/strict'
+  const response = await fetch('http://127.0.0.1:8081/internal/v1/ready')
+  assert.equal(response.status, process.env.ORCAROUTER_API_KEY ? 200 : 503)
+`)
+
 const aiId = docker('compose', 'ps', '--quiet', 'ai-server')
 assert.ok(aiId, 'AI container must be running')
+assert.equal(JSON.parse(docker('inspect', aiId))[0].HostConfig.RestartPolicy.Name, 'unless-stopped',
+  'AI container must restart after an unexpected process or Docker restart')
 const aiNetwork = JSON.parse(docker('inspect', '--format', '{{json .NetworkSettings}}', aiId))
 assert.ok(Object.values(aiNetwork.Ports ?? {}).every((bindings) => bindings === null || bindings.length === 0),
   'AI must not publish any host ports')
@@ -60,5 +84,15 @@ assert.ok(aiNetworkIds.length > 0 && webNetworkIds.length > 0, 'Both services mu
 assert.ok(webNetworkIds.every((id) => !aiNetworkIds.includes(id)), 'Web and AI must not share a network')
 assert.ok(aiNetworkNames.every((name) => !/(?:^|_)(?:data|emulator-host)$/.test(name)),
   'AI must not join either local business-data network')
+assert.ok(aiNetworkNames.some((name) => name.endsWith('_ai-egress')), 'AI must have outbound access without publishing a port')
+
+const aiRuntimeId = docker('compose', 'ps', '--quiet', 'ai-runtime-emulator')
+assert.ok(aiRuntimeId, 'AI runtime emulator must be running')
+const aiRuntimeNetworks = JSON.parse(docker('inspect', '--format', '{{json .NetworkSettings.Networks}}', aiRuntimeId))
+const businessFirestoreId = docker('compose', 'ps', '--quiet', 'firestore-emulator')
+const businessNetworks = JSON.parse(docker('inspect', '--format', '{{json .NetworkSettings.Networks}}', businessFirestoreId))
+assert.ok(Object.values(aiRuntimeNetworks).every((network) =>
+  Object.values(businessNetworks).every((business) => network.NetworkID !== business.NetworkID)),
+  'AI runtime and business Firestore must not share a network')
 
 console.log('Web, backend proxy, internal AI connectivity, and AI network isolation verified.')

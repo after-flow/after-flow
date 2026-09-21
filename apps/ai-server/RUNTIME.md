@@ -52,7 +52,7 @@ SDK retryは0に固定。複数Providerの実Fallbackは別PRで各attemptの課
 - 待機条件登録はBackend→Session.registerWait→Mastra suspend→snapshot保存→通知の順。通知を失ってもBackend照会で復旧する。
 - 保存失敗で202/完了を偽装しない。所有権を失ったWorkerは終端状態を書き換えない。
 - 実Orch/Provider/Source Catalog、業務別Handler、承認後の新Contextによる再検証、部分結果報告は後続PR。
-- mainはRuntime未注入の503を維持する。Loop、Adapter、Workflow、予算の一部だけを接続して本番対応とは表示しない。
+- mainは開発ハッカソン設定が揃う場合だけRuntimeを注入し、未設定時は503を維持する。ローカル接続を本番対応とは表示しない。
 
 検証: Firestore Emulatorで独立client間のclaim競合、Job衝突、旧所有権、累積上限、snapshot保存前後の再開、実Mastra Workflowの単一起動/完了、STOPを検証。Mastraの実ループでProvider/Tool実行前の予算停止を検証する。実Backendとの通し試験は後続。
 
@@ -65,7 +65,7 @@ Jobごとの安定したresult IDとWorkflow run IDで保存・報告する。�
 
 `startExecutionHost`はRuntimeとWorkerの両方を要求する。HTTP要求ごとに非管理Promiseを作らず、監督対象のloopを一つ持つ。
 Workerの異常終了・予期しない正常終了ではHTTPも閉じる。終了時はsignalで停止し、有限の猶予後に接続を閉じる。
-mainはこのhostを使うが、実Orch/Provider/grant/Catalogのcompositionが未設定のため、Runtime未注入の503は維持する。
+mainはこのhostを使い、非productionでAPIキーがある場合だけハッカソン用OrcaRouter/Policy/grant/Catalogをcompositionする。production用のProvider同意とAI Runtime設定は別途必要。
 
 Backend Emulator試験に、独立AIプロセスへ実dispatchを送り、実Backend認証・Context・AI専用Firestore・
 実MastraチャットWorkflow・結果反映まで通す試験を追加する。二重配送しても返信は一つ。
