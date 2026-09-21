@@ -18,6 +18,11 @@
       "fields": [{ "fieldPath": "inspection.status", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }]
     },
     {
+      "comment": "GET C/agent-runs/:runId/events（Issue #125）。1つのRun内をsequence昇順で辿る。",
+      "collectionGroup": "agentRunEvents", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "runId", "order": "ASCENDING" }, { "fieldPath": "sequence", "order": "ASCENDING" }, { "fieldPath": "__name__", "order": "ASCENDING" }]
+    },
+    {
       "collectionGroup": "outbox", "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }]
     },

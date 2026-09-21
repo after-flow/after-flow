@@ -16,9 +16,10 @@ Parent tracking Issue: [#131](https://github.com/after-flow/after-flow/issues/13
 | [#121](https://github.com/after-flow/after-flow/issues/121) | Firestore Emulator runner no longer hangs and emits actionable diagnostics | Supported Node version; three successful CI runs |
 | [#123](https://github.com/after-flow/after-flow/issues/123) | Backend readiness fails closed when required dependencies/configuration are missing | readiness tests plus deployment smoke |
 | [#124](https://github.com/after-flow/after-flow/issues/124) | A developer can authenticate, seed membership, and call business APIs from Swagger locally | `make up`, token/seed flow, production guard |
-| [#125](https://github.com/after-flow/after-flow/issues/125) | Users can retrieve safe, ordered AgentRun progress history | Emulator isolation/idempotency tests and OpenAPI |
 
 These Issues carry `Devin` because their implementation conditions are sufficiently defined. Recheck dependencies and acceptance criteria before starting.
+
+[#125](https://github.com/after-flow/after-flow/issues/125) is implemented on `issue/125-agent-run-events-api`: `GET /api/v1/cases/:caseId/agent-runs/:runId/events` returns a cursor-paginated, tenant/Case/Run-isolated AgentRun history (accepted/progress/waiting/resumed/result/cancelled/retried), recorded in the same transaction as each state change. Recheck live Issue state before treating it as merged.
 
 ## Implementation needing an operational or policy choice
 
@@ -55,7 +56,7 @@ Some `PASSED`-only guard tests already exist. That partial coverage does not unb
 1. Restore a stable green signal with #121.
 2. Make accepted work actually run and expose true readiness with #122 and #123.
 3. Improve developer verification with #124.
-4. Add user-visible execution/audit history through #125 and, after its policy decision, #126.
+4. #125 (AgentRun progress history) is implemented; add audit-log history after its policy decision, #126.
 5. Resolve production identity, consent, and deadline decisions (#127–#129).
 6. Complete document inspection (#25 → #26 → #27) and data lifecycle (#130).
 

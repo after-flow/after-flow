@@ -44,6 +44,34 @@ export const agentRunResourceSchema = z.object({
 
 export const agentRunIdParamsSchema = z.object({ caseId: idSchema, runId: idSchema })
 
+export const agentRunEventKindSchema = z.enum([
+  'ACCEPTED',
+  'PROGRESS',
+  'WAITING',
+  'RESUMED',
+  'RESULT',
+  'CANCELLED',
+  'RETRIED',
+])
+
+/**
+ * 公開可能なAgentRun進捗イベント（Issue #125）。
+ *
+ * `detail` は列挙値やIDなど安全な範囲の付随情報のみを返す契約。
+ * prompt、非公開の思考、資格情報、原本文はサーバー側で決して詰めない。
+ */
+export const agentRunEventResourceSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  eventId: z.string(),
+  kind: agentRunEventKindSchema,
+  status: agentRunStatusSchema,
+  attempt: z.number().int(),
+  sequence: z.number().int().positive(),
+  detail: z.record(z.string(), z.unknown()),
+  occurredAt: isoDateTimeSchema,
+})
+
 export const acceptAgentRunBodySchema = z
   .object({
     operation: agentOperationSchema,

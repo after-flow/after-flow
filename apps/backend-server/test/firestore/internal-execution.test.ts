@@ -31,7 +31,7 @@ import { SignedExecutionAuthorization } from '../../src/infrastructure/identity/
 import { ScopedHttpAgentJobClient } from '../../src/infrastructure/agent/scoped-http-agent-client.js'
 import { createExecutionApp } from '../../src/presentation/routes/internal/v1/execution.js'
 import { buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
-import { describeFirestore, firestore, newTenantId, readRepository, unitOfWork } from './helpers/emulator.js'
+import { agentRunEvents, describeFirestore, firestore, newTenantId, readRepository, unitOfWork } from './helpers/emulator.js'
 import { startFakeAiServer } from './helpers/fake-ai-server.js'
 
 const signingKey = 'synthetic-test-signing-key-not-a-production-secret'
@@ -153,6 +153,14 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     const run = (await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)).body.data
     assert.equal(run.status, 'NEEDS_ATTENTION'); assert.equal(run.failureReason, 'BUDGET_EXCEEDED')
     assert.deepEqual(run.outcome.remaining, ['提案確認'])
+
+    // 中断結果も公開履歴へ1行だけ記録する。失敗理由はBackendが定義した列挙値のみ。
+    const events = await agentRunEvents(h.tenantId, h.caseId, exec.run.id)
+    const resultEvents = events.filter(e => e.kind === 'RESULT')
+    assert.equal(resultEvents.length, 1, '重複した再送で行が増えている')
+    assert.equal(resultEvents[0]!.status, 'NEEDS_ATTENTION')
+    assert.equal(resultEvents[0]!.eventId, input.resultId)
+    assert.deepEqual(resultEvents[0]!.detail, { operation: 'case_planning', failureReason: 'BUDGET_EXCEEDED' })
   })
 
   it('個人本文のないdispatch→context→artifact→heartbeat→progress→resultを実HTTPで検証する', async t => {
@@ -179,6 +187,20 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal((await h.request(exec, 'control')).body.data.instruction, 'STOP')
     const run = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)
     assert.equal(run.body.data.status, 'SUCCEEDED')
+
+    // 公開可能な進捗履歴（Issue #125）。同じeventId/resultIdの再送で行が増えない。
+    const events = await agentRunEvents(h.tenantId, h.caseId, exec.run.id)
+    assert.deepEqual(events.map(e => e.kind), ['ACCEPTED', 'PROGRESS', 'RESULT'])
+    assert.ok(events[0]!.sequence < events[1]!.sequence && events[1]!.sequence < events[2]!.sequence, '発生順になっていない')
+    const progress = events.find(e => e.kind === 'PROGRESS')!
+    assert.equal(progress.eventId, event.eventId)
+    assert.equal(progress.detail.phase, 'PLANNING')
+    const resultEvent = events.find(e => e.kind === 'RESULT')!
+    assert.equal(resultEvent.eventId, result.resultId)
+    assert.equal(resultEvent.status, 'SUCCEEDED')
+    assert.equal(resultEvent.detail.operation, 'case_planning')
+    // prompt・非公開の思考・原本文・questionsを含めない。
+    assert.deepEqual(Object.keys(resultEvent.detail).sort(), ['operation'])
   })
 
   it('planning results expose questions; user answers replan the same Run without confirming facts', async t => {

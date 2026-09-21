@@ -9,6 +9,7 @@ import { errors } from '../../shared/app-error.js'
 import { fingerprintOf } from '../../shared/fingerprint.js'
 import type { Tx } from '../ports/persistence.js'
 import { releaseLease } from './lease-service.js'
+import { recordRunTransitionEvent } from './agent-run-events.js'
 
 export const waitLocation = (caseId: string, id: string) => ({ collection: collections.waitRequests, caseId, id })
 
@@ -50,7 +51,7 @@ export async function createPendingWait(tx: Tx, run: AgentRunEntity, clientId: s
 }
 
 /** Snapshot保存完了の通知。先行承認でleaseが変わっていても、古い他所有者のleaseには触れない。 */
-export async function recordWaiting(tx: Tx, run: AgentRunEntity, waitRequestId: string, snapshotId: string) {
+export async function recordWaiting(tx: Tx, run: AgentRunEntity, waitRequestId: string, snapshotId: string, eventId?: string) {
   if (!run.caseId || run.activeWaitRequestId !== waitRequestId) throw errors.conflict({ details: { reason: 'WAIT_MISMATCH' } })
   const wait = await tx.require<WaitRequestEntity>(waitLocation(run.caseId, waitRequestId))
   if (wait.runId !== run.id || wait.executionAttempt !== run.currentAttemptId || wait.jobId !== run.currentJobId
@@ -58,8 +59,12 @@ export async function recordWaiting(tx: Tx, run: AgentRunEntity, waitRequestId: 
   if (wait.snapshotId && wait.snapshotId !== snapshotId) throw errors.conflict({ details: { reason: 'SNAPSHOT_MISMATCH' } })
   await releaseLease(tx, run.caseId, run.id, wait.fencingToken)
   tx.update<WaitRequestEntity>(waitLocation(run.caseId, wait.id), wait.version, { state: 'WAITING', snapshotId })
+  const status = wait.condition.kind === 'APPROVAL' ? 'WAITING_APPROVAL' : 'WAITING_DOCUMENT'
   tx.update<AgentRunEntity>({ collection: collections.agentRuns, caseId: run.caseId, id: run.id }, run.version, {
-    status: wait.condition.kind === 'APPROVAL' ? 'WAITING_APPROVAL' : 'WAITING_DOCUMENT', waitingFor: wait.id,
+    status, waitingFor: wait.id,
+  })
+  await recordRunTransitionEvent(tx, run, 'WAITING', status, {
+    eventId, detail: { waitRequestId: wait.id, conditionKind: wait.condition.kind },
   })
   tx.audit({ caseId: run.caseId, type: 'agent_run.waiting',
     target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { waitRequestId, snapshotId } })

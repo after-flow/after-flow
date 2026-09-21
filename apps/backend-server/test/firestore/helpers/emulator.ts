@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { describe } from 'node:test'
 import { Firestore } from '@google-cloud/firestore'
 import type { ActorRef, WorkContext } from '../../../src/application/ports/persistence.js'
+import type { AgentRunEventEntity } from '../../../src/domain/agent/agent-run-event.js'
+import { collections } from '../../../src/domain/shared/collections.js'
 import { FirestoreReadRepository } from '../../../src/infrastructure/firestore/read-repository.js'
 import { FirestoreUnitOfWork } from '../../../src/infrastructure/firestore/unit-of-work.js'
 
@@ -49,6 +51,21 @@ export function newId(prefix = 'x'): string {
 }
 
 export const testActor: ActorRef = { type: 'USER', userId: 'user-test-0001', agentRunId: null }
+
+/**
+ * 対象Runの公開AgentRun進捗イベントを発生順で取得する（Issue #125）。
+ *
+ * 公開GET /agent-runs/:runId/eventsと同じ read.list(where runId, orderBy sequence)
+ * を通すため、複合indexの整合も併せて検証できる。
+ */
+export async function agentRunEvents(tenantId: string, caseId: string, runId: string): Promise<AgentRunEventEntity[]> {
+  const page = await readRepository().list<AgentRunEventEntity>(tenantId, collections.agentRunEvents, caseId, {
+    limit: 100,
+    orderBy: { field: 'sequence', direction: 'asc' },
+    where: [{ field: 'runId', op: '==', value: runId }],
+  })
+  return page.items
+}
 
 export function workContext(tenantId: string, overrides: Partial<WorkContext> = {}): WorkContext {
   return {

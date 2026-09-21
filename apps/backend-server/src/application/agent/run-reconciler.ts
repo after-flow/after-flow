@@ -17,6 +17,7 @@ import type { InternalExecutionService } from './internal-execution-service.js'
 import type { LocalOutboxHandler } from './outbox-dispatcher.js'
 import { leaseLocation, releaseLease } from './lease-service.js'
 import { recordWaiting, waitLocation } from './wait-requests.js'
+import { recordRunTransitionEvent } from './agent-run-events.js'
 
 const runLocation = (caseId: string, id: string) => ({ collection: collections.agentRuns, caseId, id })
 const inboxTypes = new Set(['proposal.applied', 'approval.rejected', 'document.registered'])
@@ -178,6 +179,9 @@ export class RunReconciler implements LocalOutboxHandler {
       pendingResume: { waitRequestId: wait?.id ?? null, snapshotId, previousAttemptId: run.currentAttemptId, kind, outcome } })
     if (wait) tx.update<WaitRequestEntity>(waitLocation(caseId, wait.id), wait.version, { state: 'RESUME_QUEUED', resumeJobId: jobId, inboxId })
     tx.outbox({ id: jobId, type: kind === 'WAIT' ? 'agent.resume' : 'agent.recover', caseId, payload: { runId: run.id } })
+    await recordRunTransitionEvent(tx, run, 'RESUMED', 'QUEUED', {
+      eventId: jobId, attempt: run.attempt + 1, detail: { kind, outcome, waitRequestId: wait?.id ?? null },
+    })
     tx.audit({ caseId, type: 'agent_run.resume_queued', target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { jobId, kind, waitRequestId: wait?.id ?? null, inboxId } })
   }
 }

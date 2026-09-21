@@ -21,6 +21,8 @@ import { releaseLease } from './lease-service.js'
 import type { WaitRequestEntity } from '../../domain/agent/wait-request.js'
 import { waitLocation } from './wait-requests.js'
 import type { Tx } from '../ports/persistence.js'
+import type { AgentRunEventEntity } from '../../domain/agent/agent-run-event.js'
+import { recordAcceptedEvent, recordRunTransitionEvent } from './agent-run-events.js'
 
 async function cancelWait(tx: Tx, run: AgentRunEntity) {
   if (!run.activeWaitRequestId || !run.caseId) return
@@ -54,6 +56,32 @@ export interface AgentRunView {
 
 function runLocation(caseId: string, id: string): DocLocation {
   return { collection: collections.agentRuns, caseId, id }
+}
+
+export interface AgentRunEventView {
+  id: string
+  runId: string
+  eventId: string
+  kind: AgentRunEventEntity['kind']
+  status: AgentRunStatus
+  attempt: number
+  sequence: number
+  detail: Record<string, unknown>
+  occurredAt: string
+}
+
+export function toAgentRunEventView(entity: AgentRunEventEntity): AgentRunEventView {
+  return {
+    id: entity.id,
+    runId: entity.runId,
+    eventId: entity.eventId,
+    kind: entity.kind,
+    status: entity.status,
+    attempt: entity.attempt,
+    sequence: entity.sequence,
+    detail: entity.detail,
+    occurredAt: entity.createdAt,
+  }
 }
 
 export function toAgentRunView(entity: AgentRunEntity): AgentRunView {
@@ -176,6 +204,8 @@ export class AgentRunService {
           detail: { runId } })
       }
 
+      await recordAcceptedEvent(tx, caseId, runId, { operation: input.operation, targetType: input.targetType })
+
       tx.audit({
         caseId,
         type: 'agent_run.accepted',
@@ -224,6 +254,31 @@ export class AgentRunService {
   }
 
   /**
+   * 受付・処理中・待機・再開・完了の履歴を時系列で返す（Issue #125）。
+   *
+   * Case membershipを確認し、対象Runがこの Case に属することも確かめる。
+   * 別Case・別Runのrun-idへ差し替えても、存在を明かさず NOT_FOUND を返す。
+   */
+  async listEvents(
+    user: AuthenticatedUser,
+    caseId: string,
+    runId: string,
+    options: { limit: number; cursor?: string | undefined },
+  ): Promise<Page<AgentRunEventView>> {
+    await this.access.authorizeCase(user, caseId, 'case.read')
+    const run = await this.read.get<AgentRunEntity>(user.tenantId, runLocation(caseId, runId))
+    if (!run) throw errors.notFound()
+    const page = await this.read.list<AgentRunEventEntity>(user.tenantId, collections.agentRunEvents, caseId, {
+      limit: options.limit,
+      cursor: options.cursor,
+      orderBy: { field: 'sequence', direction: 'asc' },
+      where: [{ field: 'runId', op: '==', value: runId }],
+    })
+    const items = page.items.map(toAgentRunEventView)
+    return page.nextCursor === undefined ? { items } : { items, nextCursor: page.nextCursor }
+  }
+
+  /**
    * 実行の取消。
    *
    * 取り消すのは実行であって、既に確定した業務変更ではない。
@@ -258,6 +313,9 @@ export class AgentRunService {
       if (cancellation) tx.outbox({ id: cancelId, type: 'agent.cancel', caseId, payload: { runId } })
       await cancelWait(tx, current)
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
+      await recordRunTransitionEvent(tx, { ...current, version: expectedVersion }, 'CANCELLED', 'CANCELLED', {
+        eventId: cancelId, detail: { previousStatus: current.status },
+      })
       tx.audit({
         caseId,
         type: 'agent_run.cancelled',
@@ -358,6 +416,9 @@ export class AgentRunService {
         failureReason: null,
         waitingFor: null,
         finishedAt: null,
+      })
+      await recordRunTransitionEvent(tx, { ...current, version: expectedVersion }, 'RETRIED', 'QUEUED', {
+        attempt: current.attempt + 1, detail: { attempt: current.attempt + 1 },
       })
       tx.audit({
         caseId,

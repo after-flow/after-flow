@@ -6,6 +6,7 @@ import type { GuidanceEntity, GuidanceSource, GuidanceStatus } from '../../domai
 import { errors } from '../../shared/app-error.js'
 import { AgentAccess } from '../authorization/case-access.js'
 import type { DocLocation, ReadRepository, Tx, UnitOfWork } from '../ports/persistence.js'
+import { recordRunTransitionEvent } from '../agent/agent-run-events.js'
 
 /**
  * AI からの結果を受け取る（仕様書 6.3）。
@@ -174,6 +175,10 @@ export class AgentResultIntake {
       failureReason: input.failureReason ?? null,
     })
 
+    await recordRunTransitionEvent(tx, runEntity, 'RESULT', runStatusFor(input.status), {
+      eventId: input.resultId, detail: { operation: 'task_guidance', outcomeStatus: input.status },
+    })
+
     tx.audit({
       caseId,
       type: 'guidance.result_received',
@@ -241,6 +246,10 @@ export class AgentResultIntake {
     tx.update<AgentRunEntity>(runLocation(caseId, runEntity.id), runEntity.version, {
       status: 'SUCCEEDED',
       finishedAt: new Date().toISOString(),
+    })
+
+    await recordRunTransitionEvent(tx, runEntity, 'RESULT', 'SUCCEEDED', {
+      eventId: input.resultId, detail: { operation: 'chat_reply' },
     })
 
     tx.audit({

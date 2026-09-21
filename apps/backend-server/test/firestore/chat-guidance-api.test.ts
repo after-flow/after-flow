@@ -6,7 +6,7 @@ import { AgentResultIntake } from '../../src/application/chat/result-intake.js'
 import type { UnitOfWork } from '../../src/application/ports/persistence.js'
 import { agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
 import type { Json } from './helpers/app.js'
-import { describeFirestore, firestore, newTenantId, readRepository, unitOfWork } from './helpers/emulator.js'
+import { agentRunEvents, describeFirestore, firestore, newTenantId, readRepository, unitOfWork } from './helpers/emulator.js'
 
 const SERVICE_TOKEN = 'test-backend-service-token'
 const CROSS_BORDER = PLACEHOLDER_CATALOG.documents.find((d) => d.kind === 'CROSS_BORDER_AI')!
@@ -169,6 +169,13 @@ describeFirestore('チャットの受付と回答', () => {
 
     const run = await call(app, `/cases/${caseId}/agent-runs/${runId}`)
     assert.equal(run.body.data.status, 'SUCCEEDED')
+
+    // chat_replyの結果も公開履歴へ記録する(Issue #125)。本文は含めない。
+    const events = await agentRunEvents(tenantId, caseId, runId)
+    assert.deepEqual(events.map((e) => e.kind), ['ACCEPTED', 'RESULT'])
+    assert.equal(events[1]!.status, 'SUCCEEDED')
+    assert.equal(events[1]!.eventId, 'result-chat-0001')
+    assert.deepEqual(events[1]!.detail, { operation: 'chat_reply' })
   })
 
   it('同じ結果の再送で回答が重複しない', async () => {
@@ -315,6 +322,14 @@ describeFirestore('手順案内', () => {
     // 部分成功を成功に丸めない。
     const run = await call(app, `/cases/${caseId}/agent-runs/${runId}`)
     assert.equal(run.body.data.status, 'NEEDS_ATTENTION')
+
+    // task_guidanceの結果も公開履歴へ記録する(Issue #125)。出典・手順本文は含めない。
+    const events = await agentRunEvents(tenantId, caseId, runId)
+    const resultEvent = events.find((e) => e.kind === 'RESULT')
+    assert.ok(resultEvent, 'RESULTイベントが記録されていない')
+    assert.equal(resultEvent!.status, 'NEEDS_ATTENTION')
+    assert.equal(resultEvent!.eventId, 'result-guidance-0001')
+    assert.deepEqual(resultEvent!.detail, { operation: 'task_guidance', outcomeStatus: 'PARTIAL' })
   })
 
   it('待機を失敗にしない', async () => {
