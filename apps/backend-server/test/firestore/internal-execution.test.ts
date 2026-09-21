@@ -15,6 +15,9 @@ import { artifactEnvelopeSchema, dispatchSchema, INTERNAL_LIMITS } from '@afterc
 import type { ContextArtifact, ExecutionClaims } from '@aftercare/internal-contracts'
 import { InternalExecutionService } from '../../src/application/agent/internal-execution-service.js'
 import { RunReconciler } from '../../src/application/agent/run-reconciler.js'
+import { OutboxDispatcher } from '../../src/application/agent/outbox-dispatcher.js'
+import { acknowledgeLocally } from '../../src/application/agent/outbox-worker.js'
+import type { GuidanceEntity } from '../../src/domain/task/guidance.js'
 import type { OutboxEvent } from '../../src/domain/shared/outbox.js'
 import { ContextVersionUnitOfWork } from '../../src/application/case/context-version-unit-of-work.js'
 import { AccessService } from '../../src/application/authorization/case-access.js'
@@ -98,7 +101,7 @@ async function setup(t: TestContext) {
       if (reconciler().types.has(event.type)) assert.equal((await reconciler().deliverLocal(event)).status, 'ACCEPTED')
     }
   }
-  return { tenantId, userId, caseId, app, service, authorization, ai, client, accept, request, context, baseUrl, reconciler, ingest }
+  return { tenantId, userId, caseId, app, service, authorization, ai, client, accept, request, context, baseUrl, reconciler, ingest, read, consent }
 }
 
 describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
@@ -290,6 +293,112 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/caseMembers/${h.userId}`).update({ active: false })
     assert.equal((await h.request(exec, 'context')).status, 403)
     assert.equal((await h.request(exec, 'control')).body.data.instruction, 'STOP')
+  })
+
+  it('task_guidanceの中断結果はRunと案内を同じTransactionで終端し、再送で二重反映しない', async t => {
+    const h = await setup(t)
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
+    const exec = await h.accept('task_guidance', task.body.data.id, 'TASK'), context = await h.context(exec)
+    const input = { ...proof(context), resultId: 'guidance-budget', kind: 'execution_interrupted', operation: 'task_guidance',
+      status: 'NEEDS_ATTENTION', failureReason: 'BUDGET_EXCEEDED', output: { summary: '予算上限', completed: [], questions: [], remaining: ['窓口の確認'] } }
+    assert.equal((await h.request(exec, 'result', input)).status, 200)
+    assert.equal((await h.request(exec, 'result', input)).status, 200)
+    const run = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)
+    assert.equal(run.body.data.status, 'NEEDS_ATTENTION'); assert.equal(run.body.data.failureReason, 'BUDGET_EXCEEDED')
+    const guidance = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
+    assert.equal(guidance.body.data.status, 'FAILED'); assert.equal(guidance.body.data.failureReason, 'BUDGET_EXCEEDED')
+    assert.deepEqual(guidance.body.data.missing, ['窓口の確認'])
+    const stored = (await readRepository().get<GuidanceEntity>(h.tenantId, { collection: collections.guidance, caseId: h.caseId, id: task.body.data.id }))!
+    assert.equal(stored.resultId, 'guidance-budget'); assert.equal(stored.attemptId, exec.run.currentAttemptId)
+    assert.equal(stored.agentRunId, exec.run.id)
+    const audits = await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/auditEvents`).where('type', '==', 'guidance.failed').get()
+    assert.equal(audits.size, 1)
+  })
+
+  it('受付後にCase版が進んだQUEUEDのRunは現在の版に載せ替えて配送し、STALE_CONTEXTで再送を繰り返さない', async t => {
+    const h = await setup(t)
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
+    const accepted = await call(h.app, `/cases/${h.caseId}/agent-runs`, jsonRequest('POST', { operation: 'task_guidance', targetId: task.body.data.id, targetType: 'TASK' }))
+    assert.equal(accepted.status, 202)
+    const before = (await h.read.get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: accepted.body.data.id }))!
+    const current = await call(h.app, `/cases/${h.caseId}`)
+    await call(h.app, `/cases/${h.caseId}`, jsonRequest('PATCH', { expectedVersion: current.body.data.version, municipality: '変更市' }))
+    const latest = await call(h.app, `/cases/${h.caseId}`)
+    assert.notEqual(latest.body.data.caseVersion, before.caseVersionAtAccept)
+    const job = { eventId: before.currentJobId!, tenantId: h.tenantId, caseId: h.caseId, type: 'agent.task_guidance', payload: { runId: before.id }, attempt: 1 }
+    assert.deepEqual(await h.client.deliver(job), { status: 'ACCEPTED' })
+    const after = (await h.read.get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: before.id }))!
+    assert.equal(after.caseVersionAtAccept, latest.body.data.caseVersion)
+    assert.notEqual(after.currentAttemptId, before.currentAttemptId)
+    assert.equal(after.currentJobId, before.currentJobId)
+    const dispatch = h.ai.dispatches.at(-1)!
+    const claims = await h.authorization.verify(dispatch.executionAuthorization)
+    assert.equal(claims.executionAttempt, after.currentAttemptId, '配送される権限は載せ替え後の試行')
+    const exec = { run: after, job, dispatch, claims }
+    assert.equal((await h.request(exec, 'control')).body.data.instruction, 'CONTINUE')
+    const context = await h.context(exec)
+    assert.equal(context.caseVersion, latest.body.data.caseVersion)
+    const audits = await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/auditEvents`).where('type', '==', 'agent_run.context_rebased').get()
+    assert.equal(audits.size, 1)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)).body.data.status, 'RESEARCHING')
+  })
+
+  it('配送期限を超えた一時障害は打ち切り、RunをFAILED・案内をFAILEDにしてからOutboxを終端する', async t => {
+    const h = await setup(t)
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
+    const accepted = await call(h.app, `/cases/${h.caseId}/agent-runs`, jsonRequest('POST', { operation: 'task_guidance', targetId: task.body.data.id, targetType: 'TASK' }))
+    const run = (await h.read.get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: accepted.body.data.id }))!
+    const outboxRef = firestore().doc(`tenants/${h.tenantId}/outbox/${run.currentJobId}`)
+    const abandoned: string[] = []
+    const dispatcher = new OutboxDispatcher(firestore(), h.client, h.consent, 1_000, undefined, {
+      deliveryTimeoutMs: 60_000,
+      onGiveUp: async (event, reason) => { abandoned.push(reason); await h.service.abandonDispatch(event.tenantId, event.caseId!, event.payload.runId as string, event.id, reason) },
+    })
+    for (const doc of (await firestore().collection(`tenants/${h.tenantId}/outbox`).where('type', '!=', 'agent.task_guidance').get()).docs) {
+      await doc.ref.update({ status: 'DELIVERED' })
+    }
+    h.ai.respondWith(503)
+    const first = await dispatcher.dispatchBatch(h.tenantId)
+    assert.deepEqual([first.retrying.length, first.rejected.length], [1, 0], '期限内の503は再試行に回す')
+    assert.equal((await outboxRef.get()).get('status'), 'PENDING')
+    assert.equal((await call(h.app, `/cases/${h.caseId}/agent-runs/${run.id}`)).body.data.status, 'QUEUED')
+
+    await outboxRef.update({ createdAt: new Date(Date.now() - 120_000).toISOString(), nextAttemptAt: new Date().toISOString() })
+    h.ai.respondWith(503)
+    const second = await dispatcher.dispatchBatch(h.tenantId)
+    assert.deepEqual([second.retrying.length, second.rejected.length], [0, 1])
+    assert.equal((await outboxRef.get()).get('status'), 'FAILED')
+    assert.match((await outboxRef.get()).get('lastError'), /^DELIVERY_TIMEOUT:/)
+    assert.equal(abandoned.length, 1)
+    const view = await call(h.app, `/cases/${h.caseId}/agent-runs/${run.id}`)
+    assert.equal(view.body.data.status, 'FAILED'); assert.match(view.body.data.failureReason, /^DELIVERY_TIMEOUT:/)
+    const guidance = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
+    assert.equal(guidance.body.data.status, 'FAILED'); assert.match(guidance.body.data.failureReason, /^DELIVERY_TIMEOUT:/)
+    assert.equal(await h.service.abandonDispatch(h.tenantId, h.caseId, run.id, run.currentJobId!, 'again'), false, '終端済みのRunを上書きしない')
+  })
+
+  it('取消はTask側の案内も失敗にし、受け手の無い通知イベントはローカルで配送済みにする', async t => {
+    const h = await setup(t)
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
+    const exec = await h.accept('task_guidance', task.body.data.id, 'TASK')
+    const current = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}/cancel`, jsonRequest('POST', { expectedVersion: current.body.data.version }))).status, 200)
+    const guidance = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
+    assert.equal(guidance.body.data.status, 'FAILED'); assert.equal(guidance.body.data.failureReason, 'CANCELLED')
+
+    const now = new Date().toISOString()
+    await firestore().doc(`tenants/${h.tenantId}/outbox/notify-1`).set({ id: 'notify-1', tenantId: h.tenantId, caseId: h.caseId, type: 'task.completed',
+      payload: { taskId: task.body.data.id }, initiatedByUserId: h.userId, status: 'PENDING', attempts: 0, nextAttemptAt: now, lastError: null, createdAt: now, updatedAt: now })
+    await firestore().doc(`tenants/${h.tenantId}/outbox/unknown-1`).set({ id: 'unknown-1', tenantId: h.tenantId, caseId: h.caseId, type: 'something.unhandled',
+      payload: {}, initiatedByUserId: h.userId, status: 'PENDING', attempts: 0, nextAttemptAt: now, lastError: null, createdAt: now, updatedAt: now })
+    for (const doc of (await firestore().collection(`tenants/${h.tenantId}/outbox`).where('type', 'in', ['agent.task_guidance', 'agent.cancel', 'case.created']).get()).docs) {
+      await doc.ref.update({ status: 'DELIVERED' })
+    }
+    const dispatcher = new OutboxDispatcher(firestore(), h.client, h.consent, 1_000, acknowledgeLocally(['task.completed', 'decision.confirmed']))
+    const result = await dispatcher.dispatchBatch(h.tenantId)
+    assert.ok(result.delivered.includes('notify-1')); assert.ok(result.rejected.includes('unknown-1'))
+    assert.equal((await firestore().doc(`tenants/${h.tenantId}/outbox/notify-1`).get()).get('status'), 'DELIVERED')
+    assert.equal((await firestore().doc(`tenants/${h.tenantId}/outbox/unknown-1`).get()).get('lastError'), 'NO_CONSUMER')
   })
 
   it('案件更新後のartifactと結果を拒否する', async t => {

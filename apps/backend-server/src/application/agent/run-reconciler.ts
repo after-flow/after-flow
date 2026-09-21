@@ -17,6 +17,7 @@ import type { InternalExecutionService } from './internal-execution-service.js'
 import type { LocalOutboxHandler } from './outbox-dispatcher.js'
 import { leaseLocation, releaseLease } from './lease-service.js'
 import { recordWaiting, waitLocation } from './wait-requests.js'
+import { failGuidanceForRun } from './run-termination.js'
 
 const runLocation = (caseId: string, id: string) => ({ collection: collections.agentRuns, caseId, id })
 const inboxTypes = new Set(['proposal.applied', 'approval.rejected', 'document.registered'])
@@ -102,6 +103,7 @@ export class RunReconciler implements LocalOutboxHandler {
         if (!await this.authorizeOrStop(tx, current)) return
         if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
         tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, { status: 'NEEDS_ATTENTION', failureReason: '待機Snapshotの保存を確認できません。再試行が必要です。' })
+        await failGuidanceForRun(tx, caseId, current, { failureReason: 'SNAPSHOT_MISSING', attemptId: current.currentAttemptId })
         tx.audit({ caseId, type: 'agent_run.snapshot_missing', target: { collection: collections.agentRuns.name, id: runId, version: current.version + 1 }, detail: { waitRequestId: wait.id } })
       })
     } else if (!wait) {
@@ -113,6 +115,7 @@ export class RunReconciler implements LocalOutboxHandler {
         if (lease?.holderRunId === runId && lease.fencingToken === current.fencingToken && !isLeaseExpired(lease, Date.now())) return
         if (snapshot.state === 'COMPLETED' || snapshot.state === 'WAITING' || current.attempt >= 3) {
           tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, { status: 'NEEDS_ATTENTION', failureReason: '実行結果または待機状態の確認が必要です。' })
+          await failGuidanceForRun(tx, caseId, current, { failureReason: 'RECOVERY_ATTENTION', attemptId: current.currentAttemptId })
           tx.audit({ caseId, type: 'agent_run.recovery_attention', target: { collection: collections.agentRuns.name, id: runId, version: current.version + 1 }, detail: {} })
           return
         }
@@ -133,6 +136,7 @@ export class RunReconciler implements LocalOutboxHandler {
         tx.update<WaitRequestEntity>(location, wait.version, { state: 'CANCELLED' })
       }
       tx.update<AgentRunEntity>(runLocation(run.caseId!, run.id), run.version, { status: 'CANCELLED', failureReason: '実行権限または同意が失効しました。', finishedAt: new Date().toISOString() })
+      await failGuidanceForRun(tx, run.caseId!, run, { failureReason: 'PERMISSION_REVOKED', attemptId: run.currentAttemptId })
       tx.audit({ caseId: run.caseId, type: 'agent_run.permission_revoked', target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: {} })
       return false
     }

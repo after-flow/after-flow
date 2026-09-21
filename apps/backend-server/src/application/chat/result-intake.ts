@@ -5,6 +5,7 @@ import { collections } from '../../domain/shared/collections.js'
 import type { GuidanceEntity, GuidanceSource, GuidanceStatus } from '../../domain/task/guidance.js'
 import { errors } from '../../shared/app-error.js'
 import { AgentAccess } from '../authorization/case-access.js'
+import { failGuidanceForRun } from '../agent/run-termination.js'
 import type { DocLocation, ReadRepository, Tx, UnitOfWork } from '../ports/persistence.js'
 
 /**
@@ -37,6 +38,12 @@ export interface GuidanceResultInput extends ResultEnvelope {
   /** 調べきれなかった項目。失うと全件確認済みだと誤解される。 */
   missing?: string[]
   failureReason?: string | null
+}
+
+export interface GuidanceInterruptionInput extends ResultEnvelope {
+  failureReason: string
+  output: { summary: string; completed: string[]; questions: string[]; remaining: string[] }
+  caseVersion: number
 }
 
 export interface ChatReplyResultInput extends ResultEnvelope {
@@ -181,6 +188,51 @@ export class AgentResultIntake {
       detail: { status: input.status, sourceCount: (input.sources ?? []).length },
     })
 
+    return { applied: true, reason: null }
+  }
+
+  /**
+   * 中断した実行を、Runだけでなく案内にも反映する。
+   * 途中結果は案内の窓口・持ち物にはならないので、案内は FAILED にして要約を残す。
+   */
+  async applyGuidanceInterruption(tx: Tx, caseId: string, input: GuidanceInterruptionInput) {
+    const runEntity = await tx.require<AgentRunEntity>(runLocation(caseId, input.runId))
+    const taskId = runEntity.targetId
+    const current = await tx.get<GuidanceEntity>(guidanceLocation(caseId, taskId))
+    if (!current) {
+      throw errors.preconditionFailed({
+        message: '対象の案内が見つかりません。',
+        details: { reason: 'GUIDANCE_NOT_REQUESTED' },
+      })
+    }
+    if (current.agentRunId !== runEntity.id) {
+      throw errors.conflict({ details: { reason: 'GUIDANCE_SUPERSEDED' } })
+    }
+    if (current.resultId === input.resultId && current.attemptId === input.attemptId) {
+      return { applied: false, reason: 'DUPLICATE_RESULT' }
+    }
+    this.assertRun(runEntity, input, 'task_guidance')
+
+    await failGuidanceForRun(tx, caseId, runEntity, {
+      failureReason: input.failureReason,
+      attemptId: input.attemptId,
+      resultId: input.resultId,
+      note: input.output.summary || null,
+      missing: input.output.remaining,
+    })
+    tx.update<AgentRunEntity>(runLocation(caseId, runEntity.id), runEntity.version, {
+      status: 'NEEDS_ATTENTION',
+      finishedAt: new Date().toISOString(),
+      waitingFor: null,
+      failureReason: input.failureReason,
+      outcome: { ...input.output, resultId: input.resultId, attemptId: input.attemptId, caseVersion: input.caseVersion },
+    })
+    tx.audit({
+      caseId,
+      type: 'agent_run.result',
+      target: { collection: collections.agentRuns.name, id: runEntity.id, version: runEntity.version + 1 },
+      detail: { resultId: input.resultId, status: 'NEEDS_ATTENTION', failureReason: input.failureReason },
+    })
     return { applied: true, reason: null }
   }
 
