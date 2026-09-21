@@ -5,7 +5,7 @@ import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
 import { artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
-import { buildCoreContext, assertContextFresh, buildResearchBrief, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
+import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
 import { guidanceDraftSchema, guidanceResult } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { finalizeResearchSynthesis, researchEvidenceSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
@@ -103,7 +103,8 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
 - steps: 申請手順、申請期限、注意点を項目ごとの配列にする。
 - missing: 公式資料で確認できない事項だけを入れる。
 where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcompleteにする。それ以外はpartialまたはneeds_inputにする。`,
-        context: context.modelInput,
+        // allowlistの項目だけを送る。Case全体は鮮度・scope検証のためハーネスに残す（#166）。
+        context: minimizedModelInput(context, 'task_guidance'),
         verifiedResearch: research,
         sources: sources.map(({ id, title, issuer, url, fetchedAt, updatedAt, location }) => ({ id, title, issuer, url, fetchedAt, updatedAt, location })),
         constraint: '調査はハーネスが完了しています。Research Agentへ再委譲せず、verifiedResearchだけを根拠に案内してください。',
