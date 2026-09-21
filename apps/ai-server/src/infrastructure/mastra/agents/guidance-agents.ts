@@ -77,6 +77,7 @@ ${mandatoryInstructions(researchSkills)}`
     },
   })
 
+  const cancelled = () => ({ status: 'cancelled' as const, answers: [], missing: ['調査は実行制御により中断されました。'], conflicts: [] })
   let attempts = 0
   const outcomes: ResearchEvidence['outcomes'] = []
   let reserving = false
@@ -125,6 +126,7 @@ ${mandatoryInstructions(researchSkills)}`
       }
       const { brief, outcome } = active
       active = undefined
+      if (dependencies.signal.aborted) outcome.findings = cancelled()
       dependencies.signal.throwIfAborted()
       if (!context.success) {
         outcome.findings = { status: 'failed', answers: [], missing: ['調査を完了できませんでした。'], conflicts: [] }
@@ -154,6 +156,8 @@ ${mandatoryInstructions(coreSkills)}`,
   })
   return { coreAgent, researchAgent, playbook,
     // Schema parsing returns a detached snapshot; neither the model nor the caller can mutate the ledger.
-    researchEvidence: () => researchEvidenceSchema.parse({ briefs: [...briefs.values()], outcomes }),
+    researchEvidence: () => researchEvidenceSchema.parse({ briefs: [...briefs.values()],
+      outcomes: outcomes.map(outcome => ({ ...outcome, findings: outcome.findings ?? (dependencies.signal.aborted ? cancelled() : null) })),
+    }),
   }
 }

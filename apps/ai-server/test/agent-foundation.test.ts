@@ -173,3 +173,17 @@ test('factory rejects extra tools, duplicate briefs and oversized delegation sco
   assert.throws(() => createGuidanceAgents({ ...deps, briefs: [0, 1, 2].map((index) => ({ ...brief, briefId: `b-${index}` })) }))
   assert.throws(() => createGuidanceAgents({ ...deps, researchTools: Object.assign({}, deps.researchTools, { approve: deps.researchTools.readOfficialSource }) }))
 })
+
+test('aborted native research is recorded as harness cancellation and cannot supply a completed answer', async () => {
+  const fixture = setup([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: brief.briefId }) } }, { text: 'must not continue' }])
+  const abort = async () => { fixture.controller.abort(); throw new Error('synthetic aborted provider') }
+  const agents = createGuidanceAgents({ ...fixture.deps, models: { core: fixture.core.model,
+    research: { ...fixture.research.model, doGenerate: abort, doStream: abort } } })
+  await agents.coreAgent.generate('調査してください。').catch(() => undefined)
+  const evidence = agents.researchEvidence()
+  assert.equal(evidence.outcomes.length, 1)
+  assert.equal(evidence.outcomes[0]!.findings?.status, 'cancelled')
+  assert.deepEqual(evidence.outcomes[0]!.findings?.answers, [])
+  assert.equal(fixture.core.calls.length, 1)
+  assert.throws(() => validateFindings(evidence.outcomes[0]!.findings, brief, new Set()), /Only the harness/)
+})
