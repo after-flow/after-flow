@@ -33,6 +33,14 @@ export interface CreateAppOptions {
    * ネットワークの分離は配備側の責務。
    */
   internalApp?: HonoApp<AppEnv>
+  /**
+   * 運用/デプロイツール専用の内部readiness API。
+   *
+   * AIからの内部 API（`internalApp`）とは別のアクセス制御を持つ、別の app。
+   * 未設定なら公開しない。liveness（`/api/v1/health`）とは別契約で、
+   * こちらも公開 OpenAPI には載らない。
+   */
+  readinessApp?: HonoApp<AppEnv>
   /** ローカル開発用の公開APIテスト画面。内部APIは含めない。 */
   apiDocs?: boolean
 }
@@ -57,6 +65,7 @@ export function createApp(options: CreateAppOptions = {}) {
   })
   app.route('/api/v1', v1)
   if (options.internalApp) app.route('/internal/v1', options.internalApp)
+  if (options.readinessApp) app.route('/internal/v1', options.readinessApp)
 
   return app
 }
