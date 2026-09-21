@@ -129,6 +129,11 @@ async function assertNoSideEffects(tenantId: string, caseId: string, storageRoot
   assert.equal(countStoredFiles(storageRoot), 0, '原本が一切書かれていないはず')
 }
 
+async function countIdempotencyRecords(tenantId: string): Promise<number> {
+  const snap = await firestore().collection(`tenants/${tenantId}/${INFRASTRUCTURE_COLLECTIONS.idempotency}`).get()
+  return snap.size
+}
+
 interface Entrypoint {
   name: string
   invoke: (app: ReturnType<typeof createApp>, caseId: string, taskId: string) => Promise<{ status: number; body: any }>
@@ -157,9 +162,11 @@ describeFirestore('外部AI同意（CROSS_BORDER_AI）のサーバー側強制',
     for (const entrypoint of entrypoints) {
       it(`${entrypoint.name}: 同意が${state === 'none' ? '無い' : '版ずれ'}場合は保存前に403 CONSENT_REQUIREDで拒否する`, async () => {
         const { app, caseId, taskId, tenantId, storageRoot } = await setup(state)
+        const idempotencyBefore = await countIdempotencyRecords(tenantId)
         const response = await entrypoint.invoke(app, caseId, taskId)
 
         assert.equal(response.status, 403, JSON.stringify(response.body))
+        assert.equal(await countIdempotencyRecords(tenantId), idempotencyBefore, '冪等性記録が増えてはいけない')
         assert.equal(response.body.error.code, 'CONSENT_REQUIRED')
         assert.equal(response.body.error.retryable, false)
         assert.equal(response.body.error.details.requiredConsent, 'CROSS_BORDER_AI')

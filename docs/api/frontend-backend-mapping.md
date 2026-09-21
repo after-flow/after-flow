@@ -69,7 +69,7 @@
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
 | `GET /cases/:caseId/documents` | 書類一覧 | `GET C/documents` | 同一 | #8 |
-| `POST /cases/:caseId/documents`（multipart） | アップロード | `POST C/documents` multipart（`file`, `kind`）→ 201 の書類リソース（`storageState: 'STORED'`）。検査状態は `inspection.status`、解析状態は `analysis.state`。未接続の検査は `PENDING`、解析未受付は `NOT_REQUESTED`、`analysis.canRequest:false`と理由を表示 | 同一 | #8 / #19 |
+| `POST /cases/:caseId/documents`（multipart） | アップロード | `POST C/documents` multipart（`file`, `kind`）→ 201 の書類リソース（`storageState: 'STORED'`）。外部AI同意（`CROSS_BORDER_AI`未同意/版ずれ）は保存前に403（`details.requiredConsent`）。検査状態は `inspection.status`、解析状態は `analysis.state`。未接続の検査は `PENDING`、解析未受付は `NOT_REQUESTED`、`analysis.canRequest:false`と理由を表示 | 同一 | #8 / #19 |
 | `GET /documents/:documentId` | 詳細 | `GET C/documents/:documentId`（メタデータ）、`GET C/documents/:documentId/content`（認可済み配信） | Case配下へ | #8 |
 | `DELETE /documents/:documentId` | 削除 | `POST C/documents/:documentId/archive` body `{ expectedVersion }`。物理削除はしない。参照元で現在の利用可否を表示し、archive書類を新しい完了根拠にしない | **Commandへ（archive）** | #8 |
 
