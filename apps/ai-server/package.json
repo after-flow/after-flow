@@ -14,7 +14,9 @@
     "typecheck": "pnpm contracts:build && tsc --noEmit -p tsconfig.test.json",
     "test": "pnpm contracts:build && node ../../scripts/test-workspace.mjs && node --import tsx --test \"test/**/*.test.ts\"",
     "test:firestore": "pnpm contracts:build && node ../../scripts/with-firestore-emulator.mjs -- node ../../scripts/test-ai-firestore.mjs",
-    "eval:fixture": "pnpm contracts:build && tsx eval/run.ts",
+    "eval:fixture": "pnpm contracts:build && tsx eval/all.ts",
+    "eval:guidance": "pnpm contracts:build && tsx eval/guidance/run.ts",
+    "eval:guidance:live": "pnpm contracts:build && tsx eval/guidance/run.ts --mode live",
     "eval:compare": "tsx eval/compare.ts",
     "smoke:orca": "pnpm contracts:build && tsx scripts/smoke-orca.ts"
   },
