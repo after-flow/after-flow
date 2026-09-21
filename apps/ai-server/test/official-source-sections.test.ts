@@ -10,7 +10,7 @@ import { sourceDocument } from './helpers/source-document.js'
  * 実ページはmain要素の中にローカルナビゲーション（nav）を含み、
  * 見出しにid属性があり、申請書PDFを相対パスで掲載している。
  */
-const page = (main: string, outside = '') => `<!doctype html><html><head><title>t</title></head><body>
+const page = (outside = '') => `<!doctype html><html><head><title>t</title></head><body>
 <header><nav>ウェブサイト全体のナビゲーション 給付と手続き 申請書</nav></header>
 ${outside}
 <main class="l-main" id="main-content">
