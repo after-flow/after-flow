@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import type {
   CaseOverviewResource,
-  CaseProfile,
+  CaseProfileResource,
   CaseResource,
   DeadlineResource,
   TaskResource,
@@ -30,8 +30,8 @@ export function useCaseBase() {
  * を追加するまで）ため、`CaseResource` の型には乗せず局所的な optional 読みにする。
  * マージ後に型が揃ったら `caseResource.profile` に置き換えて、この関数は消せる。
  */
-export function caseProfileOf(caseResource: CaseResource): CaseProfile | undefined {
-  return (caseResource as { profile?: CaseProfile }).profile
+export function caseProfileOf(caseResource: CaseResource): CaseProfileResource | undefined {
+  return caseResource.profile
 }
 
 /* ---------- 放棄前ロック ---------- */
@@ -224,13 +224,10 @@ export function TaskStatusBadge({ status }: { status: TaskStatusResource }) {
   )
 }
 
-/**
- * 故人の状況によっては不要な手続きに添える印。
- * `conditional` は契約に無い（BE ユニット4 が `Case.profile` を返し始めるまで、
- * Task にもこの区別は乗らない）。それまでは何も出さない。
- */
-export function ConditionalBadge(_props: { task: TaskResource }) {
-  return null
+/** 「わからない」「未回答」であてはまる可能性ありとして残している手続きに添える印。 */
+export function ConditionalBadge({ task }: { task: TaskResource }) {
+  if (!task.conditional) return null
+  return <Badge tone="gray">あてはまる場合</Badge>
 }
 
 /**
@@ -240,10 +237,12 @@ export function ConditionalBadge(_props: { task: TaskResource }) {
  * 期限の順に並べるだけだと「期限なし」として一番後ろに回り、判断に間に合わなくなるおそれがある。
  * そこで、相続の方法を決める期限をこの手続きの「目安」として扱い、並び順と表示に使う。
  *
- * 本来は Rule Engine が目安の期限を返すべきもので、それまでの応急処置（申し送り済み）。
+ * Backend が返す目安の期限（targetDate）を使う。無いとき（モック）だけ、判断の期限を代わりに使う。
  */
 export function prepDeadline(task: TaskResource, all: TaskResource[]): DeadlineResource | undefined {
-  if (task.deadline || task.stage !== 'investigation' || task.status === 'COMPLETED') return undefined
+  if (task.deadline || task.status === 'COMPLETED') return undefined
+  if (task.targetDate) return task.targetDate
+  if (task.stage !== 'investigation') return undefined
   const decisionTask = all.find((t) => t.stage === 'decision' && t.status !== 'COMPLETED')
   return decisionTask?.deadline ?? undefined
 }

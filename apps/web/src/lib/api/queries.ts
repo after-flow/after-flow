@@ -37,7 +37,7 @@ import type {
   UpdateLiabilityRequest,
   UpdatePersonRequest,
 } from '@aftercare/public-contracts'
-import type { CaseOverviewResource } from '@aftercare/public-contracts'
+import type { CaseOverviewResource, CaseProfileResource } from '@aftercare/public-contracts'
 import type { CaseResource } from '@aftercare/public-contracts'
 import type { AgentRunResource } from '@aftercare/public-contracts'
 
@@ -143,16 +143,23 @@ export function useCreateCase() {
   })
 }
 
+/** 故人の状況の答え。省略した項目は Backend が UNKNOWN として保存する。 */
+export type CaseProfileInput = Partial<Omit<CaseProfileResource, 'answeredAt'>> & { answeredAt: string }
+
 /**
- * 市区町村・生年月日の登録。
- * BE の `updateCaseBodySchema` は `profile` を受け付けないため送らない（§確定内容14）。
+ * 市区町村・生年月日・故人の状況の登録。
+ * `profile` は丸ごと置き換え（null で未回答に戻す）。Backend が答えにあわせて手続きを洗い出し直す。
  */
 export function useUpdateCase(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
     // dateOfBirth は null で「消す」。undefined だと送られず、前の値が残ってしまう
-    mutationFn: (patch: { expectedVersion: number; municipality?: string; dateOfBirth?: string | null }) =>
-      api.patch<CaseResource>(`/cases/${caseId}`, patch),
+    mutationFn: (patch: {
+      expectedVersion: number
+      municipality?: string
+      dateOfBirth?: string | null
+      profile?: CaseProfileInput | null
+    }) => api.patch<CaseResource>(`/cases/${caseId}`, patch),
     onSuccess: (updated) => {
       qc.setQueryData(qk.case(caseId), updated)
       void qc.invalidateQueries({ queryKey: qk.overview(caseId) })
