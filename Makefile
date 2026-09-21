@@ -40,7 +40,9 @@ restart: ## コンテナを再起動
 worker-logs: ## Outbox workerのログを表示（tickごとの配送・backlog件数）
 	$(COMPOSE) --profile data logs --follow outbox-worker
 
-worker-once: ## Job形式で1バッチだけ実行し、終了コードで成否を確認（outbox-workerとは別の使い捨てコンテナ）
+worker-once: ## Job形式で1バッチだけ実行し、終了コードで成否を確認（outbox-workerとは別の使い捨てコンテナ。事前に`make up`でfirestore-emulatorを起動しておくこと）
+	FIRESTORE_EMULATOR_HOST=firestore-emulator:8085 \
+	OUTBOX_TENANT_IDS=$${OUTBOX_TENANT_IDS:-after-flow-local} \
 	$(COMPOSE) --profile data run --rm --no-deps outbox-worker pnpm --filter @aftercare/backend-server worker:once
 
 check: ## Docker内で型・Lint・テスト・依存境界・本番ビルドを検証

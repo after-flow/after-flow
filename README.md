@@ -48,7 +48,10 @@ docker compose --profile data restart outbox-worker   # 手動再起動して回
 
 既定の対象tenantは開発用の`after-flow-local`です（`OUTBOX_TENANT_IDS`で上書き可）。
 AI Serverへの配送は`AI_SERVER_URL`等を未設定のままでは接続されず、イベントはPENDINGのまま残ります（Backend本体と同じ既定動作）。
-`outbox-worker`は`firestore-emulator`と同じくAI Serverのネットワーク・環境変数を受け取りません。
+`outbox-worker`はAI Serverへ到達するため`ai-server`と同じ`services`ネットワークに参加しますが、AI Server
+（`ai-server`コンテナ）自体には業務Firestore/原本Storageの設定もAI連携用の認証情報も渡しません。逆にAI_*等を
+`outbox-worker`にだけ設定しても、ローカルcomposeでは`ai-server`側の受け口が揃わずAI配送は成立しません
+（詳細は[運用手順](docs/runbooks/outbox-worker.md)）。
 
 ```sh
 make data-check          # 両Emulatorの読み書きとAIからの分離を再確認

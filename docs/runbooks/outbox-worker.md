@@ -23,6 +23,17 @@ Backend本体と同じ既定どおり配送は行われず、イベントはPEND
 `services`ネットワークに参加するがAI Server自体へは環境変数を渡さず、`ai-server`はdata networkへ参加しない
 （`scripts/verify-boundaries.mjs`が検証）。
 
+`outbox-worker`にだけ`AI_SERVER_URL`/`AI_SERVICE_TOKEN`等と`BACKEND_EXECUTION_SIGNING_KEY`を設定しても、
+ローカルcomposeでは実際のAI配送は成立しない。`compose.yaml`の`backend-server`と`ai-server`には対応する
+env（`BACKEND_EXECUTION_SIGNING_KEY` / `BACKEND_INTERNAL_SERVICE_TOKEN` / `AI_SERVICE_TOKEN`等）を渡しておらず、
+AIからBackendへのcallback（内部execution app）は`composition.ts`がmountせず404になる。さらに`ai-server`自体の
+execution runtimeは未実装で（`apps/ai-server/src/main.ts`が`runtime`/`worker`を組み立てずに起動する）、
+たとえ認証情報を揃えても`internal/v1/runs/:runId/dispatch`は常に`503 AI_EXECUTION_NOT_CONNECTED`を返す。
+つまり本Issue(#122)のローカル接続範囲で確認できるのは「`outbox-worker`が独立コンテナとしてOutboxを配送しようと
+試みる（HTTP呼び出しがRETRYABLEで終わりPENDINGのまま残る）」ことと、AI接続なしで成立するローカルhandler
+（`case.created`→初期Task、`case.reference_dates_changed`→期限再評価）の配送までであり、AIへのRun配送そのもの
+の実接続確認は対象外（AI側runtime実装後の別Issue）。
+
 ## Node直接実行
 
 Docker無しで動作を確認する場合、または`--once`をジョブとして個別実行する場合に使う。
@@ -95,9 +106,11 @@ FIRESTORE_EMULATOR_PORT=18122 FIRESTORE_EMULATOR_CONTAINER=after-flow-firestore-
   （同じJob/Event IDの再送を受信側が重複排除し、旧応答で新しいclaimを上書きしないこと）。
 - 同意撤回: `test/firestore/agent-execution.test.ts`（`/consents/revocations`後、次回配送直前の
   Policy再評価で送信を止め、撤回イベント自体はローカル制御通知として届くこと）。
-- 滞留(backlog)検知: `test/outbox-worker.test.ts`が`runOutboxWorker`のtick失敗時の継続動作を検証し、
-  `dispatchBatch`/`backlog`が返すpending/failed/oldestAgeMsを`outbox worker tick`ログに出す経路は
-  `src/application/agent/outbox-worker.ts`で固定（`docs/runbooks/outbox-worker.md`の「監視」節）。
+- 滞留(backlog)検知: `test/firestore/agent-execution.test.ts`の「滞留と失敗の件数・最古の経過時間を取得できる」が
+  `backlog`が返すpending/failed/oldestAgeMsを検証する。`test/outbox-worker.test.ts`は`runOutboxWorker`の
+  tick失敗時のループ継続/停止を検証するunit testで、backlog集計そのものは対象外。
+  `outbox worker tick`ログへの出力経路は`src/application/agent/outbox-worker.ts`で固定
+  （本ファイルの「監視」節）。
 
 `--once`の起動導線そのものは、コンテナを介さないNode直接実行でも確認する。
 

@@ -83,8 +83,12 @@ services:
   # HTTPの終了・再起動に依存せずAgentRunの配送・Wait/Resume回復を続ける。
   # AIへは渡さない資格情報（業務Firestore、署名鍵）をここでも保持する。
   outbox-worker:
-    <<: *development
+    # backend-serverと同一image tagを参照するだけで、buildブロックは持たない。
+    # buildブロックを持つとbuildフェーズで同一targetが二重ビルドされる
+    # （BuildKitキャッシュがあっても`--build`時に無駄な重複作業になる）。
+    # backend-serverの`build:`がこのimageをビルドしてから起動する。
     image: after-flow-backend-server:local
+    init: true
     command: pnpm --filter @aftercare/backend-server worker
     environment:
       FIRESTORE_EMULATOR_HOST: ${FIRESTORE_EMULATOR_HOST-}
@@ -95,8 +99,12 @@ services:
       OUTBOX_TENANT_IDS: ${OUTBOX_TENANT_IDS-}
       OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
       OUTBOX_VISIBILITY_MS: ${OUTBOX_VISIBILITY_MS:-120000}
-      # AI配送は既定で未接続（イベントはPENDINGのまま残る）。設定する場合は
-      # Backendと同じ値を渡す。AI Serverには渡さない。
+      # AI配送は既定で未接続（イベントはPENDINGのまま残る）。
+      # 値を設定してもローカルcomposeでは実配送は成立しない: backend-server /
+      # ai-serverにはこのAI_*・署名鍵を渡しておらず（内部callback/認証が
+      # 揃わない）、ai-server自体もexecution runtime未実装で常に
+      # AI_EXECUTION_NOT_CONNECTED(503)を返す（apps/ai-server/src/main.ts）。
+      # 実配送の確認はai-server側のruntime実装後、別Issueで行う。
       AI_SERVER_URL: ${AI_SERVER_URL-}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN-}
       AI_SERVICE_AUDIENCE: ${AI_SERVICE_AUDIENCE-}
@@ -111,6 +119,10 @@ services:
     # プロセス監視基盤の代わり。異常終了時にDockerが再起動し、
     # 保存済みOutboxからPENDING・期限切れIN_FLIGHTを再取得する。
     restart: unless-stopped
+    # SIGTERM後、実行中バッチの完了を待つ猶予（既定10sでは可視性タイムアウト
+    # 前提のHTTP呼び出し中にSIGKILLされ得る）。`pnpm`ラッパ経由のため
+    # `docker stop`の終了コードは143になる（#38由来の既存挙動）。
+    stop_grace_period: 30s
     # firestore-emulatorと同じくdata profileでのみ起動する。
     profiles: [data]
     networks: [services, data]

@@ -61,4 +61,25 @@ assert.ok(webNetworkIds.every((id) => !aiNetworkIds.includes(id)), 'Web and AI m
 assert.ok(aiNetworkNames.every((name) => !/(?:^|_)(?:data|emulator-host)$/.test(name)),
   'AI must not join either local business-data network')
 
-console.log('Web, backend proxy, internal AI connectivity, and AI network isolation verified.')
+// outbox-worker (#122): independent container actually running a tick loop,
+// not just declared in compose.yaml with a crash-looping process that
+// `docker compose up --wait` would not catch (it has no healthcheck).
+const workerId = docker('compose', 'ps', '--quiet', 'outbox-worker')
+assert.ok(workerId, 'outbox-worker container must be running')
+const workerState = JSON.parse(docker('inspect', '--format', '{{json .State}}', workerId))
+assert.equal(workerState.Status, 'running', `outbox-worker must be running, was: ${workerState.Status}`)
+
+const workerTickDeadline = Date.now() + 30_000
+let sawWorkerTick = false
+while (Date.now() < workerTickDeadline && !sawWorkerTick) {
+  const workerLogs = docker('compose', 'logs', '--no-color', '--no-log-prefix', 'outbox-worker')
+  sawWorkerTick = /outbox worker tick/.test(workerLogs)
+  if (!sawWorkerTick) await new Promise((resolve) => setTimeout(resolve, 1_000))
+}
+assert.ok(sawWorkerTick, 'outbox-worker must log at least one "outbox worker tick" within 30s')
+
+const workerNetwork = JSON.parse(docker('inspect', '--format', '{{json .NetworkSettings}}', workerId))
+assert.ok(Object.values(workerNetwork.Ports ?? {}).every((bindings) => bindings === null || bindings.length === 0),
+  'outbox-worker must not publish any host ports')
+
+console.log('Web, backend proxy, internal AI connectivity, AI network isolation, and outbox-worker liveness verified.')
