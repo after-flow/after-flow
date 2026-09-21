@@ -34,6 +34,14 @@ export type GuidanceContractCode =
   | 'TOO_MANY_ITEMS'
   | 'MISSING_ITEM_TOO_LONG'
 
+/**
+ * 利用者に見せる失敗理由。画面はこの文言をそのまま表示するため、コードだけにしない。
+ * 末尾の診断コードで、本文を見ずに原因の区分を追える。
+ */
+export function guidanceFailureReason(code: GuidanceContractCode): string {
+  return `案内を表示できる形に整えられませんでした。もう一度調べ直してください。（診断コード: GUIDANCE_CONTRACT_${code}）`
+}
+
 export class GuidanceContractError extends Error {
   constructor(readonly code: GuidanceContractCode) { super(`GUIDANCE_CONTRACT:${code}`) }
 }
@@ -149,7 +157,7 @@ export function guidanceResult(input: {
   if (!fitted.ok) {
     // 修復できない場合は成功に見せず、本文を含まない理由だけを返す。
     return internalResultSchema.parse({ ...input.proof, resultId: input.resultId, kind: 'task_guidance', status: 'FAILED',
-      target: input.target, bring: [], steps: [], missing: [], sources: [], basis: [], failureReason: `GUIDANCE_CONTRACT:${fitted.code}` })
+      target: input.target, bring: [], steps: [], missing: [], sources: [], basis: [], failureReason: guidanceFailureReason(fitted.code) })
   }
   const draft = fitted.draft
   const available = new Map(input.sources.map(source => [source.id, source]))

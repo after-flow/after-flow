@@ -76,10 +76,10 @@ test('#162 修復できない場合は成功に見せず、本文を含まない
   const secret = '秘密の本文'.repeat(60)
   const result = report(draft({ bring: [claim(secret)] }))
   assert.equal(result.status, 'FAILED')
-  assert.equal(result.failureReason, 'GUIDANCE_CONTRACT:BRING_ITEM_TOO_LONG')
+  assert.match(result.failureReason ?? '', /表示できる形に整えられませんでした.*GUIDANCE_CONTRACT_BRING_ITEM_TOO_LONG/)
   assert.deepEqual([result.bring, result.steps, result.sources], [[], [], []])
   assert.ok(!JSON.stringify(result).includes('秘密の本文'))
-  assert.equal(report(draft({ where: claim('あ'.repeat(GUIDANCE_LIMITS.where + 1)) })).failureReason, 'GUIDANCE_CONTRACT:WHERE_TOO_LONG')
+  assert.match(report(draft({ where: claim('あ'.repeat(GUIDANCE_LIMITS.where + 1)) })).failureReason ?? '', /GUIDANCE_CONTRACT_WHERE_TOO_LONG/)
 })
 
 test('#162 案件への適用条件が未確認なら完了にせず、確認事項をmissingに入れる', () => {
