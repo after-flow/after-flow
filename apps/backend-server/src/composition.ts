@@ -203,7 +203,13 @@ export function createOutboxDispatcher(
   const read = new FirestoreReadRepository(dependencies.firestore)
   const uow = new ContextVersionUnitOfWork(new FirestoreUnitOfWork(dependencies.firestore))
   const execution = new InternalExecutionService(read, uow, dependencies.consent, new AgentResultIntake(read, uow))
-  return new OutboxDispatcher(dependencies.firestore, new ScopedHttpAgentJobClient(config, execution, authorization), dependencies.consent)
+  return new OutboxDispatcher(dependencies.firestore, new ScopedHttpAgentJobClient(config, execution, authorization), dependencies.consent, undefined, undefined, {
+    deliveryTimeoutMs: Number(env.OUTBOX_DELIVERY_TIMEOUT_MS || 15 * 60_000),
+    onGiveUp: async (event, reason) => {
+      if (!event.type.startsWith('agent.') || event.type === 'agent.cancel' || !event.caseId || typeof event.payload.runId !== 'string') return
+      await execution.abandonDispatch(event.tenantId, event.caseId, event.payload.runId, event.id, reason)
+    },
+  })
 }
 
 /** 設定で有効にした業務操作だけを受け付ける。 */

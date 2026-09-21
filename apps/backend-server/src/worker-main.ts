@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url'
 import { AccessService } from './application/authorization/case-access.js'
 import { ConsentService } from './application/consent/consent-service.js'
 import { OutboxDispatcher } from './application/agent/outbox-dispatcher.js'
-import { caseTaskHandler, combineLocalHandlers, runOutboxWorker } from './application/agent/outbox-worker.js'
+import { acknowledgeLocally, caseTaskHandler, combineLocalHandlers, runOutboxWorker } from './application/agent/outbox-worker.js'
 import { RunReconciler } from './application/agent/run-reconciler.js'
 import { TaskService } from './application/task/task-service.js'
 import { StoredInheritanceDecisionReader } from './application/decision/decision-service.js'
@@ -26,6 +26,10 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   for (const id of tenantIds) assertValidId(id, 'tenantId')
   const intervalMs = Number(env.OUTBOX_INTERVAL_MS || 5_000)
   const visibilityMs = Number(env.OUTBOX_VISIBILITY_MS || 120_000)
+  const deliveryTimeoutMs = Number(env.OUTBOX_DELIVERY_TIMEOUT_MS || 15 * 60_000)
+  if (!Number.isInteger(deliveryTimeoutMs) || deliveryTimeoutMs <= visibilityMs || deliveryTimeoutMs > 24 * 3_600_000) {
+    throw new Error('OUTBOX_DELIVERY_TIMEOUT_MS must exceed OUTBOX_VISIBILITY_MS and stay within 24 hours')
+  }
   if (!Number.isInteger(intervalMs) || intervalMs < 100 || intervalMs > 60_000) throw new Error('Invalid OUTBOX_INTERVAL_MS')
   const config = readAgentClientConfig(env)
   if (!Number.isInteger(visibilityMs) || visibilityMs < 1000 || visibilityMs > 3_600_000
@@ -47,7 +51,14 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   // 実検査・内部context接続が揃うまでは、書類解析配送を有効化しない（#27/#36）。
   const guarded: AgentJobClient = { deliver: job => job.type === 'agent.document_analysis' || job.type.startsWith('document.')
     ? Promise.resolve({ status: 'RETRYABLE', reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' }) : client.deliver(job) }
-  const dispatcher = new OutboxDispatcher(db, guarded, consent, visibilityMs, combineLocalHandlers(caseTaskHandler(tasks), reconciler))
+  const local = combineLocalHandlers(caseTaskHandler(tasks), reconciler, acknowledgeLocally(['task.completed', 'decision.confirmed']))
+  const dispatcher = new OutboxDispatcher(db, guarded, consent, visibilityMs, local, {
+    deliveryTimeoutMs,
+    onGiveUp: async (event, reason) => {
+      if (!event.type.startsWith('agent.') || event.type === 'agent.cancel' || !event.caseId || typeof event.payload.runId !== 'string') return
+      await execution.abandonDispatch(event.tenantId, event.caseId, event.payload.runId, event.id, reason)
+    },
+  })
   const controller = new AbortController()
   const stop = () => controller.abort()
   process.once('SIGTERM', stop)

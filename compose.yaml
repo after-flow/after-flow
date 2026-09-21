@@ -133,6 +133,8 @@ services:
       OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
       # AI HTTP timeout（AI_SERVICE_TIMEOUT_MS）より必ず長くする。
       OUTBOX_VISIBILITY_MS: ${OUTBOX_VISIBILITY_MS:-120000}
+      # この時間を過ぎても配送できないイベントは打ち切り、RunとTaskの案内を失敗として確定する。
+      OUTBOX_DELIVERY_TIMEOUT_MS: ${OUTBOX_DELIVERY_TIMEOUT_MS:-900000}
       FIRESTORE_EMULATOR_HOST: ${FIRESTORE_EMULATOR_HOST-}
       FIRESTORE_PROJECT_ID: ${FIRESTORE_PROJECT_ID:-after-flow-local}
       # Backend→AIの配送先と資格情報。backend-serverと同じ値にする。
