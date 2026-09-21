@@ -5,6 +5,7 @@ import { BackendClient, validateBackendClientConfig } from '../backend-client/cl
 import type { BackendClientConfig } from '../backend-client/client.js'
 import { createRuntimeFirestore } from '../runtime-storage/firestore.js'
 import { FirestoreExecutions } from '../runtime-storage/executions.js'
+import { FirestoreProviderMetrics } from '../runtime-storage/provider-metrics.js'
 import { createRuntimeStore, FirestoreWorkflowsStorage } from '../runtime-storage/workflows.js'
 import { DispatchVault } from '../runtime-storage/credential-vault.js'
 import { budgetSchema } from '../../application/execution/contracts.js'
@@ -96,7 +97,7 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
   const db = createRuntimeFirestore()
   try {
     await db.collection('execution_runs').limit(1).get()
-    const storage = createRuntimeStore(db), snapshots = new FirestoreWorkflowsStorage(db)
+    const storage = createRuntimeStore(db), snapshots = new FirestoreWorkflowsStorage(db), providerMetrics = new FirestoreProviderMetrics(db)
     const prepare = async (session: ExecutionSession) => {
       await session.guard()
       const scope = assertResearchScopeCatalogs(await config.researchScope(session.context), catalogs)
@@ -106,7 +107,11 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
           policyIds: policies.filter(p => p.roles.includes(role) && p.dataClasses.includes(dataClass)).map(p => p.id) },
         policies, models, signal: session.signal,
         grant: async () => { await session.guard(); return config.grant(session) }, charge: session.guard,
-        record: (metric: ProviderMetric) => config.recordMetric(metric, { runId: session.receipt.runId, jobId: session.receipt.jobId, executionAttempt: session.receipt.executionAttempt }) }
+        record: async (metric: ProviderMetric) => {
+          const identity = { runId: session.receipt.runId, jobId: session.receipt.jobId, executionAttempt: session.receipt.executionAttempt }
+          await providerMetrics.record(metric, identity)
+          await config.recordMetric(metric, identity)
+        } }
         return config.orca ? createAuthorizedOrcaModels(options) : createAuthorizedModels({ ...options, router: config.orch })
       }
       // Each physical gateway/provider attempt reserves its exact policy bound before sending data.
