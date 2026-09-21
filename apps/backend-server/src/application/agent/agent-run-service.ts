@@ -168,7 +168,7 @@ export class AgentRunService {
           taskId: input.targetId, status: 'RESEARCHING' as const, agentRunId: runId,
           researchedBy: 'AI' as const, failureReason: null, resultId: null, attemptId: null,
           target: null, where: null, bring: [], steps: [], formExampleUrl: null,
-          formExampleLabel: null, note: null, sources: [], missing: [],
+          formExampleLabel: null, note: null, sources: [], citations: [], missing: [],
         }
         if (current) tx.update<GuidanceEntity>(location, current.version, guidance)
         else tx.create<GuidanceEntity>(location, { id: input.targetId, ...guidance })

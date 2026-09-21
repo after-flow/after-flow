@@ -40,8 +40,19 @@ const resultBase = contextProofSchema.extend({ resultId: internalId, basis: z.ar
  * 推論が成功した後の報告段階で初めて契約違反が分かる。
  */
 export const GUIDANCE_LIMITS = Object.freeze({
-  where: 500, bringItem: 200, stepItem: 500, missingItem: 200, items: 50, sources: 20,
+  where: 500, bringItem: 200, stepItem: 500, missingItem: 200, items: 50, sources: 20, citations: 150, quote: 200,
 })
+
+/**
+ * 案内の各項目と、その根拠となった公式資料の箇所（#163 / #165）。
+ * 引用はAI側で本文との逐語一致を確認済み。項目は where / bring / steps の何番目かで指す。
+ */
+export const guidanceCitationSchema = z.object({
+  item: z.enum(['where', 'bring', 'steps']), index: z.number().int().min(0).max(GUIDANCE_LIMITS.items - 1),
+  sourceUrl: z.string().url().max(2000), sectionHeading: z.string().min(1).max(200).nullable(),
+  quote: z.string().min(1).max(GUIDANCE_LIMITS.quote),
+}).strict()
+export type GuidanceCitation = z.infer<typeof guidanceCitationSchema>
 const guidanceSchema = resultBase.extend({
   kind: z.literal('task_guidance'), status: z.enum(['COMPLETED', 'PARTIAL', 'FAILED']),
   target: z.string().max(200).nullable().optional(), where: z.string().max(GUIDANCE_LIMITS.where).nullable().optional(),
@@ -51,6 +62,7 @@ const guidanceSchema = resultBase.extend({
   note: z.string().max(2000).nullable().optional(),
   sources: z.array(z.object({ label: z.string().min(1).max(120), url: z.string().url().max(2000), checkedAt: z.string().datetime() }).strict()).max(GUIDANCE_LIMITS.sources).default([]),
   missing: z.array(z.string().max(GUIDANCE_LIMITS.missingItem)).max(GUIDANCE_LIMITS.items).default([]), failureReason: z.string().max(500).nullable().optional(),
+  citations: z.array(guidanceCitationSchema).max(GUIDANCE_LIMITS.citations).default([]),
 }).strict()
 const chatSchema = resultBase.extend({ kind: z.literal('chat_reply'), body: z.string().min(1).max(10000), professionalNotice: z.boolean().default(false) }).strict()
 export const runSummarySchema = z.object({

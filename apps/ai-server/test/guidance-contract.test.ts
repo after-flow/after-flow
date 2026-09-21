@@ -11,7 +11,7 @@ import { sourceDocument } from './helpers/source-document.js'
 
 const proof = { caseVersion: 1, contextSnapshotId: 'snapshot-1', fencingToken: 1, artifactVersion: 1, contentHash: textHash('proof') }
 const source = sourceDocument({ id: 'source-1', catalogId: 'c', title: '合成資料', issuer: '合成機関', url: 'https://official.example/a' }, '本文')
-const claim = (text: string) => ({ text, sourceIds: ['source-1'] })
+const claim = (text: string) => ({ text, questionIds: ['documents'] })
 const draft = (patch: Partial<GuidanceDraft> = {}): GuidanceDraft => ({
   status: 'partial', where: claim('加入している支部へ郵送する。'), bring: [claim('申請書')], steps: [claim('申請書を郵送する。')], missing: ['加入支部'], ...patch,
 })
@@ -19,7 +19,8 @@ const brief = { briefId: 'brief-1', procedure: '合成手続き', institution: '
   questions: [{ id: 'documents', text: '必要書類は何か' }] }
 /** 下書きがcompleteを名乗るには完了した調査の記録が必要。ハーネスの既存の検査はそのまま残す。 */
 const research = { briefs: [brief], outcomes: [{ briefId: 'brief-1', findings: { status: 'complete' as const,
-  answers: [{ questionId: 'documents', text: '申請書', sourceIds: ['source-1'], applicability: '日本の合成機関が扱う合成手続き' }], missing: [], conflicts: [] } }] }
+  answers: [{ questionId: 'documents', text: '申請書', sourceIds: ['source-1'], applicability: '日本の合成機関が扱う合成手続き',
+    evidence: [{ sourceId: 'source-1', sectionId: 's1', quote: '本文' }] }], missing: [], conflicts: [] } }] }
 const report = (input: GuidanceDraft, unresolved: string[] = []) => {
   const result = guidanceResult({ draft: input, sources: [source], research, proof, resultId: 'result-1', target: '合成手続き', unresolved })
   if (result.kind !== 'task_guidance') assert.fail()
@@ -89,7 +90,8 @@ test('#162 案件への適用条件が未確認なら完了にせず、確認事
   assert.equal(partial.status, 'PARTIAL')
   assert.deepEqual(partial.missing, questions)
   // 適用条件が揃い、調査も完了している場合だけ完了にできる。
-  const fitted = fitGuidance(complete, [])
+  const grounded = (item: { text: string }) => ({ ...item, questionIds: ['documents'], sourceIds: ['source-1'], evidence: [] })
+  const fitted = fitGuidance({ ...complete, where: grounded(complete.where!), bring: complete.bring.map(grounded), steps: complete.steps.map(grounded) }, [])
   assert.ok(fitted.ok && fitted.status === 'COMPLETED')
   assert.equal(report(complete, []).status, 'COMPLETED')
 })
@@ -120,4 +122,13 @@ test('#162 報告結果は常に内部契約を満たす', () => {
     const result: InternalResult = report(input, ['加入支部を確認してください。'])
     assert.doesNotThrow(() => internalResultSchema.parse(result))
   }
+})
+
+test('#163 資料間の食い違いは確認事項として残し、完了にしない', () => {
+  const conflicting = { ...research, outcomes: [{ ...research.outcomes[0]!,
+    findings: { ...research.outcomes[0]!.findings, status: 'partial' as const, conflicts: ['家族埋葬費と家族埋葬料の表記が混在している'] } }] }
+  const result = guidanceResult({ draft: draft(), sources: [source], research: conflicting, proof, resultId: 'result-1', target: '合成手続き' })
+  if (result.kind !== 'task_guidance') assert.fail()
+  assert.equal(result.status, 'PARTIAL')
+  assert.ok(result.missing.includes('公式資料の記載が食い違っています: 家族埋葬費と家族埋葬料の表記が混在している'))
 })

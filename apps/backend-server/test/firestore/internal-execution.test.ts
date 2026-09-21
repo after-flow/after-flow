@@ -258,12 +258,15 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(task.status, 201)
     const exec = await h.accept('task_guidance', task.body.data.id, 'TASK'), context = await h.context(exec)
     const result = { ...proof(context), resultId: randomUUID(), kind: 'task_guidance', status: 'PARTIAL',
-      steps: ['対象機関に確認してください'], missing: ['地域の詳細'], basis: [{ type: 'TASK', id: task.body.data.id, version: task.body.data.version }] }
+      steps: ['対象機関に確認してください'], missing: ['地域の詳細'], basis: [{ type: 'TASK', id: task.body.data.id, version: task.body.data.version }],
+      citations: [{ item: 'steps', index: 0, sourceUrl: 'https://official.example/a#apply', sectionHeading: '申請方法', quote: '対象機関に確認する' }] }
     assert.equal((await h.request(exec, 'result', result)).status, 200)
     assert.equal((await h.request(exec, 'result', result)).status, 200)
     const saved = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
     assert.equal(saved.body.data.status, 'PARTIAL')
     assert.deepEqual(saved.body.data.missing, ['地域の詳細'])
+    // 項目ごとの根拠を保存し、公開APIで返す（#163）。
+    assert.deepEqual(saved.body.data.citations, result.citations)
   })
 
   it('別Runのpath/artifact、旧attempt、取消後の結果、本文不一致requestIdを拒否する', async t => {

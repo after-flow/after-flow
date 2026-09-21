@@ -1180,6 +1180,44 @@ paths:
                         - type: string
                           maxLength: 500
                         - type: "null"
+                    citations:
+                      default: []
+                      maxItems: 150
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          item:
+                            type: string
+                            enum:
+                              - where
+                              - bring
+                              - steps
+                          index:
+                            type: integer
+                            minimum: 0
+                            maximum: 49
+                          sourceUrl:
+                            type: string
+                            maxLength: 2000
+                            format: uri
+                          sectionHeading:
+                            anyOf:
+                              - type: string
+                                minLength: 1
+                                maxLength: 200
+                              - type: "null"
+                          quote:
+                            type: string
+                            minLength: 1
+                            maxLength: 200
+                        required:
+                          - item
+                          - index
+                          - sourceUrl
+                          - sectionHeading
+                          - quote
+                        additionalProperties: false
                   required:
                     - caseVersion
                     - contextSnapshotId
