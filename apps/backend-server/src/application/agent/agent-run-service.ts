@@ -6,6 +6,7 @@ import type { TenantMember } from '../authorization/case-access.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { randomUUID } from 'node:crypto'
 import type { AgentOperation, AgentRunEntity, AgentRunStatus } from '../../domain/agent/agent-run.js'
+import { failGuidanceForRun } from './run-termination.js'
 import { canCancel, canRetry, isRunTerminal, isRunWaiting } from '../../domain/agent/agent-run.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import { collections } from '../../domain/shared/collections.js'
@@ -311,6 +312,7 @@ export class AgentRunService {
         currentAttemptId: randomUUID(),
       })
       if (cancellation) tx.outbox({ id: cancelId, type: 'agent.cancel', caseId, payload: { runId } })
+      await failGuidanceForRun(tx, caseId, current, { failureReason: 'CANCELLED', attemptId: current.currentAttemptId })
       await cancelWait(tx, current)
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       await recordRunTransitionEvent(tx, { ...current, version: expectedVersion }, 'CANCELLED', 'CANCELLED', {

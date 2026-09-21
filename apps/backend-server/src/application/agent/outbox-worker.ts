@@ -20,6 +20,14 @@ export function caseTaskHandler(tasks: TaskService): LocalOutboxHandler {
   }
 }
 
+/**
+ * 受け手がまだ無い通知イベントを配送済みとして閉じる。
+ * 外部AIへ渡す種別ではなく、再試行しても届く先が増えることはない。
+ */
+export function acknowledgeLocally(types: readonly string[]): LocalOutboxHandler {
+  return { types: new Set(types), deliverLocal: async () => ({ status: 'ACCEPTED' }) }
+}
+
 export function combineLocalHandlers(...handlers: LocalOutboxHandler[]): LocalOutboxHandler {
   return { types: new Set(handlers.flatMap(h => [...h.types])),
     deliverLocal: event => handlers.find(h => h.types.has(event.type))!.deliverLocal(event) }

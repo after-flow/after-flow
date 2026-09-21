@@ -19,6 +19,48 @@ node apps/backend-server/dist/worker-main.js
 プロセス監視基盤により異常終了時に再起動する。Cloud RunならCPUの常時割当を持つ独立worker、
 またはSchedulerから `--once` ジョブを定期起動する構成が必要。HTTP応答後の実行継続には依存しない。
 
+## Docker開発環境
+
+`make up` は `backend-worker` containerを業務Firestore Emulatorと同じ `data` profileで起動する。
+HTTP用 `backend-server` と同じimageだが別container・別processで、hostへportを公開しない。
+`restart: unless-stopped` を設定しているため、異常終了やDocker再起動後も自動で再開する。
+
+渡す設定は役割に必要な最小限に限る。`OUTBOX_TENANT_IDS`（既定 `after-flow-demo`）、
+`OUTBOX_INTERVAL_MS`、`OUTBOX_VISIBILITY_MS`、業務Firestore、Backend→AIの `AI_SERVER_URL` /
+`AI_SERVICE_TOKEN` / `AI_SERVICE_AUDIENCE` / `AI_SERVICE_TIMEOUT_MS`、Run capability用の
+`BACKEND_EXECUTION_SIGNING_KEY` / `BACKEND_SERVICE_AUDIENCE`。原本Storage、AI→Backendの
+`BACKEND_INTERNAL_SERVICE_TOKEN`、`READINESS_ACCESS_TOKEN`、OrcaRouterキー、AI Runtime設定は渡さない。
+参加するnetworkは `data`（業務Firestore）と `services`（AI Server）だけで、`frontend`・`ai-runtime`・
+`ai-egress`・`emulator-host` には参加しない。`scripts/smoke-compose.mjs` と `make data-check` がこれを検査する。
+
+```sh
+make up                                              # workerも起動する
+make logs SERVICE=backend-worker                     # tickログを追う
+docker compose --profile data restart backend-worker # 再起動。PENDINGと期限切れIN_FLIGHTから再開する
+docker compose --profile data stop backend-worker    # 停止。Outboxは保存済みのまま残る
+docker compose --profile data start backend-worker
+make down                                            # 全停止
+```
+
+`.env` の `OUTBOX_TENANT_IDS` で担当tenantを変えられる。複数tenantはカンマ区切り。
+
+### 配送が有効になる条件
+
+workerが起動していても、Backend HTTPが `AI_CONNECTED_OPERATIONS` を受け付けなければAI向けOutboxは作られない。
+ローカルE2Eで有効にするのは `task_guidance` だけで、`.env` に `AI_CONNECTED_OPERATIONS=task_guidance` と
+`ORCAROUTER_API_KEY` を設定して `make up` し直す。既定は空のままにし、APIキーやworkerが無い環境で接続済みと表示しない。
+`case_planning`・`chat_reply`・`document_analysis` はこの段階では有効にしない。
+
+AI Serverが未起動、readiness 503、timeout、5xxの場合、workerはイベントを成功扱いせずRETRYABLEとして残す。
+`OUTBOX_DELIVERY_TIMEOUT_MS` を超えると打ち切り、Runと案内を失敗として確定する。
+外部AI同意が無いイベントはBLOCKEDとして残し、消さない。Job本文・Context・service token・署名鍵はログへ出さない。
+
+### 滞留の確認
+
+`make logs SERVICE=backend-worker` の `outbox worker tick` 行で `pending`、`failed`、`oldestAgeMs`、
+`retrying`、`blocked` を見る。15分超の滞留またはFAILEDがあれば `outbox backlog alert` が出る。
+tickが2周期以上出ない場合はcontainerの状態（`make ps`）とFirestore Emulatorの疎通（`make data-check`）を確認する。
+
 ## 配送・回復
 
 - 既定間隔5秒、可視性タイムアウト120秒、1tenantあたり1回20件。HTTP timeoutは可視性タイムアウト未満にする。
@@ -30,6 +72,14 @@ node apps/backend-server/dist/worker-main.js
 - `case.created` は初期Task生成、`case.reference_dates_changed` は期限再評価をBackend内で実行する。
   最新Caseを読み、古いイベントの起算日で上書きしない。AI接続・任意AI同意なしでも手動管理用の処理を続ける。
 - 外部配送では毎回同意を再判定する。未接続ならPENDINGで再試行する。
+- 一時障害の再試行は `OUTBOX_DELIVERY_TIMEOUT_MS`（既定15分）で打ち切る。打ち切ったAI向けイベントは、
+  先にRunを `FAILED`（`failureReason: DELIVERY_TIMEOUT:<直近の理由>`）、`task_guidance` の案内を `FAILED` に確定し、
+  その後Outboxを `FAILED` にする。AI Serverの一時停止・timeout・5xxは期限内なら従来どおり再試行する。
+- 受付時のCase版と現在の版がずれた未開始（QUEUED）のRunは、配送前に現在の版へ載せ替え、試行IDを取り直してから配送する。
+  Case作成直後の初期Task生成で版が進んでも、その直後の依頼が `STALE_CONTEXT` で無期限に再送されることはない。
+  実行中に版が進んだ場合は従来どおりcontrolがSTOPを返し、Reconcilerが新しい試行として再配送する。
+- 受け手の無い通知イベント（`task.completed`、`decision.confirmed`）はworkerがローカルで配送済みにする。
+  `agent.*` 以外の未知の種別はREJECTEDで終端し、無期限に再試行しない。
 - `proposal.applied` / `approval.rejected` / `document.registered` はBackend Inboxへ冪等保存する。`approval.requested`はローカル通知として扱い、個人データをAIへ汎用転送しない。
 - 各tickで担当tenantのRunを安定した100件ページで照合する。先行Inbox、Snapshot保存後に通知できなかった待機、期限切れlease/RUNNINGを回復する。
 - SnapshotメタデータはAI内部HTTP経由だけで確認。1件の照会失敗はfailedとして数え、後続Runを続ける。同意/権限失効RunはHTTP照会前に取消す。

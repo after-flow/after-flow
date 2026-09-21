@@ -41,6 +41,13 @@ export function backoffMs(attempt: number): number {
   return Math.min(60_000 * 2 ** Math.max(0, attempt - 1), 60 * 60_000)
 }
 
+export interface DeliveryGiveUp {
+  /** 再試行を打ち切るまでの、イベント作成からの経過時間。未指定なら打ち切らない。 */
+  deliveryTimeoutMs?: number
+  /** 打ち切り時に業務側の状態を確定させる。Outbox を FAILED にする前に呼ぶ。 */
+  onGiveUp?: (event: OutboxEvent, reason: string) => Promise<void>
+}
+
 export class OutboxDispatcher {
   constructor(
     private readonly firestore: Firestore,
@@ -49,7 +56,13 @@ export class OutboxDispatcher {
     /** 配送中とみなす時間。これを過ぎた IN_FLIGHT は再配送の対象になる。 */
     private readonly visibilityTimeoutMs = 2 * 60_000,
     private readonly local?: LocalOutboxHandler,
-  ) {}
+    private readonly giveUp: DeliveryGiveUp = {},
+  ) {
+    const timeout = giveUp.deliveryTimeoutMs
+    if (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= visibilityTimeoutMs)) {
+      throw new Error('deliveryTimeoutMs must exceed the visibility timeout')
+    }
+  }
 
   /**
    * 配送できるイベントを 1 回分処理する。
@@ -80,7 +93,7 @@ export class OutboxDispatcher {
       // 配送中のまま時間切れになったものだけを引き取る。
       if (event.status === 'IN_FLIGHT' && this.leaseExpiry(event) > now) continue
 
-      const claimed = await this.claim(document.ref.path, now)
+      const claimed = await this.claim(document.ref.path, Date.now())
       if (!claimed) continue
 
       // 外部 AI へ渡してよいかを配送のたびに確かめる。
@@ -105,20 +118,35 @@ export class OutboxDispatcher {
         if (outcome.status === 'ACCEPTED') {
           if (await this.settle(document.ref.path, claimed, { status: 'DELIVERED', lastError: null })) result.delivered.push(claimed.id)
         } else if (outcome.status === 'RETRYABLE') {
-          if (await this.settle(document.ref.path, claimed, { status: 'PENDING', lastError: outcome.reason,
-            nextAttemptAt: Timestamp.fromMillis(Date.now() + backoffMs(claimed.attempts)),
-          })) result.retrying.push(claimed.id)
+          await this.retryOrGiveUp(document.ref.path, claimed, outcome.reason, result)
         } else {
           if (await this.settle(document.ref.path, claimed, { status: 'FAILED', lastError: outcome.reason })) result.rejected.push(claimed.id)
         }
       } catch {
-        if (await this.settle(document.ref.path, claimed, { status: 'PENDING', lastError: 'DELIVERY_EXCEPTION',
-          nextAttemptAt: Timestamp.fromMillis(Date.now() + backoffMs(claimed.attempts)),
-        })) result.retrying.push(claimed.id)
+        await this.retryOrGiveUp(document.ref.path, claimed, 'DELIVERY_EXCEPTION', result)
       }
     }
 
     return result
+  }
+
+  /**
+   * 一時障害は指数バックオフで再送する。作成からの経過時間が上限を超えたら、
+   * 業務側の状態を先に確定させてから Outbox を終端する。順序を逆にすると、
+   * 途中で落ちた場合に Outbox だけが FAILED になり Run が QUEUED のまま残る。
+   */
+  private async retryOrGiveUp(path: string, claimed: OutboxEvent, reason: string, result: DispatchResult): Promise<void> {
+    const timeout = this.giveUp.deliveryTimeoutMs
+    const age = Date.now() - toMillis(claimed.createdAt)
+    if (timeout !== undefined && age >= timeout) {
+      const lastError = `DELIVERY_TIMEOUT:${reason}`
+      await this.giveUp.onGiveUp?.(claimed, lastError)
+      if (await this.settle(path, claimed, { status: 'FAILED', lastError })) result.rejected.push(claimed.id)
+      return
+    }
+    if (await this.settle(path, claimed, { status: 'PENDING', lastError: reason,
+      nextAttemptAt: Timestamp.fromMillis(Date.now() + backoffMs(claimed.attempts)),
+    })) result.retrying.push(claimed.id)
   }
 
   /**

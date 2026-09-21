@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { detectInsightEvents } from './insight-events.js'
 import { saveInsightResults } from './insight-results.js'
 import { planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema } from '@aftercare/internal-contracts'
@@ -23,6 +24,7 @@ import type { ConsentService } from '../consent/consent-service.js'
 import type { ReadRepository, SnapshotReader, Tx, UnitOfWork } from '../ports/persistence.js'
 import type { ProposalService } from '../proposal/proposal-service.js'
 import { acquireLease, assertLease, leaseLocation, releaseLease } from './lease-service.js'
+import { terminateQueuedRun } from './run-termination.js'
 import { createPendingWait, recordWaiting, validateWaitCondition } from './wait-requests.js'
 import { recordRunTransitionEvent } from './agent-run-events.js'
 import type { ProposalEntity } from '../../domain/proposal/proposal.js'
@@ -82,10 +84,26 @@ export class InternalExecutionService {
       await this.assertAccess(tx, run)
       this.assertActive(run)
       if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
-      return { tenantId, caseId, runId, jobId, executionAttempt: run.currentAttemptId,
+      const executionAttempt = run.status === 'QUEUED' ? await this.rebaseIfStale(tx, caseId, run) : run.currentAttemptId
+      return { tenantId, caseId, runId, jobId, executionAttempt,
         operation: run.operation, scopes: ['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'wait-requests',
           ...(run.operation === 'case_planning' ? ['proposals' as const] : [])] }
     })
+  }
+
+  /**
+   * 未開始のRunは、受付後にCaseが進んでいても現在の版で実行を始められる。
+   * 受付時の版のまま配送すると control が STALE_CONTEXT を返し続け、同じJobが
+   * 一時障害として無期限に再送される。試行IDは配送前に取り直す。
+   */
+  private async rebaseIfStale(tx: Tx, caseId: string, run: AgentRunEntity): Promise<string> {
+    const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
+    if (entity.caseVersion === run.caseVersionAtAccept) return run.currentAttemptId
+    const executionAttempt = randomUUID()
+    tx.update<AgentRunEntity>(runLocation(caseId, run.id), run.version, { caseVersionAtAccept: entity.caseVersion, currentAttemptId: executionAttempt })
+    tx.audit({ caseId, type: 'agent_run.context_rebased', target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 },
+      detail: { from: run.caseVersionAtAccept, to: entity.caseVersion } })
+    return executionAttempt
   }
 
   async assertAccess(tx: Tx, run: AgentRunEntity): Promise<void> {
@@ -96,6 +114,16 @@ export class InternalExecutionService {
     if (!member?.active || member.userId !== user.userId || !caseMember?.active
       || caseMember.userId !== user.userId || !roleAllows(caseMember.role, 'case.write')) throw errors.forbidden()
     await this.consent.assertExternalAiAllowed(user, tx)
+  }
+
+  /** 配送を打ち切ったJobのRunを失敗として確定する。既に進んだRunは触らない。 */
+  async abandonDispatch(tenantId: string, caseId: string, runId: string, jobId: string, reason: string): Promise<boolean> {
+    return this.uow.run({ tenantId, actor: { type: 'SYSTEM', userId: null, agentRunId: runId }, requestId: null }, async tx => {
+      const run = await tx.require<AgentRunEntity>(runLocation(caseId, runId))
+      if (run.status !== 'QUEUED' || run.currentJobId !== jobId) return false
+      await terminateQueuedRun(tx, caseId, run, { status: 'FAILED', failureReason: reason, auditType: 'agent_run.delivery_abandoned' })
+      return true
+    })
   }
 
   /** callbackの永続記録は、失われた配送ACKより強い受領証明。旧jobも再実行しない。 */
@@ -353,6 +381,10 @@ export class InternalExecutionService {
       const envelope = { runId: run.id, attemptId: run.currentAttemptId }
       if (input.kind === 'task_guidance') return this.intake.applyGuidanceResult(tx, call.claims.caseId, { ...input, ...envelope })
       if (input.kind === 'chat_reply') return this.intake.applyChatReply(tx, call.claims.caseId, { ...input, ...envelope })
+      if (input.kind === 'execution_interrupted' && run.operation === 'task_guidance') {
+        return this.intake.applyGuidanceInterruption(tx, call.claims.caseId, { ...envelope, resultId: input.resultId,
+          failureReason: input.failureReason, output: input.output, caseVersion: input.caseVersion })
+      }
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString(),
         failureReason: input.kind === 'execution_interrupted' ? input.failureReason : null,
         outcome: input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
