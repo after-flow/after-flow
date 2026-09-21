@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { artifactEnvelopeSchema, contextProofSchema, internalId, operationSchema, planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema, insightEventSchema } from '@aftercare/internal-contracts'
 import type { ContextProof, PlanningHistory, PlanningRestriction, ClarificationHistory } from '@aftercare/internal-contracts'
 import { researchBriefSchema } from '../research/contracts.js'
+import { applicabilityCheckSchema } from '../playbooks/guidance-output.js'
+import { groundingRulesSchema } from '../playbooks/guidance-grounding.js'
 
 const fields = {
   case: ['deceasedName', 'dateOfDeath', 'knownAt', 'municipality', 'status'],
@@ -221,8 +223,10 @@ export const reviewedResearchScopeSchema = z.object({
   taskCategories: z.array(z.string().min(1).max(100)).min(1).max(20),
   sourceCatalogIds: z.array(internalId).min(1).max(20),
   questions: z.array(z.object({ id: internalId, text: z.string().min(1).max(300) }).strict()).min(1).max(12),
-  /** Case facts that must be confirmed before general research can be marked applicable. */
-  caseApplicabilityQuestions: z.array(z.string().min(1).max(200)).max(10).optional(),
+  /** 一般案内とは別に、この案件への適用を確かめる事項（#162）。未指定は確認事項なし。 */
+  applicabilityChecks: z.array(applicabilityCheckSchema).max(10).optional(),
+  /** 案内の主張と引用の対応を検証する規則（#163）。未指定は引用の有無と数量だけを検証する。 */
+  groundingRules: groundingRulesSchema.optional(),
 }).strict()
 
 /** Scope comes from reviewed configuration; none of these strings are copied from user messages. */

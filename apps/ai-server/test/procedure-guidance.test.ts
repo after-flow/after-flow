@@ -19,10 +19,12 @@ const scope = { id: 'brief-1', version: '1', reviewedAt: '2026-09-01T00:00:00Z',
   sourceCatalogIds: ['catalog-1'], questions: [{ id: 'documents', text: '提出先、必要書類、手順は何か' }] }
 const brief = { briefId: scope.id, procedure: scope.procedure, institution: scope.institution, jurisdiction: scope.jurisdiction,
   questions: scope.questions, sourceCatalogIds: scope.sourceCatalogIds }
-const claim = (text: string) => ({ text, sourceIds: ['source-1'] })
+const claim = (text: string) => ({ text, questionIds: ['documents'] })
 const draft = { status: 'complete', where: claim('架空機関の窓口'), bring: [claim('架空書類A')], steps: [claim('窓口で確認する')], missing: [] }
-const synthesizedFindings = { status: 'complete', answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する', sourceIds: ['source-1'] }], missing: [], conflicts: [] }
-const findings = { ...synthesizedFindings, answers: synthesizedFindings.answers.map(answer => ({ ...answer, applicability: '架空市の架空機関が扱う架空手続き' })) }
+const SOURCE_TEXT = '架空書類Aを架空機関の窓口で確認する。'
+const evidence = [{ sourceId: 'source-1', sectionId: 's1', quote: '架空書類Aを架空機関の窓口で確認する' }]
+const synthesizedFindings = { status: 'complete', answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する', evidence }], missing: [], conflicts: [] }
+const findings = { ...synthesizedFindings, answers: synthesizedFindings.answers.map(answer => ({ ...answer, sourceIds: ['source-1'], applicability: '架空市の架空機関が扱う架空手続き' })) }
 
 function setup(researchFindings: unknown = synthesizedFindings, coreDrafts: readonly unknown[] = [draft]) {
   const core = scriptedModel(coreDrafts.map(value => ({ text: JSON.stringify(value) })))
@@ -49,7 +51,7 @@ function setup(researchFindings: unknown = synthesizedFindings, coreDrafts: read
     async beforeTool(kind) { controls.push(kind) }, maxSourceAgeMs: 60000, timeoutMs: 1000,
     research: {
       async search() { return [candidate] },
-      async read() { return sourceDocument(candidate, '架空書類Aを架空機関の窓口で確認する。') },
+      async read() { return sourceDocument(candidate, SOURCE_TEXT) },
     },
   }
   return { deps, reported, core, research, controls, artifact }
@@ -118,16 +120,17 @@ test('#162 a second invalid Core output fails without silent truncation or repor
 
 test('#162 general research stays PARTIAL until Case applicability is confirmed', async () => {
   const { deps, reported } = setup()
-  deps.scope = { ...scope, caseApplicabilityQuestions: [
-    '加入していた健康保険を確認してください。',
-    '申請者と亡くなった方の関係を確認してください。',
-  ] }
+  const applicabilityChecks = [
+    { id: 'insurance', question: '加入していた健康保険を確認してください。' },
+    { id: 'applicant', question: '申請者と亡くなった方の関係を確認してください。' },
+  ]
+  deps.scope = { ...scope, applicabilityChecks }
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
   assert.equal(reported[0]?.kind, 'task_guidance')
   if (reported[0]?.kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'PARTIAL')
-  assert.deepEqual(reported[0].missing, deps.scope.caseApplicabilityQuestions)
+  assert.deepEqual(reported[0].missing, applicabilityChecks.map(item => item.question))
 })
 
 test('no reviewed source returns a bounded partial result without invoking either model', async () => {
@@ -258,4 +261,40 @@ test('#166 allowlistはoperationごとに定義され、未列挙の項目を返
   // ハーネス側のContextには全項目が残り、proofと鮮度の検証に使える。
   assert.ok(context.modelInput.facts.some(fact => fact.field === 'municipality'))
   assert.throws(() => minimizedModelInput({ ...context, operation: 'chat_reply' }, 'task_guidance'))
+})
+test('#163 本文と一致しない引用の回答は採用せず、案内を完了にしない', async () => {
+  // 本文に無い「郵送」を引用と称して書いた回答。
+  const fabricated = { ...synthesizedFindings, answers: [{ questionId: 'documents', text: '架空書類Aを郵送する',
+    evidence: [{ sourceId: 'source-1', sectionId: 's1', quote: '架空書類Aを架空機関へ郵送する' }] }] }
+  const core = scriptedModel([{ text: JSON.stringify({ ...draft, status: 'partial', missing: ['提出方法'] }) }])
+  const { deps, reported } = setup(fabricated)
+  deps.models = { ...deps.models, core: core.model }
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
+  const guidance = reported[0]
+  if (guidance?.kind !== 'task_guidance') assert.fail()
+  assert.equal(guidance.status, 'PARTIAL')
+  // 根拠の無い問いに基づく項目は表示しない。
+  assert.deepEqual([guidance.where, guidance.bring, guidance.steps], [null, [], []])
+  // 根拠を確認できなかった問いは、次に確かめる事項として利用者に示す。
+  assert.ok(guidance.missing.includes(scope.questions[0]!.text))
+  // Core Agentには検証済みの回答だけが渡る。
+  assert.ok(!JSON.stringify(core.calls).includes('郵送'))
+})
+
+test('#163 各項目の引用を出典URLと見出し付きで報告する', async () => {
+  const { deps, reported } = setup()
+  deps.research.read = async () => sourceDocument(candidate, SOURCE_TEXT,
+    { sections: [{ id: 's1', heading: '申請方法', anchor: 'apply', text: SOURCE_TEXT }] })
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
+  const guidance = reported[0]
+  if (guidance?.kind !== 'task_guidance') assert.fail()
+  assert.equal(guidance.status, 'COMPLETED')
+  assert.deepEqual(guidance.citations.map(item => item.item), ['where', 'bring', 'steps'])
+  for (const citation of guidance.citations) {
+    assert.equal(citation.sourceUrl, `${candidate.url}#apply`)
+    assert.equal(citation.sectionHeading, '申請方法')
+    assert.ok(SOURCE_TEXT.includes(citation.quote))
+  }
 })
