@@ -1,3 +1,5 @@
+import { detectInsightEvents } from './insight-events.js'
+import { saveInsightResults } from './insight-results.js'
 import { planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema } from '@aftercare/internal-contracts'
 import type { ProposalVersionEntity } from '../../domain/proposal/proposal-version.js'
 import type { ApprovalEntity } from '../../domain/proposal/approval.js'
@@ -222,6 +224,7 @@ export class InternalExecutionService {
       if (run.operation !== 'case_planning') {
         content.documents = (content.documents as { id: string }[]).filter(doc => targetDocumentIds.has(doc.id))
       }
+      if (run.operation === 'case_planning') content.insightEvents = detectInsightEvents(claims.caseId, entity.caseVersion, content)
       if (Buffer.byteLength(JSON.stringify(content)) > INTERNAL_LIMITS.bodyBytes) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
       return { caseVersion: entity.caseVersion, content }
     })
@@ -334,6 +337,7 @@ export class InternalExecutionService {
       const artifact = await tx.require<RunArtifactEntity>(artifactLocation(call.claims.caseId, input.contextSnapshotId))
       await this.assertArtifact(tx, call, artifact, input)
       await this.assertBasis(tx, call, artifact, input.basis)
+      if (input.kind === 'case_planning' && input.insights?.length) await saveInsightResults(tx, run, artifact.artifact, input.insights)
       await releaseLease(tx, call.claims.caseId, run.id, input.fencingToken)
       const envelope = { runId: run.id, attemptId: run.currentAttemptId }
       if (input.kind === 'task_guidance') return this.intake.applyGuidanceResult(tx, call.claims.caseId, { ...input, ...envelope })

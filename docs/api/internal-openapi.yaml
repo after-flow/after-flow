@@ -1360,6 +1360,90 @@ paths:
                         - questions
                         - remaining
                       additionalProperties: false
+                    insights:
+                      maxItems: 20
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          eventId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          resultId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          kind:
+                            type: string
+                            enum:
+                              - DEADLINE_RISK
+                              - MISSING_DOCUMENT
+                              - PROFESSIONAL_NEEDED
+                          body:
+                            type: string
+                            minLength: 1
+                            maxLength: 4000
+                          relatedTaskId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          relatedTaskTitle:
+                            type: string
+                            minLength: 1
+                            maxLength: 120
+                          evidence:
+                            minItems: 1
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                label:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 120
+                                value:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 2000
+                                taskId:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 128
+                                  pattern: ^[A-Za-z0-9_-]+$
+                                capturedVersion:
+                                  type: integer
+                                  exclusiveMinimum: 0
+                                  maximum: 9007199254740991
+                              required:
+                                - label
+                                - value
+                                - taskId
+                                - capturedVersion
+                              additionalProperties: false
+                          requiresProfessional:
+                            type: boolean
+                          professionalReviewNote:
+                            anyOf:
+                              - type: string
+                                minLength: 1
+                                maxLength: 1000
+                              - type: "null"
+                        required:
+                          - eventId
+                          - resultId
+                          - kind
+                          - body
+                          - relatedTaskId
+                          - relatedTaskTitle
+                          - evidence
+                          - requiresProfessional
+                          - professionalReviewNote
+                        additionalProperties: false
                   required:
                     - caseVersion
                     - contextSnapshotId

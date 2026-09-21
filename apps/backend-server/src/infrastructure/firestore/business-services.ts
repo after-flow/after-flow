@@ -134,6 +134,7 @@ export function createBusinessServices(access: AccessService, read: ReadReposito
   }
   const insightService = new InsightService({
     ...shared, insights: repository<Insight>(collections.insights), views, ledger,
+    caseVersion: async (tenantId, caseId) => (await get<import('../../domain/case/case.js').CaseEntity>(tenantId, { collection: collections.cases, caseId: null, id: caseId }))?.caseVersion ?? null,
     runs: {
       async findRun(tenantId, caseId, runId) {
         const run = await get<AgentRunEntity>(tenantId, { collection: collections.agentRuns, caseId, id: runId })
