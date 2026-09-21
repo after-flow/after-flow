@@ -34,14 +34,23 @@ export type ContextArtifact = z.infer<typeof artifactEnvelopeSchema>
 
 const basisSchema = z.object({ type: z.enum(['DOCUMENT', 'TASK', 'MESSAGE']), id: internalId, version: z.number().int().positive() }).strict()
 const resultBase = contextProofSchema.extend({ resultId: internalId, basis: z.array(basisSchema).max(20).default([]) })
+/**
+ * task_guidanceの項目上限（#162）。
+ * AI側の出力修復とBackendの受付が同じ値を使う。片方だけを変えると、
+ * 推論が成功した後の報告段階で初めて契約違反が分かる。
+ */
+export const GUIDANCE_LIMITS = Object.freeze({
+  where: 500, bringItem: 200, stepItem: 500, missingItem: 200, items: 50, sources: 20,
+})
 const guidanceSchema = resultBase.extend({
   kind: z.literal('task_guidance'), status: z.enum(['COMPLETED', 'PARTIAL', 'FAILED']),
-  target: z.string().max(200).nullable().optional(), where: z.string().max(500).nullable().optional(),
-  bring: z.array(z.string().max(200)).max(50).default([]), steps: z.array(z.string().max(500)).max(50).default([]),
+  target: z.string().max(200).nullable().optional(), where: z.string().max(GUIDANCE_LIMITS.where).nullable().optional(),
+  bring: z.array(z.string().max(GUIDANCE_LIMITS.bringItem)).max(GUIDANCE_LIMITS.items).default([]),
+  steps: z.array(z.string().max(GUIDANCE_LIMITS.stepItem)).max(GUIDANCE_LIMITS.items).default([]),
   formExampleUrl: z.string().url().max(2000).nullable().optional(), formExampleLabel: z.string().max(120).nullable().optional(),
   note: z.string().max(2000).nullable().optional(),
-  sources: z.array(z.object({ label: z.string().min(1).max(120), url: z.string().url().max(2000), checkedAt: z.string().datetime() }).strict()).max(20).default([]),
-  missing: z.array(z.string().max(200)).max(50).default([]), failureReason: z.string().max(500).nullable().optional(),
+  sources: z.array(z.object({ label: z.string().min(1).max(120), url: z.string().url().max(2000), checkedAt: z.string().datetime() }).strict()).max(GUIDANCE_LIMITS.sources).default([]),
+  missing: z.array(z.string().max(GUIDANCE_LIMITS.missingItem)).max(GUIDANCE_LIMITS.items).default([]), failureReason: z.string().max(500).nullable().optional(),
 }).strict()
 const chatSchema = resultBase.extend({ kind: z.literal('chat_reply'), body: z.string().min(1).max(10000), professionalNotice: z.boolean().default(false) }).strict()
 export const runSummarySchema = z.object({

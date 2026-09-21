@@ -205,3 +205,19 @@ test('#166 allowlistはoperationごとに定義され、未列挙の項目を返
   assert.ok(context.modelInput.facts.some(fact => fact.field === 'municipality'))
   assert.throws(() => minimizedModelInput({ ...context, operation: 'chat_reply' }, 'task_guidance'))
 })
+
+test('#162 推論が成功した長い必要書類説明は報告段階で失敗せず、適用条件の未確認は完了にしない', async () => {
+  const long = Array.from({ length: 12 }, (_, index) => `条件${index}に当たる場合は架空書類${index}の写しを添付する。`).join('')
+  const core = scriptedModel([{ text: JSON.stringify({ ...draft, bring: [claim(long)] }) }])
+  const { deps, reported } = setup()
+  deps.models = { ...deps.models, core: core.model }
+  deps.scope = { ...scope, applicabilityChecks: [{ id: 'enrollment', question: '加入先を確認してください。' }] }
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  const result = await run.start({ inputData: { resultId: 'result-1' } })
+  assert.equal(result.status, 'success', JSON.stringify(result))
+  const guidance = reported[0]
+  if (guidance?.kind !== 'task_guidance') assert.fail()
+  assert.equal(guidance.status, 'PARTIAL')
+  assert.deepEqual(guidance.missing, ['加入先を確認してください。'])
+  assert.ok(guidance.bring.length > 1 && guidance.bring.every(item => item.length <= 200))
+})
