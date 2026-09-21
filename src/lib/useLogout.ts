@@ -14,6 +14,12 @@ export function useLogout() {
   return () => {
     setToken(null)
     queryClient.clear()
+    // 「ケースを自動で開いた」印も消す。次にログインした人の最初の画面が変わらないように
+    try {
+      sessionStorage.clear()
+    } catch {
+      /* 使えない環境では何もしない */
+    }
     navigate('/login', { replace: true })
   }
 }

@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => {
       alias: { '@': path.resolve(rootDir, './src') },
     },
     server: {
+      port: process.env.PORT ? Number(process.env.PORT) : undefined,
       proxy: process.env.VITE_API_PROXY
         ? { '/api': { target: process.env.VITE_API_PROXY, changeOrigin: true } }
         : undefined,

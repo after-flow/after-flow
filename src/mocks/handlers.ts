@@ -2,12 +2,13 @@ import { HttpResponse, http, delay } from 'msw'
 import {
   CASE_ID,
   FLOW_STAGE_LABELS,
-  createStatutoryTasks,
   db,
-  makeDeadline,
+  ruleKeys,
   nextId,
   todayISO,
 } from './db'
+import { analysisRuns, isMaskedCase, startAnalysis } from './analysis'
+import { deliberationDue, syncRuleTasks } from './rules'
 import type {
   Approval,
   Asset,
@@ -80,15 +81,10 @@ function overview(caseId: string): CaseOverview {
     inheritanceDecision: {
       decided: perHeir.length > 0 && perHeir.every((h) => h.method != null),
       perHeir,
-      deliberationDeadline: makeDeadline({
-        id: 'dl_deliberation',
-        label: '熟慮期間',
-        startDate: kase.dateOfDeath,
-        days: 90,
-        basisLabel: '自分が相続人になったと知った時 ＋ 3か月',
-      }).dueDate,
+      deliberationDeadline: deliberationDue(kase),
     },
     recentAgentRuns: [
+      ...analysisRuns.filter((r) => r.caseId === caseId),
       {
         id: 'run_3',
         caseId,
@@ -165,8 +161,8 @@ export const handlers = [
     }
     db.cases.push(created)
 
-    // Rule Engine 相当：ご逝去日が分かった時点で法定手続きと期限を用意する
-    db.tasks.push(...createStatutoryTasks(created.id, created.dateOfDeath))
+    // Rule Engine 相当：ご逝去日が分かった時点で、あてはまる可能性のある手続きと期限を用意する
+    db.tasks = syncRuleTasks(created, db.tasks, ruleKeys, nextId)
 
     return HttpResponse.json(created, { status: 201 })
   }),
@@ -188,6 +184,8 @@ export const handlers = [
     const kase = db.cases.find((c) => c.id === params.caseId)
     if (!kase) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
     Object.assign(kase, await request.json())
+    // 故人の状況（生年月日・質問への答え）が変わったら、あてはまる手続きを洗い出し直す
+    db.tasks = syncRuleTasks(kase, db.tasks, ruleKeys, nextId)
     return HttpResponse.json(kase)
   }),
 
@@ -305,17 +303,13 @@ export const handlers = [
       analysisStatus: 'ANALYZING',
       sizeBytes: file.size,
       uploadedAt: new Date().toISOString(),
-      myNumberScan: 'CLEAN',
+      myNumberScan: isMaskedCase(file.name) ? 'MASKED' : 'CLEAN',
       extractions: [],
     }
     db.documents.unshift(doc)
 
-    // 解析の完了をあとから反映する（document_analysis の代役）
-    setTimeout(() => {
-      doc.analysisStatus = 'ANALYZED'
-      doc.agentRunId = nextId('run')
-      doc.extractions = [{ id: nextId('ex'), label: '読み取り結果', value: '特筆すべき項目はありません' }]
-    }, 6000)
+    // 読み取りの完了をあとから反映する（document_analysis の代役。ファイル名で結果を出し分ける）
+    startAnalysis(doc)
 
     return HttpResponse.json(doc, { status: 201 })
   }),
@@ -648,6 +642,11 @@ function ensureEscalationApproval(caseId: string): string {
 function applyProposal(a: Approval) {
   const value = (field: string) => a.diff.find((d) => d.field === field)?.after ?? ''
 
+  const yen = (field: string) => {
+    const digits = value(field).replace(/[^\d]/g, '')
+    return digits ? Number(digits) : undefined
+  }
+
   if (a.kind === 'ASSET_PROPOSAL') {
     db.assets.push({
       id: nextId('asset'),
@@ -655,12 +654,41 @@ function applyProposal(a: Approval) {
       name: value('名称'),
       kind: 'BANK',
       institution: value('金融機関') || undefined,
+      amount: yen('残高'),
       source: 'AI',
       confirmation: 'CONFIRMED',
     })
   }
 
-  if (a.kind === 'TASK_PROPOSAL' || a.kind === 'ESCALATION_PROPOSAL') {
+  if (a.kind === 'LIABILITY_PROPOSAL') {
+    db.liabilities.push({
+      id: nextId('liability'),
+      caseId: a.caseId,
+      name: value('名称'),
+      kind: 'LOAN',
+      creditor: value('借りている先') || undefined,
+      amount: yen('金額'),
+      source: 'AI',
+      confirmation: 'CONFIRMED',
+    })
+  }
+
+  if (a.kind === 'CONTRACT_PROPOSAL') {
+    db.contracts.push({
+      id: nextId('contract'),
+      caseId: a.caseId,
+      name: value('名称'),
+      kind: value('名称').includes('保険') ? 'INSURANCE' : 'OTHER',
+      provider: value('契約先') || undefined,
+      policy: 'UNDECIDED',
+      progress: 'NOT_STARTED',
+      source: 'AI',
+    })
+  }
+
+  // 「故人の情報を登録する」のように手続き名を持たない提案からは、手続きを作らない。
+  // 作ると名前も期限もない手続きができ、ほかを片づけたあとに「まずはこれ」へ出てきてしまう。
+  if ((a.kind === 'TASK_PROPOSAL' || a.kind === 'ESCALATION_PROPOSAL') && value('手続き名').trim()) {
     db.tasks.push({
       id: nextId('task'),
       caseId: a.caseId,

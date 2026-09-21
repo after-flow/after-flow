@@ -27,8 +27,33 @@ export interface Case {
    * 番地までは不要で、市区町村までしか持たない。
    */
   municipality?: string
+  /**
+   * 故人の状況（ケース作成の直後に聞く質問への答え）。
+   * Rule Engine はこれを見て、あてはまる手続きだけを洗い出す。
+   * 答えていない項目・「わからない」は、あてはまる可能性があるものとして扱う。
+   */
+  profile?: CaseProfile
   status: CaseStatus
   createdAt: ISODateTime
+}
+
+export type YesNoUnknown = 'YES' | 'NO' | 'UNKNOWN'
+
+export interface CaseProfile {
+  /** 加入していた健康保険。資格喪失届の窓口と、葬祭費か埋葬料かが決まる */
+  healthInsurance?: 'NATIONAL' | 'EMPLOYEE' | 'LATE_ELDERLY' | 'UNKNOWN'
+  /** 受け取っていた年金。受給停止の期限（厚生年金10日・国民年金14日）と未支給年金に関わる */
+  pension?: 'EMPLOYEES' | 'NATIONAL_ONLY' | 'NONE' | 'UNKNOWN'
+  /** 仕事。勤務先の手続き・個人事業の届出・死亡一時金などに関わる */
+  occupation?: 'EMPLOYEE' | 'SELF_EMPLOYED' | 'NONE' | 'UNKNOWN'
+  /** 持ち家や土地。相続登記（義務）と固定資産税の届出に関わる */
+  realEstate?: YesNoUnknown
+  /** 自動車。名義変更に関わる */
+  car?: YesNoUnknown
+  /** 住宅ローン。団体信用生命保険で完済される場合がある */
+  mortgage?: YesNoUnknown
+  /** 質問に答えた日時。未回答ならホームで回答を促す */
+  answeredAt?: ISODateTime
 }
 
 /** 企画書セクション3の10段階フロー */
@@ -158,6 +183,12 @@ export interface Task {
   assigneeId?: string
   assigneeName?: string
   source: 'AI' | 'MANUAL' | 'RULE_ENGINE'
+  /**
+   * 故人の状況によっては不要な手続き（例：年金を受け取っていた場合だけ必要）。
+   * 質問に「わからない」と答えた・まだ答えていない場合に Rule Engine が立てる。
+   * 画面は「あてはまる場合」と添えて、必ず必要な手続きと見分けられるようにする。
+   */
+  conditional?: boolean
   deadline?: DeadlineSummary
   requiredDocuments?: RequiredDocument[]
   guidance?: TaskGuidance
@@ -351,6 +382,17 @@ export interface ProposalDiffRow {
   after: string | null
   /** 承認時に利用者が修正できる項目（editable proposal） */
   editable?: boolean
+  /**
+   * 原本のどこから読み取ったか。原本の幅・高さに対する割合（0〜1）で表す。
+   * AI側が座標を返せる場合のみ入る。無ければ画面は強調を出さない。
+   */
+  sourceBox?: { x: number; y: number; w: number; h: number }
+  /**
+   * 読み取りの確からしさ。
+   * LOW のとき、画面は「原本を見て確かめてください」と促す。
+   * 自信の無い読み取りを、確かなものと同じ見た目で出さないための情報。
+   */
+  confidence?: 'HIGH' | 'MEDIUM' | 'LOW'
 }
 
 export interface Approval {
@@ -364,6 +406,15 @@ export interface Approval {
   /** 提案元 */
   sourceDocumentId?: string
   sourceDocumentName?: string
+  /**
+   * よく似た内容が既に取り込まれている場合の注意（二重取り込みの検知）。
+   * 同じ戸籍や通帳を二度上げるのは普通に起きるため、確定の前に知らせる。
+   */
+  possibleDuplicate?: {
+    documentName: string
+    takenInAt: ISODateTime
+    approvalId?: string
+  }
   agentRunId?: string
   diff: ProposalDiffRow[]
   /**
