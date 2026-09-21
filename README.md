@@ -27,14 +27,28 @@ make up
 WebとBackendはループバックアドレスにのみ公開します。WebとAIはDockerネットワークも分けています。
 
 ```sh
-make ps                 # 全5サービスの状態
-make logs               # ログ（Ctrl+Cで表示だけ終了）
+make ps                 # 全6サービスの状態
+make logs               # ログ(Ctrl+Cで表示だけ終了)
 make logs SERVICE=web   # Webのみ
 make check              # Docker内で型・Lint・テスト・OpenAPI・本番ビルドを検証
 make down               # このプロジェクトを停止
 ```
 
-`make up`はアプリ3サービスに加えて、FirestoreとCloud Storageもdata profileで起動します。
+`make up`はアプリ3サービスに加えて、Outbox/Reconciler worker（`outbox-worker`）とFirestore・Cloud Storageもdata profileで起動します。
+
+### Outbox worker（`outbox-worker`）
+
+`outbox-worker`はBackend HTTPプロセスとは独立したコンテナで、`pnpm --filter @aftercare/backend-server worker`を実行します。
+HTTPの終了・再起動に依存せず、保存済みAgentRunのAIへの配送、Wait/Resume、Reconcilerによる期限切れ回復を続けます（[運用手順](docs/runbooks/outbox-worker.md)）。
+
+```sh
+make worker-logs         # tickごとの配送・retrying・backlog件数を表示
+docker compose --profile data restart outbox-worker   # 手動再起動して回復を確認
+```
+
+既定の対象tenantは開発用の`after-flow-local`です（`OUTBOX_TENANT_IDS`で上書き可）。
+AI Serverへの配送は`AI_SERVER_URL`等を未設定のままでは接続されず、イベントはPENDINGのまま残ります（Backend本体と同じ既定動作）。
+`outbox-worker`は`firestore-emulator`と同じくAI Serverのネットワーク・環境変数を受け取りません。
 
 ```sh
 make data-check          # 両Emulatorの読み書きとAIからの分離を再確認
@@ -163,7 +177,7 @@ infra/
   consent/                  同意文書カタログの雛形
   rules/                    期限ルールと初期手続きの定義の雛形
 Dockerfile                  固定Node/pnpmと依存インストール
-compose.yaml                Web / Backend / AIの独立コンテナ
+compose.yaml                Web / Backend / AI / Outbox workerの独立コンテナ
 Makefile                    起動・停止・検証
 ```
 

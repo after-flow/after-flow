@@ -1,9 +1,31 @@
 # Backend Outbox worker
 
-対象: #38 / #37。HTTPサーバーとは別の常駐プロセスとして起動する。本番デプロイ自体はこの実装の対象外。
+対象: #38 / #37 / #122（ローカル接続部分）。HTTPサーバーとは別の常駐プロセスとして起動する。
+Cloud Run本番配備方式（常駐 vs Job+Scheduler）の決定と本番IAM/tenant割当/監視接続は#122の対象外のまま未決定。
 
-## 起動
+## ローカルDocker（`make up`）
 
+`compose.yaml`の`outbox-worker`サービスがBackend HTTPコンテナ(`backend-server`)とは独立したコンテナとして
+`pnpm --filter @aftercare/backend-server worker`を実行する。`make up`の`--profile data`起動に含まれ、
+`firestore-emulator`のhealthy後に自動起動し、異常終了時は`restart: unless-stopped`で再起動する。
+
+```sh
+make up                                                 # backend-server / outbox-worker を含め起動
+make worker-logs                                        # tickログ(配送/retrying/backlog件数)を表示
+docker compose --profile data ps outbox-worker           # 起動状態を確認
+docker compose --profile data restart outbox-worker      # 手動再起動して回復を確認
+make worker-once                                        # Job形式で使い捨てコンテナが1バッチだけ実行
+```
+
+既定の対象tenantは`OUTBOX_TENANT_IDS=after-flow-local`（`make up`が設定）。実データのtenantで確認する場合は
+`OUTBOX_TENANT_IDS=<tenant1>,<tenant2> make up`のように上書きする。AI配送設定(`AI_SERVER_URL`等)を渡さない間は
+Backend本体と同じ既定どおり配送は行われず、イベントはPENDINGのまま残る。`outbox-worker`は`ai-server`と同じ
+`services`ネットワークに参加するがAI Server自体へは環境変数を渡さず、`ai-server`はdata networkへ参加しない
+（`scripts/verify-boundaries.mjs`が検証）。
+
+## Node直接実行
+
+Docker無しで動作を確認する場合、または`--once`をジョブとして個別実行する場合に使う。
 Backendと同じ業務Firestore、同意カタログ、期限ルールを設定する。
 `OUTBOX_TENANT_IDS` に担当するtenant IDをカンマ区切りで指定する。暗黙の全tenant走査はしない。
 この環境設定・Firestore権限をAIサービスに渡してはいけない。
@@ -17,7 +39,8 @@ node apps/backend-server/dist/worker-main.js
 ```
 
 プロセス監視基盤により異常終了時に再起動する。Cloud RunならCPUの常時割当を持つ独立worker、
-またはSchedulerから `--once` ジョブを定期起動する構成が必要。HTTP応答後の実行継続には依存しない。
+またはSchedulerから `--once` ジョブを定期起動する構成が必要（本番配備方式の決定は#122の対象外）。
+ローカルDockerでは`restart: unless-stopped`が同じ役割を果たす。HTTP応答後の実行継続には依存しない。
 
 ## 配送・回復
 
@@ -52,3 +75,36 @@ Reconcilerのchecked/failed件数も出す。failedが継続する場合はAI sn
 Firestore Emulator + 独立Fake AI HTTPサーバーで、並行claim、旧応答、受理後SIGKILL、
 新workerプロセスでの再配送と受信側の一度だけの処理、滞留の検知を検証する。
 本番Scheduler、実AI、Mastra Snapshotの永続重複排除はこの試験には含まれない。
+
+### ローカルsmoke test（#122）
+
+`pnpm --filter @aftercare/backend-server test:firestore`が上記の再起動・重複配送・滞留シナリオを自動検証する。
+他の作業や稼働中の`make up`スタック(ポート8085)と衝突しないよう、専用ポート・コンテナ名を指定して実行する。
+
+```sh
+FIRESTORE_EMULATOR_PORT=18122 FIRESTORE_EMULATOR_CONTAINER=after-flow-firestore-emulator-issue122 \
+  pnpm --filter @aftercare/backend-server test:firestore
+```
+
+確認したシナリオと対応するテスト:
+
+- worker再起動後のPENDING/期限切れIN_FLIGHT再開: `test/firestore/agent-execution.test.ts`
+  (`--once`子プロセスをSIGKILLし、新しい`--once`子プロセスが同じRunを再配送すること)、
+  `test/firestore/internal-execution.test.ts`（別workerプロセスでの待機復旧）。
+- 重複配送・受信側の冪等性: `test/firestore/internal-execution.test.ts`
+  （同じJob/Event IDの再送を受信側が重複排除し、旧応答で新しいclaimを上書きしないこと）。
+- 同意撤回: `test/firestore/agent-execution.test.ts`（`/consents/revocations`後、次回配送直前の
+  Policy再評価で送信を止め、撤回イベント自体はローカル制御通知として届くこと）。
+- 滞留(backlog)検知: `test/outbox-worker.test.ts`が`runOutboxWorker`のtick失敗時の継続動作を検証し、
+  `dispatchBatch`/`backlog`が返すpending/failed/oldestAgeMsを`outbox worker tick`ログに出す経路は
+  `src/application/agent/outbox-worker.ts`で固定（`docs/runbooks/outbox-worker.md`の「監視」節）。
+
+`--once`の起動導線そのものは、コンテナを介さないNode直接実行でも確認する。
+
+```sh
+FIRESTORE_EMULATOR_HOST=127.0.0.1:18122 FIRESTORE_PROJECT_ID=after-flow-issue122-manual \
+  OUTBOX_TENANT_IDS=after-flow-local \
+  pnpm --filter @aftercare/backend-server exec tsx src/worker-main.ts --once
+```
+
+対象外（本番配備方式が未決定のため）: 本番Scheduler、実AI/Mastra接続、本番IAM/tenant割当、本番監視接続。

@@ -45,7 +45,7 @@ The core Backend foundation is implemented:
 
 This does not mean production readiness. In particular:
 
-- The Outbox/Reconciler worker code exists but is not yet connected to the normal Docker and production deployment runtime.
+- The Outbox/Reconciler worker runs as an independent `outbox-worker` container in local Docker (`make up`, see `docs/runbooks/outbox-worker.md`), but the Cloud Run production deployment approach (standing worker vs. Job+Scheduler), production IAM/tenant assignment, and production monitoring wiring remain undecided (#122).
 - Health is liveness; dependency readiness and production preflight are incomplete.
 - A real authentication provider, approved consent catalog, and reviewed deadline catalog are not selected/configured.
 - Real My Number detection/masking is not implemented. Only the port, state, quarantine contract, and `PASSED`-only delivery guard exist.

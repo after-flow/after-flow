@@ -2,17 +2,18 @@
 COMPOSE ?= docker compose
 PNPM ?= pnpm
 
-.PHONY: help up up-data data-check down build logs ps restart check install dev test test-firestore production-check
+.PHONY: help up up-data data-check down build logs ps restart check install dev test test-firestore production-check worker-once worker-logs
 
 help: ## コマンド一覧
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-up: ## Dockerでアプリ3サービスとFirestore・Storage Emulatorを起動
+up: ## Dockerでアプリ3サービス、Outbox worker、Firestore・Storage Emulatorを起動
 	FIRESTORE_EMULATOR_HOST=firestore-emulator:8085 \
 	DOCUMENT_STORAGE_ROOT= \
 	DOCUMENT_STORAGE_BUCKET=$${DOCUMENT_STORAGE_BUCKET:-after-flow-documents} \
 	DOCUMENT_STORAGE_EMULATOR_ENDPOINT=http://storage-emulator:4443 \
 	STORAGE_PROJECT_ID=$${STORAGE_PROJECT_ID:-after-flow-local} \
+	OUTBOX_TENANT_IDS=$${OUTBOX_TENANT_IDS:-after-flow-local} \
 	$(COMPOSE) --profile data up --build --detach --wait --wait-timeout 120
 
 up-data: up ## 互換エイリアス（make upと同じ）
@@ -35,6 +36,12 @@ ps: ## コンテナの状態を確認
 
 restart: ## コンテナを再起動
 	$(COMPOSE) --profile data restart
+
+worker-logs: ## Outbox workerのログを表示（tickごとの配送・backlog件数）
+	$(COMPOSE) --profile data logs --follow outbox-worker
+
+worker-once: ## Job形式で1バッチだけ実行し、終了コードで成否を確認（outbox-workerとは別の使い捨てコンテナ）
+	$(COMPOSE) --profile data run --rm --no-deps outbox-worker pnpm --filter @aftercare/backend-server worker:once
 
 check: ## Docker内で型・Lint・テスト・依存境界・本番ビルドを検証
 	$(COMPOSE) run --build --rm --no-deps -e VITE_USE_MOCK=false web sh -c 'pnpm typecheck && pnpm lint && pnpm test && pnpm openapi:check && pnpm build'

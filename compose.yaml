@@ -79,6 +79,42 @@ services:
       retries: 3
     networks: [services]
 
+  # Backend HTTPプロセスとは独立したOutbox/Reconciler常駐worker（#122）。
+  # HTTPの終了・再起動に依存せずAgentRunの配送・Wait/Resume回復を続ける。
+  # AIへは渡さない資格情報（業務Firestore、署名鍵）をここでも保持する。
+  outbox-worker:
+    <<: *development
+    image: after-flow-backend-server:local
+    command: pnpm --filter @aftercare/backend-server worker
+    environment:
+      FIRESTORE_EMULATOR_HOST: ${FIRESTORE_EMULATOR_HOST-}
+      FIRESTORE_PROJECT_ID: ${FIRESTORE_PROJECT_ID:-after-flow-local}
+      CONSENT_CATALOG_PATH: ${CONSENT_CATALOG_PATH-}
+      DEADLINE_RULES_PATH: ${DEADLINE_RULES_PATH-}
+      # 対象tenantは暗黙の全走査をしない。`make up` が開発既定値を入れる。
+      OUTBOX_TENANT_IDS: ${OUTBOX_TENANT_IDS-}
+      OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
+      OUTBOX_VISIBILITY_MS: ${OUTBOX_VISIBILITY_MS:-120000}
+      # AI配送は既定で未接続（イベントはPENDINGのまま残る）。設定する場合は
+      # Backendと同じ値を渡す。AI Serverには渡さない。
+      AI_SERVER_URL: ${AI_SERVER_URL-}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN-}
+      AI_SERVICE_AUDIENCE: ${AI_SERVICE_AUDIENCE-}
+      AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS-}
+      BACKEND_EXECUTION_SIGNING_KEY: ${BACKEND_EXECUTION_SIGNING_KEY-}
+      BACKEND_SERVICE_AUDIENCE: ${BACKEND_SERVICE_AUDIENCE-}
+    volumes:
+      - ./apps/backend-server/src:/workspace/apps/backend-server/src:ro
+    depends_on:
+      firestore-emulator:
+        condition: service_healthy
+    # プロセス監視基盤の代わり。異常終了時にDockerが再起動し、
+    # 保存済みOutboxからPENDING・期限切れIN_FLIGHTを再取得する。
+    restart: unless-stopped
+    # firestore-emulatorと同じくdata profileでのみ起動する。
+    profiles: [data]
+    networks: [services, data]
+
   # 業務Firestoreの代わりに使う開発用Emulator。
   # Compose単体の既定profileでは起動しない。`make up` がdata profileを有効にする。
   # ai-serverは data ネットワークに接続しない。AIへ業務DBを触らせないため。

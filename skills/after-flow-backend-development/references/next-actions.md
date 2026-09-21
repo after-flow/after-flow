@@ -24,7 +24,7 @@ These Issues carry `Devin` because their implementation conditions are sufficien
 
 | Issue | Decision before or during implementation |
 |---|---|
-| [#122](https://github.com/after-flow/after-flow/issues/122) | Continuous worker versus Cloud Run Job + Scheduler, tenant assignment, monitoring |
+| [#122](https://github.com/after-flow/after-flow/issues/122) | Local Docker connection (compose `outbox-worker` service, restart/duplicate/consent-revocation/backlog smoke tests) is done. Still undecided: Cloud Run production deployment shape (standing worker vs. Job+Scheduler), production tenant assignment, production monitoring wiring. |
 | [#126](https://github.com/after-flow/after-flow/issues/126) | Which audit events/details each Case role may read |
 | [#130](https://github.com/after-flow/after-flow/issues/130) | Retention periods, erase/archive semantics, dry-run approval |
 
