@@ -50,8 +50,10 @@ export function guidanceResult(input: { draft: GuidanceDraft; sources: readonly 
       used.add(id)
     }
   }
+  const form = officialForm(input.sources.filter(source => used.has(source.id)))
   // Backend stores its current public guidance DTO; claim-to-source mapping stays in the workflow snapshot.
   return internalResultSchema.parse({
+    ...(form ? { formExampleUrl: form.url, formExampleLabel: form.label } : {}),
     ...input.proof, resultId: input.resultId, kind: 'task_guidance',
     status: draft.status === 'complete' ? 'COMPLETED' : 'PARTIAL', target: input.target,
     where: draft.where?.text ?? null, bring: draft.bring.map(item => item.text), steps: draft.steps.map(item => item.text),
@@ -60,4 +62,13 @@ export function guidanceResult(input: { draft: GuidanceDraft; sources: readonly 
       return { label: source.title, url: source.url, checkedAt: source.fetchedAt }
     }), basis: [],
   })
+}
+
+/**
+ * 引用した公式資料に掲載された申請書（無ければ記入例）へのリンク（#165）。
+ * ハーネスが本文から決定的に抽出した値だけを使い、モデルにURLを書かせない。
+ */
+export function officialForm(sources: readonly SourceDocument[]) {
+  const forms = sources.flatMap(source => source.forms)
+  return forms.find(form => form.kind === 'FORM') ?? forms.find(form => form.kind === 'EXAMPLE') ?? null
 }

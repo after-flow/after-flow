@@ -44,7 +44,7 @@ test('catalog search is scoped and retrieval revalidates identity and review exp
   await assert.rejects(provider.read({ candidate: { ...candidates[0]!, url: 'https://official.example/different' }, signal }), /exact catalog/)
   assert.equal(reads, 0)
   const document = await provider.read({ candidate: candidates[0]!, signal })
-  assert.equal(document.text, '必要書類 合成資料を持参'); assert.equal(document.updatedAt, null)
+  assert.equal(document.text, '【必要書類】 合成資料を持参'); assert.equal(document.updatedAt, null)
   assert.equal(document.fetchedAt, new Date(time).toISOString())
   now += 86400000
   await assert.rejects(provider.read({ candidate: candidates[0]!, signal }), /not current/)

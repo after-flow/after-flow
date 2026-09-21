@@ -11,6 +11,7 @@ import type { ProcedureGuidanceDependencies } from '../src/infrastructure/mastra
 import { scriptedModel } from './helpers/scripted-model.js'
 import { assertCompleteResearch, researchEvidenceSchema } from '../src/orchestration/research/contracts.js'
 import { guidanceDraftSchema } from '../src/orchestration/playbooks/guidance-output.js'
+import { sourceDocument } from './helpers/source-document.js'
 
 const candidate = { id: 'source-1', catalogId: 'catalog-1', title: '架空機関の資料', issuer: '架空機関', url: 'https://official.example/procedure' }
 const scope = { id: 'brief-1', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き',
@@ -48,7 +49,7 @@ function setup(researchFindings: unknown = synthesizedFindings, coreDrafts: read
     async beforeTool(kind) { controls.push(kind) }, maxSourceAgeMs: 60000, timeoutMs: 1000,
     research: {
       async search() { return [candidate] },
-      async read() { return { ...candidate, text: '架空書類Aを架空機関の窓口で確認する。', location: '第1項', fetchedAt: new Date().toISOString(), updatedAt: null } },
+      async read() { return sourceDocument(candidate, '架空書類Aを架空機関の窓口で確認する。') },
     },
   }
   return { deps, reported, core, research, controls, artifact }
@@ -70,6 +71,8 @@ test('P-01 uses both real Mastra agents and tools, rechecks context, and reports
   assert.deepEqual(core.calls[0]!.toolChoice, { type: 'none' })
   assert.deepEqual(research.calls[0]!.toolChoice, { type: 'none' })
   assert.ok(!JSON.stringify(research.calls).includes('PRIVATE-NAME'))
+  // 調査担当へは本文を見出し単位の区分で渡す（#165）。
+  assert.ok(JSON.stringify(research.calls).includes('sections'))
   assert.ok(controls.includes('search') && controls.includes('read-source'))
 })
 
