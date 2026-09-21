@@ -72,8 +72,9 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   }
 
   const access = new AccessService(database.read)
+  const consentCatalog = readConsentCatalog(env)
   const consentService = new ConsentService(
-    readConsentCatalog(env),
+    consentCatalog,
     access,
     database.read,
     database.uow,
@@ -87,12 +88,25 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     })
   }
 
+  const ruleCatalog = readRuleCatalog(env)
+  const enabledOperations = connectedOperations(env)
+  if (enabledOperations.size > 0 && !consentCatalog.documents.some((document) => document.kind === 'CROSS_BORDER_AI')) {
+    // 接続済みのふりをしない、と対にする検査。AI へ渡す操作を接続していながら
+    // カタログに CROSS_BORDER_AI が無い設定は、外国にある第三者への提供を
+    // 同意なしで許してしまう fail-open になりうる（個人情報保護法28条）。
+    // カタログ定義そのものは変えず、設定ミスを起動時に見えるようにする。
+    logger.warn('consent catalog has no CROSS_BORDER_AI while AI operations are connected', {
+      effect: 'external AI operations proceed without cross-border transfer consent enforcement',
+      connectedOperations: [...enabledOperations],
+    })
+  }
+
   const agentRunService = new AgentRunService(
     access,
     database.read,
     database.uow,
     consentService,
-    connectedOperations(env),
+    enabledOperations,
   )
 
   const proposalService = new ProposalService(access, database.read, database.uow, [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers])
@@ -113,7 +127,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     ) : null,
     // 放棄前ロックは保存済みの確定状況で判定する。未記録は未確定のまま。
     taskService: new TaskService(
-      readRuleCatalog(env),
+      ruleCatalog,
       access,
       database.read,
       database.uow,
@@ -126,11 +140,12 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     // 種類ごとの反映は担当 Issue が登録する。未登録の種類は反映できない。
     proposalService,
     decisionService: new InheritanceDecisionService(access, database.read, database.uow),
-    messageService: new MessageService(access, database.read, database.uow, agentRunService),
+    messageService: new MessageService(access, database.read, database.uow, agentRunService, consentService),
     overviewService: new CaseOverviewService(
       access,
       database.read,
-      connectedOperations(env).size > 0,
+      ruleCatalog,
+      { aiConnected: enabledOperations.size > 0 },
     ),
   })
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type {
   PersonRole,
   RelationshipKind,
@@ -36,6 +37,23 @@ export interface PersonReferences {
   inheritanceDecisions: number
   evidences: number
   auditEntries: number
+  /**
+   * true なら、この Person が Case.ownerPersonId（＝作成者 membership の
+   * personId）として本人に紐付いている。この紐付けを外す API は無いため、
+   * 除外すると selfPersonId が除外済みの Person を指したまま `assertSelf` は
+   * 通り、相続方法の確定だけが `assertActiveHeir` で拒否される不整合が起きる。
+   */
+  linkedAsCaseOwner: boolean
+}
+
+/** isHeir から Person の既定 role を決める。役割既定の二重定義を避けるため、作成経路はすべてこれを使う。 */
+export function defaultRoleFor(isHeir: boolean): PersonRole {
+  return isHeir ? 'HEIR_CANDIDATE' : 'RELATED'
+}
+
+/** Person の ID 規約（`person_<uuid>`）をここに集約する。採番元を増やさない。 */
+export function newPersonId(): string {
+  return `person_${randomUUID()}`
 }
 
 interface NewEntityMeta {
@@ -115,6 +133,11 @@ export function excludePerson(
   if (references.inheritanceDecisions > 0) {
     throw referenced('相続方法の記録が紐づいているため除外できません。先に記録を見直してください', {
       inheritanceDecisions: references.inheritanceDecisions,
+    })
+  }
+  if (references.linkedAsCaseOwner) {
+    throw referenced('案件の作成者本人として登録されているため除外できません', {
+      linkedAsCaseOwner: true,
     })
   }
   return touch({ ...person, excludedAt: now, excludedBy: actor, exclusionReason: reason }, actor, now)

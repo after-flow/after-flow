@@ -68,7 +68,9 @@ architecture.md 6.3に記載の`GET /internal/v1/health/ready`はAI Server側の
 - 実Firestore/Storageへの「到達不能」を伴う障害検知は、SDK自体のretry/backoffに影響され、`withTimeout`で応答時間は打ち切れても、SDK内部の再試行が応答後もしばらく裏で続くことがある（readinessは起動時に作った同一clientを使い回すため、要求ごとに新規clientを作るよりは影響が小さい）。
 - `storage`検査はStorageポート（`ObjectStorage#exists`）越しの疎通確認であり、ローカル保存（`LocalObjectStorage`、開発専用）は権限・ディスク障害を`exists`が握りつぶす実装のため、本番のCloud Storage Adapterほど検査として厳密ではない。
 - `auth`検査は設定の型・モードだけを見る。JWKS URIへの実疎通は行わない（採用Provider未確定・[ADR 0001](../adr/0001-authentication-provider.md)のため、実接続検証はProvider決定後）。
-- `consent_catalog` / `deadline_rules`は`placeholder`フラグの検出だけを行う。正式カタログ・正式ルールの内容そのものの正しさは[#128](https://github.com/after-flow/after-flow/issues/128)・[#129](https://github.com/after-flow/after-flow/issues/129)の決定事項で、この検査の対象外。
+- `consent_catalog` / `deadline_rules`は`placeholder`フラグの検出に加えて、`NODE_ENV=production`では読込自体が失敗する（`readConsentCatalog` / `readRuleCatalog`が`CONSENT_CATALOG_PATH` / `DEADLINE_RULES_PATH`未設定または`placeholder:true`を例外で拒否する）。readinessはこの例外も同じ`NOT_CONFIGURED`に丸め込む。正式カタログ・正式ルールの内容そのものの正しさは[#128](https://github.com/after-flow/after-flow/issues/128)・[#129](https://github.com/after-flow/after-flow/issues/129)の決定事項で、この検査の対象外。
+- **運用上の帰結**: `readRuleCatalog`は`composition.ts`（`createServer`）と`worker-main.ts`の両方が起動時に呼ぶ。`NODE_ENV=production`かつ正式カタログ（`placeholder:false`）が無ければ、readinessが`not_ready`を返すだけでなく、**Backend/Workerプロセス自体が起動しない**（起動時に例外で落ちる）。[#129](https://github.com/after-flow/after-flow/issues/129)の業務レビューが完了して正式カタログを`DEADLINE_RULES_PATH`に設定するまで、本番デプロイはこのガードで止まる。これは意図した挙動（未承認の法定期限を本番で表示しない）であり、暫定回避としてカタログを丸ごと`reviewed:false`にする、`placeholder:false`だけ偽装する等は行わないこと。
+- 期限ルールのカタログ（`DEADLINE_RULES_PATH`の指すファイル）を差し替えても、既に保存済みの`DeadlineEntity`は自動で再計算されない。反映するには対象Caseごとに`POST /cases/:caseId/deadlines/reevaluate`を呼ぶ必要がある（`ruleVersion`の差分で更新対象を検出する。カタログ変更をトリガーに全Caseを自動再評価する経路は無い）。
 - Mastra/Orchの機能的な準備完了はこのreadinessでは確認しない（#123対象外、architecture.mdの将来API一覧とは区別する）。
 
 ## 試験範囲

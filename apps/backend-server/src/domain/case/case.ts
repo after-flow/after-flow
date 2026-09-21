@@ -11,9 +11,14 @@ export interface CaseEntity extends EntityBase {
   /**
    * 相続の開始を知った日。
    *
-   * 死亡日とは別の事実として保持する。熟慮期間などの起算日は
-   * 「知った日」を使う手続きがあり、不明なまま死亡日で補完すると
-   * 期限を誤って早める。不明は null のままにする。
+   * 死亡日とは別の事実として保持する。未入力は null のままにする
+   * （申告を強制しない）。熟慮期間などの起算日は「知った日」を使う
+   * 手続きがあり、Rule Engine（`domain/task/rule-engine.ts`
+   * `computeDeadline`）は未入力の間だけ死亡日で代わりに算定する。
+   * `findCaseDateIssues`（`domain/case/case-dates.ts`）が作成・更新の
+   * 両経路で `knownAt >= dateOfDeath` を強制しているため、この代替は
+   * 常に早い側（またはちょうど同じ）にしか外れず、期限を実際より
+   * 遅く見せることはない。
    */
   knownAt: string | null
   /** 申告された手続き担当者名。認証上の本人確認の根拠にはしない。 */
@@ -22,6 +27,17 @@ export interface CaseEntity extends EntityBase {
   relationshipToDeceased: string
   /** 手続き先の市区町村。番地は保持しない。 */
   municipality: string | null
+  /**
+   * 作成者本人に対応する Person の ID。
+   *
+   * Case 作成時に本人を Person として同時登録した場合だけ入る。それ以外は
+   * null。作成時点の紐付けを記録した履歴値であり、以後は更新しない
+   * （membership の付け替えには追従しない）。名前一致で本人を推定しない
+   * （改名・表記ゆれで判定がずれる）。呼び出し主体が本人かどうかの判定には
+   * 使わず、CaseMember.personId（DTO では selfPersonId）を根拠にする。
+   * legacy record では欠落しうるため optional。読み出し側は null に正規化する。
+   */
+  ownerPersonId?: string | null
   /** Human-controlled pause of AI planning; absent only on legacy records. */
   aiPlanningRestriction?: { reason: string } | null
   status: CaseStatus

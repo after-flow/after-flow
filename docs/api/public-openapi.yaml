@@ -6615,7 +6615,7 @@ paths:
     post:
       operationId: createCase
       summary: 案件を作成する
-      description: 作成者を OWNER として membership を同じ Transaction で確定する。初期手続きと期限の生成は別の処理が行う。
+      description: 作成者を OWNER として membership を同じ Transaction で確定する。`ownerPerson` を指定すると本人を Person として同時登録し `ownerPersonId` に紐付ける（省略時は従来どおり後から POST /cases/:caseId/persons で登録する）。未来の死亡日、死亡日より前または未来の「知った日」は 400。初期手続きと期限の生成は別の処理が行う。
       tags:
         - cases
       security:
@@ -6683,6 +6683,15 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 50
+                ownerPerson:
+                  nullable: true
+                  type: object
+                  properties:
+                    isHeir:
+                      type: boolean
+                  required:
+                    - isHeir
+                  additionalProperties: false
               required:
                 - deceasedName
                 - dateOfDeath
@@ -6720,6 +6729,12 @@ paths:
                       relationshipToDeceased:
                         type: string
                       municipality:
+                        nullable: true
+                        type: string
+                      ownerPersonId:
+                        nullable: true
+                        type: string
+                      selfPersonId:
                         nullable: true
                         type: string
                       aiPlanningRestriction:
@@ -6771,6 +6786,8 @@ paths:
                       - ownerName
                       - relationshipToDeceased
                       - municipality
+                      - ownerPersonId
+                      - selfPersonId
                       - aiPlanningRestriction
                       - status
                       - version
@@ -6897,6 +6914,12 @@ paths:
                         municipality:
                           nullable: true
                           type: string
+                        ownerPersonId:
+                          nullable: true
+                          type: string
+                        selfPersonId:
+                          nullable: true
+                          type: string
                         aiPlanningRestriction:
                           nullable: true
                           type: object
@@ -6946,6 +6969,8 @@ paths:
                         - ownerName
                         - relationshipToDeceased
                         - municipality
+                        - ownerPersonId
+                        - selfPersonId
                         - aiPlanningRestriction
                         - status
                         - version
@@ -7050,6 +7075,12 @@ paths:
                       municipality:
                         nullable: true
                         type: string
+                      ownerPersonId:
+                        nullable: true
+                        type: string
+                      selfPersonId:
+                        nullable: true
+                        type: string
                       aiPlanningRestriction:
                         nullable: true
                         type: object
@@ -7099,6 +7130,8 @@ paths:
                       - ownerName
                       - relationshipToDeceased
                       - municipality
+                      - ownerPersonId
+                      - selfPersonId
                       - aiPlanningRestriction
                       - status
                       - version
@@ -7148,7 +7181,7 @@ paths:
     patch:
       operationId: updateCase
       summary: 案件の基本情報を訂正する
-      description: status は変更できない。死亡日と「知った日」は別の事実として保持し、未入力を補完しない。
+      description: status は変更できない。死亡日と「知った日」は別の事実として保持し、未入力を補完しない。死亡日・「知った日」を変更する場合、未来の死亡日、死亡日より前または未来の「知った日」は 400。ownerPersonId は含められない（変更したい場合は別途対応する）。
       tags:
         - cases
       security:
@@ -7264,6 +7297,12 @@ paths:
                       municipality:
                         nullable: true
                         type: string
+                      ownerPersonId:
+                        nullable: true
+                        type: string
+                      selfPersonId:
+                        nullable: true
+                        type: string
                       aiPlanningRestriction:
                         nullable: true
                         type: object
@@ -7313,6 +7352,8 @@ paths:
                       - ownerName
                       - relationshipToDeceased
                       - municipality
+                      - ownerPersonId
+                      - selfPersonId
                       - aiPlanningRestriction
                       - status
                       - version
@@ -7381,7 +7422,7 @@ paths:
     post:
       operationId: registerDocument
       summary: 原本を登録する
-      description: PDF・JPEG・PNG、1ファイル10 MiBまで。Content-Typeの申告だけでなく実体を検査する。保存完了と解析受付は別の状態で、検査に合格していない書類は解析対象にしない。
+      description: PDF・JPEG・PNG、1ファイル10 MiBまで。Content-Typeの申告だけでなく実体を検査する。保存完了と解析受付は別の状態で、検査に合格していない書類は解析対象にしない。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は保存前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。
       tags:
         - documents
       security:
@@ -16663,7 +16704,7 @@ paths:
     post:
       operationId: postMessage
       summary: 発言して回答を依頼する
-      description: 202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を受け付けられない場合も発言は残し、理由を返す。
+      description: 202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を接続未了で受け付けられない場合も発言は残し、理由を返す。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は発言を保存する前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。
       tags:
         - chat
       security:
@@ -17013,7 +17054,7 @@ paths:
     post:
       operationId: requestTaskGuidance
       summary: 手続きの案内を依頼する
-      description: 公開された業務操作としてのみ受け付ける。任意のAgent・モデル・Prompt・URLは指定できない。
+      description: 公開された業務操作としてのみ受け付ける。任意のAgent・モデル・Prompt・URLは指定できない。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は保存前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。
       tags:
         - chat
       security:
@@ -17278,6 +17319,12 @@ paths:
                           municipality:
                             nullable: true
                             type: string
+                          ownerPersonId:
+                            nullable: true
+                            type: string
+                          selfPersonId:
+                            nullable: true
+                            type: string
                           aiPlanningRestriction:
                             nullable: true
                             type: object
@@ -17327,6 +17374,8 @@ paths:
                           - ownerName
                           - relationshipToDeceased
                           - municipality
+                          - ownerPersonId
+                          - selfPersonId
                           - aiPlanningRestriction
                           - status
                           - version
@@ -17533,10 +17582,93 @@ paths:
                                 - state
                                 - confirmed
                               additionalProperties: false
+                          deliberationDeadline:
+                            nullable: true
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              taskId:
+                                nullable: true
+                                type: string
+                              label:
+                                type: string
+                              basisLabel:
+                                type: string
+                              startDate:
+                                nullable: true
+                                type: string
+                              dueDate:
+                                nullable: true
+                                type: string
+                              daysRemaining:
+                                nullable: true
+                                type: number
+                              severity:
+                                nullable: true
+                                type: string
+                                enum:
+                                  - NORMAL
+                                  - SOON
+                                  - URGENT
+                                  - OVERDUE
+                              confirmation:
+                                type: string
+                                enum:
+                                  - CONFIRMED
+                                  - UNCONFIRMED
+                              unresolvedReason:
+                                nullable: true
+                                type: string
+                                enum:
+                                  - MISSING_BASIS_DATE
+                                  - RULE_UNCONFIRMED
+                              jurisdiction:
+                                type: string
+                              timezone:
+                                type: string
+                              ruleId:
+                                type: string
+                              ruleVersion:
+                                type: string
+                              sourceUrl:
+                                nullable: true
+                                type: string
+                              sourceCheckedAt:
+                                nullable: true
+                                type: string
+                                format: date-time
+                                pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                              extendable:
+                                nullable: true
+                                type: boolean
+                              critical:
+                                type: boolean
+                            required:
+                              - id
+                              - taskId
+                              - label
+                              - basisLabel
+                              - startDate
+                              - dueDate
+                              - daysRemaining
+                              - severity
+                              - confirmation
+                              - unresolvedReason
+                              - jurisdiction
+                              - timezone
+                              - ruleId
+                              - ruleVersion
+                              - sourceUrl
+                              - sourceCheckedAt
+                              - extendable
+                              - critical
+                            additionalProperties: false
                         required:
                           - decided
                           - unknown
                           - perHeir
+                          - deliberationDeadline
                         additionalProperties: false
                       recentAgentRuns:
                         type: array

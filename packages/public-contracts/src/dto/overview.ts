@@ -55,6 +55,13 @@ export interface CaseOverviewResource {
     /** 関係者が未登録のため判定できない状態。 */
     unknown: boolean
     perHeir: DecisionSummaryResource[]
+    /**
+     * 熟慮期間（民法915条）の期限。`id` は固定値 `deliberation-period`、
+     * `taskId` は常に null。Task 側の期限（相続方法の選択）と同じルールから
+     * 算定するため、再評価後は必ず一致する（再評価前は一時的に不一致になりうる）。
+     * カタログに熟慮期間のルールが無ければ null。
+     */
+    deliberationDeadline: DeadlineResource | null
   }
   recentAgentRuns: AgentRunResource[]
   /** AIが接続されているか。活動が無い理由を区別するために返す。 */

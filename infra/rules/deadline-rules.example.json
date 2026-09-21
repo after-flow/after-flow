@@ -1,5 +1,5 @@
 {
-  "comment": "期限ルールと初期手続きの定義。仕様書や旧モックの値をそのまま本番ルールにしない。reviewed を true にできるのは、業務レビューを経て根拠URLと確認日を記入した後だけ。reviewed が false のルールから確定した期限は算定されない。",
+  "comment": "期限ルールと初期手続きの定義。仕様書や旧モックの値をそのまま本番ルールにしない。reviewed を true にできるのは、sourceUrl の資料に対して basis/period/includeFirstDay/basisLabel を照合し、sourceCheckedAt にその確認日時を記録した後だけ（詳細は infrastructure/rules/rule-config.ts のコメント）。STATUTORY（条文だけで一意に定まる期限）は placeholder のカタログでも reviewed にできるが、JURISDICTIONAL（自治体・機関ごとに異なる期限）は業務レビューを経るまで reviewed:false のまま。reviewed が false のルールから確定した期限は算定されない。basisLabel は利用者が自分で数え直せる文言にする（機械生成しない）。",
   "placeholder": true,
   "deadlineRules": [
     {
@@ -7,8 +7,25 @@
       "version": "0.0.0-draft",
       "label": "死亡届の提出期限",
       "basis": "KNOWN_AT",
-      "offsetDays": 7,
-      "jurisdiction": "市区町村",
+      "period": { "unit": "DAY", "count": 7, "includeFirstDay": true },
+      "basisLabel": "亡くなったことを知った日から7日以内（その日を含めて数えます）",
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true
+    },
+    {
+      "id": "inheritance-choice",
+      "version": "0.0.0-draft",
+      "label": "相続方法の選択期限",
+      "basis": "KNOWN_AT",
+      "period": { "unit": "MONTH", "count": 3, "includeFirstDay": false },
+      "basisLabel": "自分のために相続が始まったと知った日の翌日から数えて3か月以内（家庭裁判所に申し立てて延ばせる場合があります）",
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
       "reviewed": false,
       "sourceUrl": null,
       "sourceCheckedAt": null,
@@ -28,6 +45,19 @@
       "assetDisposal": false,
       "requiredDocuments": [{ "id": "death-certificate", "label": "死亡診断書" }],
       "deadlineRuleId": "death-notification"
+    },
+    {
+      "id": "inheritance-choice",
+      "title": "相続方法を検討する",
+      "summary": "単純承認・限定承認・相続放棄のいずれにするかを相続人ごとに決めます。",
+      "stage": "decision",
+      "category": "相続手続き",
+      "submitTo": null,
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": "inheritance-choice"
     }
-  ]
+  ],
+  "deliberationDeadlineRuleId": "inheritance-choice"
 }

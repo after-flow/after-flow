@@ -51,3 +51,14 @@ export interface DeadlineEntity extends EntityBase {
   extendable: boolean | null
   critical: boolean
 }
+
+/**
+ * 期限の算定結果のうち、永続の有無に関わらず一意に決まる部分。
+ *
+ * 永続 `DeadlineEntity`（Task に紐付く）と、その場で算定するだけの
+ * 熟慮期間（`domain/decision/deliberation-period.ts`）の両方で使う。
+ */
+export type DeadlineFacts = Omit<
+  DeadlineEntity,
+  'tenantId' | 'caseId' | 'version' | 'schemaVersion' | 'createdAt' | 'updatedAt'
+>

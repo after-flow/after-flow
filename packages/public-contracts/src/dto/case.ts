@@ -31,6 +31,21 @@ export interface CaseResource {
   /** 申告された続柄。法的な相続人の認定ではない。 */
   relationshipToDeceased: string
   municipality: string | null
+  /**
+   * 作成者本人に対応する Person の ID。
+   * 作成時に本人を Person として同時登録した場合だけ入る。それ以外は null。
+   * 作成時点の紐付けを記録した履歴値であり、以後の membership の付け替えには
+   * 追従しない。呼び出し主体が本人かどうかの判定には使わず `selfPersonId` を使う。
+   */
+  ownerPersonId: string | null
+  /**
+   * 呼び出している利用者自身に紐付く Person の ID（membership 由来）。
+   * 放棄前ロックなど「ログインしている本人」の判定はこちらを使う。
+   * allowedActions と同じく呼び出し主体ごとに変わる値。未紐付けなら null。
+   * 紐付いた Person が非相続人（isHeir false）のこともあり、その場合は
+   * 相続方法の確定はできない（対象は有効な相続人候補ではない扱いになる）。
+   */
+  selfPersonId: string | null
   /** Owner-managed pause of AI task proposals. null means unrestricted. */
   aiPlanningRestriction: { reason: string } | null
   status: CaseStatus

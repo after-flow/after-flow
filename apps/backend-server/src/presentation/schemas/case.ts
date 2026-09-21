@@ -29,6 +29,8 @@ export const caseResourceSchema = z.object({
   ownerName: z.string(),
   relationshipToDeceased: z.string(),
   municipality: z.string().nullable(),
+  ownerPersonId: z.string().nullable(),
+  selfPersonId: z.string().nullable(),
   aiPlanningRestriction: aiPlanningRestrictionSchema.nullable(),
   status: caseStatusSchema,
   version: z.number().int(),
@@ -37,6 +39,17 @@ export const caseResourceSchema = z.object({
   updatedAt: isoDateTimeSchema,
   allowedActions: z.array(caseActionSchema),
 })
+
+/**
+ * 作成者本人を Person として同時登録する指定。
+ * 名前・続柄は ownerName / relationshipToDeceased から取り、ここでは重複入力させない。
+ */
+export const ownerPersonInputSchema = z
+  .object({
+    /** true → role HEIR_CANDIDATE、false → RELATED（既存 createPerson と同じ既定） */
+    isHeir: z.boolean(),
+  })
+  .strict()
 
 export const createCaseBodySchema = z
   .object({
@@ -52,6 +65,12 @@ export const createCaseBodySchema = z
     ownerName: nameSchema,
     relationshipToDeceased: z.string().trim().min(1).max(50),
     municipality: municipalitySchema.nullish(),
+    /**
+     * 指定すると、ownerName / relationshipToDeceased を使って作成者本人を
+     * Person として同じ Transaction で登録し、Case.ownerPersonId と
+     * 作成者 membership の personId に紐付ける。省略・null なら登録しない。
+     */
+    ownerPerson: ownerPersonInputSchema.nullish(),
   })
   .strict()
 

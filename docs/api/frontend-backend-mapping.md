@@ -40,10 +40,10 @@
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
 | `GET /cases` | Case一覧 | `GET /api/v1/cases`（membership を持つ Case のみ） | 同一 | #7 |
-| `POST /cases` | Case作成 | `POST /api/v1/cases` body `{ deceasedName, dateOfDeath, ownerName, relationshipToDeceased, knownAt?, municipality? }` → 201。作成者は OWNER | 同一 | #7 |
+| `POST /cases` | Case作成 | `POST /api/v1/cases` body `{ deceasedName, dateOfDeath, ownerName, relationshipToDeceased, knownAt?, municipality?, ownerPerson? }` → 201。作成者は OWNER。`ownerPerson: { isHeir }` を指定すると作成者本人を Person として同時登録し `ownerPersonId`/`selfPersonId` に紐付ける（指定時は `POST /cases/:caseId/persons` への本人の2回目の登録は不要・二重登録になるので行わないこと）。未来の死亡日、死亡日より前または未来の「知った日」は 400 | 同一（フィールド追加） | #7 |
 | `GET /cases/:caseId` | ヘッダー表示 | `GET C` | 同一 | #7 |
 | `PATCH /cases/:caseId` | 市区町村等の訂正 | `PATCH C` body `{ municipality?, ..., expectedVersion }`。`status` / `progress` は含めない | 同一（strict化） | #7 |
-| `GET /cases/:caseId/overview` | ダッシュボード、10段階フロー | `GET C/overview` → Task/期限/待機/承認/段階の集約 | 同一 | #17 |
+| `GET /cases/:caseId/overview` | ダッシュボード、10段階フロー | `GET C/overview` → Task/期限/待機/承認/段階の集約。`inheritanceDecision.deliberationDeadline`（`DeadlineSummary`相当、`DeadlineResource \| null`）に熟慮期間（民法915条）の残日数を返す。永続 Deadline ではなく Case の日付からその場で算定するため、Task 側の期限（相続方法の選択）と再評価前は一時的に不一致になりうる | 同一 | #17 |
 
 権限: 一覧・詳細・overview は全 role。作成は認証済みユーザー、更新は OWNER / EDITOR。
 
@@ -69,7 +69,7 @@
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
 | `GET /cases/:caseId/documents` | 書類一覧 | `GET C/documents` | 同一 | #8 |
-| `POST /cases/:caseId/documents`（multipart） | アップロード | `POST C/documents` multipart（`file`, `kind`）→ 201 の書類リソース（`storageState: 'STORED'`）。検査状態は `inspection.status`、解析状態は `analysis.state`。未接続の検査は `PENDING`、解析未受付は `NOT_REQUESTED`、`analysis.canRequest:false`と理由を表示 | 同一 | #8 / #19 |
+| `POST /cases/:caseId/documents`（multipart） | アップロード | `POST C/documents` multipart（`file`, `kind`）→ 201 の書類リソース（`storageState: 'STORED'`）。外部AI同意（`CROSS_BORDER_AI`未同意/版ずれ）は保存前に403（`details.requiredConsent`）。検査状態は `inspection.status`、解析状態は `analysis.state`。未接続の検査は `PENDING`、解析未受付は `NOT_REQUESTED`、`analysis.canRequest:false`と理由を表示 | 同一 | #8 / #19 |
 | `GET /documents/:documentId` | 詳細 | `GET C/documents/:documentId`（メタデータ）、`GET C/documents/:documentId/content`（認可済み配信） | Case配下へ | #8 |
 | `DELETE /documents/:documentId` | 削除 | `POST C/documents/:documentId/archive` body `{ expectedVersion }`。物理削除はしない。参照元で現在の利用可否を表示し、archive書類を新しい完了根拠にしない | **Commandへ（archive）** | #8 |
 
@@ -129,7 +129,7 @@
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
 | `GET /cases/:caseId/messages` | 履歴 | `GET C/messages?cursor=` | 同一 | #15 |
-| `POST /cases/:caseId/messages`（同期で回答返却） | 送信 | `POST C/messages` body `{ body }` → **202** `{ message, runId, runAccepted, reason }`。回答は `GET C/messages` に `role: 'assistant'` として後から現れる。基本同意不足は403、外部AI同意不足・未接続でも発言を保存し `runAccepted: false` と理由を返す | **非同期化** | #15 / #10 / #12 |
+| `POST /cases/:caseId/messages`（同期で回答返却） | 送信 | `POST C/messages` body `{ body }` → **202** `{ message, runId, runAccepted, reason }`。回答は `GET C/messages` に `role: 'assistant'` として後から現れる。基本同意不足・外部AI同意不足（`CROSS_BORDER_AI`未同意/版ずれ）は保存前に403（`details.requiredConsent`）。AI未接続など同意はあるが実行を受け付けられない場合のみ発言を保存し `runAccepted: false` と理由を返す | **非同期化** | #15 / #10 / #12 |
 
 ## 11. 気づき（Insights）
 

@@ -67,7 +67,14 @@ export interface ConsentRecord extends EntityBase {
 
 export const MAX_HISTORY_ENTRIES = 50
 
-/** 現在の版に対して有効な同意があるか。 */
+/**
+ * 現在の版に対して有効な同意があるか。
+ *
+ * 版の厳密一致で判定する。個人情報保護法28条の外国にある第三者への
+ * 提供は、提供先の国・制度・講じる措置を示したうえでの同意を求める。
+ * 文書の版が上がるとこれらの説明が変わるため、古い版への同意（撤回済み・
+ * 未同意を含む）は、その提供に対する有効な同意として扱わない。
+ */
 export function isSatisfied(record: ConsentRecord | null, definition: ConsentDocumentDefinition): boolean {
   return record?.agreedVersion === definition.version
 }
