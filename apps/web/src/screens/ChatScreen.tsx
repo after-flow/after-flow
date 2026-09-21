@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useMessages, useSendMessage } from '@/lib/api/queries'
+import type { MessageResource } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
 import { formatDateTime } from '@/lib/format'
 import { Button, Loading, textareaClass } from '@/kit/kit'
@@ -24,7 +25,7 @@ export function ChatScreen() {
   const send = useSendMessage(caseId)
   const [input, setInput] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
-  const messages = data?.items ?? []
+  const messages = data ?? []
   const consent = useAiConsent()
 
   useEffect(() => {
@@ -75,7 +76,7 @@ export function ChatScreen() {
         )}
 
         <ul className="flex flex-col gap-4 pb-4">
-          {messages.map((m) => {
+          {messages.map((m: MessageResource) => {
             const mine = m.role === 'user'
             return (
               <li key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start gap-2.5'}`}>
@@ -96,9 +97,9 @@ export function ChatScreen() {
                       この点は個別の法律・税務の判断が必要です。専門家にご相談ください。
                     </p>
                   )}
-                  {m.escalationApprovalId && (
+                  {m.escalationProposalId && (
                     <Link
-                      to={`${base}/approvals/${m.escalationApprovalId}`}
+                      to={`${base}/approvals`}
                       className="mt-2 inline-flex h-9 items-center rounded-md border border-rd-border px-3 text-[0.86rem] font-bold text-rd-text hover:bg-rd-shade"
                     >
                       専門家への相談について確かめる

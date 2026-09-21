@@ -2,7 +2,14 @@
  * 既存フロントエンド向け Public API のリソース型。
  * 期限計算・状態遷移の検証はすべて Backend の Rule Engine が行うため、
  * フロントエンドはここで受け取った値をそのまま表示する（再計算しない）。
+ *
+ * このファイルに残っている型は「Backend の Zod スキーマが `satisfies ZodType<…>` で
+ * 直接参照している契約」（Person/Asset/Liability/Contract/Benefit/Insight/Consent と
+ * その Request 型、TaskGuidance 一式）のみ。FE の画面は `dto/{case,task,proposal,
+ * document,agent,chat,overview}.ts` の `*Resource` を直接使う（変換層は作らない）。
  */
+
+import type { DeadlineResource } from './task.js'
 
 export type ISODate = string // YYYY-MM-DD
 export type ISODateTime = string
@@ -16,39 +23,6 @@ export interface ExpectedVersion {
 /* ---------- Case ---------- */
 
 export type CaseStatus = 'ACTIVE' | 'CLOSED'
-
-export interface Case {
-  id: string
-  deceasedName: string
-  deceasedNameKana?: string
-  dateOfDeath: ISODate
-  dateOfBirth?: ISODate
-  /** 相続開始を知った日（期限の起算日として Rule Engine が使う） */
-  knownAt?: ISODate
-  ownerName: string
-  relationshipToDeceased: string
-  /**
-   * 手続き先の市区町村。
-   * 窓口・持ち物は自治体ごとに異なるため、エージェントが調べる対象になる。
-   * 番地までは不要で、市区町村までしか持たない。
-   */
-  municipality?: string
-  /**
-   * 故人の状況（ケース作成の直後に聞く質問への答え）。
-   * Rule Engine はこれを見て、あてはまる手続きだけを洗い出す。
-   * 答えていない項目・「わからない」は、あてはまる可能性があるものとして扱う。
-   */
-  profile?: CaseProfile
-  status: CaseStatus
-  createdAt: ISODateTime
-  /**
-   * 作成者本人に対応する Person の ID。Backend は null を返しうる項目で、
-   * 他の項目のように省略ではなく明示的に `null` が入る（Backend の CaseResource に合わせた）。
-   */
-  ownerPersonId?: string | null
-  /** 呼び出し利用者自身に紐付く Person の ID。Backend の CaseResource と同じ意味。 */
-  selfPersonId?: string | null
-}
 
 export type YesNoUnknown = 'YES' | 'NO' | 'UNKNOWN'
 
@@ -82,37 +56,9 @@ export type FlowStageId =
   | 'tax'
   | 'closing'
 
-export interface FlowStage {
-  id: FlowStageId
-  label: string
-  totalTasks: number
-  completedTasks: number
-  state: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED'
-}
-
-export interface CaseOverview {
-  case: Case
-  upcomingDeadlines: DeadlineSummary[]
-  pendingApprovalCount: number
-  flowStages: FlowStage[]
-  /** 相続方法の確定状況。未確定の間は放棄前ロックが有効になる。 */
-  inheritanceDecision: InheritanceDecisionSummary
-  recentAgentRuns: AgentRunSummary[]
-  taskCounts: Partial<Record<TaskStatus, number>>
-}
-
 /* ---------- Decision（相続方法） ---------- */
 
 export type InheritanceMethod = 'SIMPLE_ACCEPTANCE' | 'LIMITED_ACCEPTANCE' | 'RENUNCIATION'
-
-export interface InheritanceDecisionSummary {
-  /** false の間は財産処分・現金化に相当する導線を出さない（放棄前ロック） */
-  decided: boolean
-  /** 相続人ごとの確定状況 */
-  perHeir: { personId: string; personName: string; method: InheritanceMethod | null }[]
-  /** 3か月の熟慮期間の期限（Rule Engine 生成） */
-  deliberationDeadline?: ISODate
-}
 
 /* ---------- Person / Family ---------- */
 
@@ -184,8 +130,6 @@ export type ExcludeRelationshipRequest = ExcludePersonRequest
 
 /* ---------- Document ---------- */
 
-export type DocumentAnalysisStatus = 'NOT_ANALYZED' | 'ANALYZING' | 'ANALYZED' | 'NEEDS_REVIEW'
-
 export type DocumentKind =
   | 'DEATH_CERTIFICATE'
   | 'FAMILY_REGISTER'
@@ -194,30 +138,6 @@ export type DocumentKind =
   | 'BANK_STATEMENT'
   | 'INSURANCE_POLICY'
   | 'OTHER'
-
-export interface CaseDocument {
-  id: string
-  caseId: string
-  fileName: string
-  kind: DocumentKind
-  kindSource: 'AI' | 'MANUAL'
-  analysisStatus: DocumentAnalysisStatus
-  sizeBytes: number
-  uploadedAt: ISODateTime
-  /** マイナンバー検知の結果。REJECTED の書類は保存されない。 */
-  myNumberScan: 'CLEAN' | 'MASKED' | 'REJECTED'
-  agentRunId?: string
-  extractions?: DocumentExtraction[]
-}
-
-export interface DocumentExtraction {
-  id: string
-  label: string
-  value: string
-  /** 生成された提案（Approval）への参照 */
-  approvalId?: string
-  targetType?: 'TASK' | 'ASSET' | 'LIABILITY' | 'CONTRACT'
-}
 
 /* ---------- Task / Deadline ---------- */
 
@@ -232,54 +152,10 @@ export type TaskStatus =
   | 'COMPLETED'
   | 'ESCALATED'
 
-export interface Task {
-  id: string
-  caseId: string
-  title: string
-  summary: string
-  /** 提出先・窓口 */
-  submitTo?: string
-  status: TaskStatus
-  stage: FlowStageId
-  category: string
-  assigneeId?: string
-  assigneeName?: string
-  source: 'AI' | 'MANUAL' | 'RULE_ENGINE'
-  /**
-   * 故人の状況によっては不要な手続き（例：年金を受け取っていた場合だけ必要）。
-   * 質問に「わからない」と答えた・まだ答えていない場合に Rule Engine が立てる。
-   * 画面は「あてはまる場合」と添えて、必ず必要な手続きと見分けられるようにする。
-   */
-  conditional?: boolean
-  deadline?: DeadlineSummary
-  requiredDocuments?: RequiredDocument[]
-  guidance?: TaskGuidance
-  dependencies?: TaskDependency[]
-  evidences?: Evidence[]
-  /**
-   * 財産処分・現金化に相当するタスク。
-   * 相続方法が未確定の間は一覧に出さず、警告バナーへの導線のみを表示する。
-   */
-  assetDisposal: boolean
-  updatedAt: ISODateTime
-}
-
-export interface TaskDependency {
-  type: 'TASK' | 'DECISION'
-  label: string
-  satisfied: boolean
-  taskId?: string
-}
-
-export interface RequiredDocument {
-  id: string
-  label: string
-  collected: boolean
-  source: 'AI' | 'MANUAL' | 'RULE_ENGINE'
-  documentId?: string
-}
-
-/** エージェントが「準備」できる範囲（提出先・持ち物・手順・様式の案内）まで。書類の作成・完成は行わない。 */
+/**
+ * BE の `domain/contract/contract.ts` の `Contract.guidance` が参照するため残す
+ * （`ContractResource` は存在せず、BE は旧 `Contract` DTO のまま `guidance?: TaskGuidance` を返す）。
+ * エージェントが「準備」できる範囲（提出先・持ち物・手順・様式の案内）まで。書類の作成・完成は行わない。 */
 export interface TaskGuidance {
   where?: string
   bring?: string[]
@@ -339,32 +215,6 @@ export interface GuidanceResearch {
   missing?: string[]
   /** FAILED のときの理由。利用者に見せる文言。 */
   failureReason?: string
-}
-
-export type DeadlineSeverity = 'NORMAL' | 'SOON' | 'URGENT' | 'OVERDUE'
-
-export interface DeadlineSummary {
-  id: string
-  taskId?: string
-  taskTitle?: string
-  label: string
-  dueDate: ISODate
-  /** 起算日と根拠（例：死亡日 + 7日）。Rule Engine が生成した文字列をそのまま表示する。 */
-  basisLabel: string
-  startDate: ISODate
-  daysRemaining: number
-  severity: DeadlineSeverity
-  extendable: boolean
-  critical: boolean
-}
-
-export interface Evidence {
-  id: string
-  taskId: string
-  label: string
-  kind: 'RECEIPT' | 'NOTICE' | 'PAYMENT' | 'REGISTRATION' | 'OTHER'
-  recordedAt: ISODateTime
-  note?: string
 }
 
 /* ---------- Asset / Liability / Contract / Benefit ---------- */
@@ -504,8 +354,12 @@ export interface Benefit {
   amount?: number
   currency?: MoneyCurrency
   progress: ContractProgress
-  /** 期限は #9 の期限計算で付与される。公開APIからは受給資格や金額・期限を推定しない */
-  deadline?: DeadlineSummary
+  /**
+   * 期限は #9 の期限計算で付与される。公開APIからは受給資格や金額・期限を推定しない。
+   * BE の `benefitResourceSchema` には deadline が無いため、実際には来ない
+   * （常に undefined 扱い）。将来 BE が返し始めたときの受け皿として型だけ用意する。
+   */
+  deadline?: DeadlineResource | null
   note?: string
   progressRecord?: ProgressRecord
   version: number
@@ -541,69 +395,6 @@ export interface SetContractPolicyRequest extends ExpectedVersion {
 export interface ReportProgressRequest extends ExpectedVersion {
   progress: ContractProgress
   note?: string
-}
-
-/* ---------- Approval ---------- */
-
-export type ApprovalKind =
-  | 'TASK_PROPOSAL'
-  | 'ASSET_PROPOSAL'
-  | 'LIABILITY_PROPOSAL'
-  | 'CONTRACT_PROPOSAL'
-  | 'DOCUMENT_REQUEST'
-  | 'ESCALATION_PROPOSAL'
-  | 'EVIDENCE_PROPOSAL'
-
-export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
-
-export interface ProposalDiffRow {
-  field: string
-  before: string | null
-  after: string | null
-  /** 承認時に利用者が修正できる項目（editable proposal） */
-  editable?: boolean
-  /**
-   * 原本のどこから読み取ったか。原本の幅・高さに対する割合（0〜1）で表す。
-   * AI側が座標を返せる場合のみ入る。無ければ画面は強調を出さない。
-   */
-  sourceBox?: { x: number; y: number; w: number; h: number }
-  /**
-   * 読み取りの確からしさ。
-   * LOW のとき、画面は「元の書類と見比べて確かめてください」と促す。
-   * 自信の無い読み取りを、確かなものと同じ見た目で出さないための情報。
-   */
-  confidence?: 'HIGH' | 'MEDIUM' | 'LOW'
-}
-
-export interface Approval {
-  id: string
-  caseId: string
-  kind: ApprovalKind
-  status: ApprovalStatus
-  title: string
-  summary: string
-  createdAt: ISODateTime
-  /** 提案元 */
-  sourceDocumentId?: string
-  sourceDocumentName?: string
-  /**
-   * よく似た内容が既に取り込まれている場合の注意（二重取り込みの検知）。
-   * 同じ戸籍や通帳を二度上げるのは普通に起きるため、確定の前に知らせる。
-   */
-  possibleDuplicate?: {
-    documentName: string
-    takenInAt: ISODateTime
-    approvalId?: string
-  }
-  agentRunId?: string
-  diff: ProposalDiffRow[]
-  /**
-   * Rule Engine が「財産処分・現金化に相当する」と判定した提案。
-   * 相続方法が未確定の間は追加の確認ステップを挟む。
-   */
-  assetDisposal: boolean
-  decidedAt?: ISODateTime
-  decisionNote?: string
 }
 
 /* ---------- Insight（AIが自分で気づいたこと） ---------- */
@@ -680,42 +471,6 @@ export interface DismissInsightRequest {
   reason?: string
 }
 
-/* ---------- AI Activity / Chat ---------- */
-
-export type AgentRunType =
-  | 'document_analysis'
-  | 'case_planning'
-  | 'case_replanning'
-  | 'task_execution'
-  | 'task_monitoring'
-  | 'professional_escalation'
-  | 'guidance'
-
-export type AgentRunStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED'
-
-export interface AgentRunSummary {
-  id: string
-  caseId: string
-  type: AgentRunType
-  status: AgentRunStatus
-  summary: string
-  startedAt: ISODateTime
-  finishedAt?: ISODateTime
-  producedApprovalIds?: string[]
-}
-
-export interface ChatMessage {
-  id: string
-  caseId: string
-  role: 'user' | 'assistant'
-  body: string
-  createdAt: ISODateTime
-  /** 個別の法律・税務判断が必要な内容を含む場合に付与される定型注記 */
-  professionalNotice?: boolean
-  /** professional_escalation と判定された場合の遷移先 Approval */
-  escalationApprovalId?: string
-}
-
 /* ---------- 同意（利用規約・個人情報の取扱い） ---------- */
 
 /**
@@ -728,35 +483,3 @@ export interface ChatMessage {
  */
 export type ConsentKind = 'TERMS' | 'PRIVACY' | 'CROSS_BORDER_AI'
 
-export interface ConsentDocument {
-  kind: ConsentKind
-  /** 改定のたびに上がる。同意済みバージョンと異なれば取り直す。 */
-  version: string
-  title: string
-  /** 同意画面に出す要点。全文は url 先に置く。 */
-  summary: string[]
-  url: string
-  required: boolean
-  /** 同意済みのバージョン。未同意なら null */
-  agreedVersion: string | null
-  agreedAt: ISODateTime | null
-}
-
-export interface ConsentStatus {
-  documents: ConsentDocument[]
-  /** 必須のうち、未同意または版ずれがあるか */
-  outstanding: boolean
-}
-
-/* ---------- 共通 ---------- */
-
-export interface Paginated<T> {
-  items: T[]
-  total: number
-}
-
-export interface ApiError {
-  code: string
-  message: string
-  details?: Record<string, unknown>
-}

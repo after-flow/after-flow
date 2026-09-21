@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { HttpError } from '@/lib/api/client'
+import type { DocumentKind } from '@aftercare/public-contracts'
+import { ApiError } from '@/lib/api/client'
 import { useUploadDocument } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { formatFileSize } from '@/lib/format'
-import { Button, Modal, Notice } from '@/kit/kit'
+import { DOCUMENT_KIND_LABEL } from '@/lib/labels'
+import { Button, Field, Modal, Notice, inputClass } from '@/kit/kit'
 import { AiConsentNotice, useAiConsent } from '@/kit/domain'
 
 type Phase = 'idle' | 'uploading' | 'checking' | 'done' | 'error'
@@ -38,13 +40,11 @@ export function Dropzone({
 
 type Item = { key: number; name: string; size: number; phase: Exclude<Phase, 'idle'>; message?: string }
 
-function errorMessage(err: unknown) {
-  if (err instanceof HttpError && err.body?.code === 'MY_NUMBER_DETECTED')
-    return 'マイナンバーが書かれているため、追加できません。その部分を隠してから、もう一度お試しください。'
-  if (err instanceof HttpError && err.body?.code === 'UNSUPPORTED_FILE_TYPE')
-    return 'この形式には対応していません。PDF・JPEG・PNG のいずれかでお試しください。'
-  if (err instanceof HttpError && err.status === 413)
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'PAYLOAD_TOO_LARGE')
     return 'ファイルが大きすぎて送れませんでした。写真の場合は、画質を下げて撮り直すか、1ページずつ追加してください。'
+  if (err instanceof ApiError && err.code === 'UNSUPPORTED_MEDIA_TYPE')
+    return 'この形式には対応していません。PDF・JPEG・PNG のいずれかでお試しください。'
   return 'うまく送れませんでした。通信の状態をご確認のうえ、もう一度お試しください。'
 }
 
@@ -62,6 +62,7 @@ function DropzoneBody({
   onBusyChange?: (busy: boolean) => void
 }) {
   const upload = useUploadDocument(caseId)
+  const [kind, setKind] = useState<DocumentKind>('OTHER')
   const inputRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const [items, setItems] = useState<Item[]>([])
@@ -85,15 +86,17 @@ function DropzoneBody({
 
     for (let n = 0; n < list.length; n++) {
       const key = added[n].key
-      // 送信後にサーバーでマイナンバー検知が走るので「確認中」を挟む
+      // 送信後にサーバーで検査が走るので「確認中」を挟む
       const t = setTimeout(() => patch(key, { phase: 'checking' }), 500)
       try {
-        const doc = await upload.mutateAsync(list[n])
-        patch(key, {
-          phase: 'done',
-          message: doc.myNumberScan === 'MASKED' ? 'マイナンバーらしき記載を隠して保存しました' : undefined,
-        })
-        anyDone = true
+        const doc = await upload.mutateAsync({ file: list[n], kind })
+        if (doc.inspection.status === 'REJECTED' || doc.storageState === 'FAILED') {
+          const findings = doc.inspection.findings.map((f) => f.message)
+          patch(key, { phase: 'error', message: findings.length > 0 ? findings.join('。') : 'お預かりできませんでした。' })
+        } else {
+          patch(key, { phase: 'done' })
+          anyDone = true
+        }
       } catch (err) {
         patch(key, { phase: 'error', message: errorMessage(err) })
       } finally {
@@ -111,6 +114,24 @@ function DropzoneBody({
 
   return (
     <div className="flex flex-col gap-3">
+      <Field label="書類の種類">
+        {(id) => (
+          <select
+            id={id}
+            className={inputClass}
+            value={kind}
+            disabled={busy}
+            onChange={(e) => setKind(e.target.value as DocumentKind)}
+          >
+            {Object.entries(DOCUMENT_KIND_LABEL).map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
+
       <div
         onDragOver={(e) => {
           e.preventDefault()
@@ -169,7 +190,7 @@ function DropzoneBody({
                 </span>
                 <span className="shrink-0 text-[0.86rem] font-bold">
                   {i.phase === 'uploading' && <span className="text-rd-primary-text">送信中…</span>}
-                  {i.phase === 'checking' && <span className="text-rd-primary-text">マイナンバーのチェック中…</span>}
+                  {i.phase === 'checking' && <span className="text-rd-primary-text">確認中…</span>}
                   {i.phase === 'done' && <span className="text-rd-success-text">追加しました</span>}
                   {i.phase === 'error' && <span className="text-rd-danger-text">できませんでした</span>}
                 </span>
@@ -184,7 +205,7 @@ function DropzoneBody({
 
       {doneCount > 0 && !busy && (
         <Notice tone="success" title={`${doneCount}件追加しました`}>
-          AIが中身を読み取っています。数分ほどで「AIからの確認」に並ぶので、内容が合っているかだけ見てください。読み取りの進み具合は「書類」で確かめられます。
+          書類の詳細から「読み取りを依頼する」と、AIが内容を読み取ります。進み具合は「書類」で確かめられます。
         </Notice>
       )}
 
@@ -216,7 +237,7 @@ export function UploadDialog({
     <Modal
       open={open}
       title="書類を追加"
-      description="死亡診断書・戸籍・通帳・保険証券・遺言書など。何の書類かはAIが見分けます。"
+      description="死亡診断書・戸籍・通帳・保険証券・遺言書など。書類の種類を選んでから追加してください。"
       onClose={close}
       footer={
         busy ? (

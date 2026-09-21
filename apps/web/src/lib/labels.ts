@@ -1,10 +1,11 @@
 import type { IconName } from '@/kit/Icon'
 import type {
   ContractProgress,
+  DeadlineResource,
   DocumentKind,
   InheritanceMethod,
   InsightKind,
-  TaskStatus,
+  TaskStatusResource,
 } from '@aftercare/public-contracts'
 
 /**
@@ -13,7 +14,7 @@ import type {
  * 画面に出す言葉は kit/words.ts の TASK_STATUS_WORD を使う。
  */
 export const TASK_STATUS_META: Record<
-  TaskStatus,
+  TaskStatusResource,
   { label: string; icon: IconName }
 > = {
   NOT_STARTED: { label: '未着手', icon: 'circle' },
@@ -27,7 +28,7 @@ export const TASK_STATUS_META: Record<
   ESCALATED: { label: '専門家対応中', icon: 'star' },
 }
 
-export const TASK_STATUS_ORDER: TaskStatus[] = [
+export const TASK_STATUS_ORDER: TaskStatusResource[] = [
   'NOT_STARTED',
   'COLLECTING_INFORMATION',
   'WAITING_DOCUMENTS',
@@ -177,7 +178,7 @@ export function taskCategoryMeta(category: string) {
  * 期限を「いつまでに」でまとめる。
  * 日付の羅列より、人が実際に考える単位に近い。
  */
-export type DeadlineBucketId = 'overdue' | 'today' | 'soon' | 'week' | 'later' | 'none'
+export type DeadlineBucketId = 'overdue' | 'today' | 'soon' | 'week' | 'later' | 'unresolved' | 'none'
 
 export const DEADLINE_BUCKETS: {
   id: DeadlineBucketId
@@ -189,15 +190,22 @@ export const DEADLINE_BUCKETS: {
   { id: 'soon', label: '3日以内', tone: 'warning' },
   { id: 'week', label: '今週中', tone: 'warning' },
   { id: 'later', label: 'それ以降', tone: 'normal' },
+  { id: 'unresolved', label: '期限を確認中', tone: 'warning' },
   { id: 'none', label: '期限の定めなし', tone: 'quiet' },
 ]
 
-export function deadlineBucket(daysRemaining?: number): DeadlineBucketId {
-  if (daysRemaining == null) return 'none'
-  if (daysRemaining < 0) return 'overdue'
-  if (daysRemaining === 0) return 'today'
-  if (daysRemaining <= 3) return 'soon'
-  if (daysRemaining <= 7) return 'week'
+/**
+ * `d` が無ければ「期限の定めなし」、`dueDate` が算定できていなければ「期限を確認中」
+ * （推測した日付を確定した期限として扱わないため、別バケットに分ける）。
+ */
+export function deadlineBucket(d?: DeadlineResource | null): DeadlineBucketId {
+  if (!d) return 'none'
+  if (d.dueDate == null) return 'unresolved'
+  if (d.daysRemaining == null) return 'unresolved'
+  if (d.daysRemaining < 0) return 'overdue'
+  if (d.daysRemaining === 0) return 'today'
+  if (d.daysRemaining <= 3) return 'soon'
+  if (d.daysRemaining <= 7) return 'week'
   return 'later'
 }
 

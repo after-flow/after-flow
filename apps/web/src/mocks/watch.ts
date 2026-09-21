@@ -1,4 +1,4 @@
-import type { Insight, Task, TaskStatus } from '@aftercare/public-contracts'
+import type { Insight, TaskResource, TaskStatusResource } from '@aftercare/public-contracts'
 import { db } from './db'
 
 /**
@@ -15,13 +15,14 @@ import { db } from './db'
  *     - 相続放棄を選んだ方がいる：次の順位の方が相続人になる場合がある（法的判断なので専門家へ）
  *
  * 手続きの一覧や期限そのものは書き換えない。知らせるだけで、判断は利用者に任せる。
+ * 本番コードからは参照しない。
  */
 
 const DAY = 86_400_000
-const WAITING: TaskStatus[] = ['SUBMITTED', 'WAITING_EXTERNAL']
-const MOVING: TaskStatus[] = ['COLLECTING_INFORMATION', 'WAITING_DOCUMENTS', 'READY', 'ACTION_REQUIRED']
+const WAITING: TaskStatusResource[] = ['SUBMITTED', 'WAITING_EXTERNAL']
+const MOVING: TaskStatusResource[] = ['COLLECTING_INFORMATION', 'WAITING_DOCUMENTS', 'READY', 'ACTION_REQUIRED']
 
-const STATUS_WORD: Partial<Record<TaskStatus, string>> = {
+const STATUS_WORD: Partial<Record<TaskStatusResource, string>> = {
   COLLECTING_INFORMATION: '調べている',
   WAITING_DOCUMENTS: '書類を集めている',
   READY: '出せる状態',
@@ -40,15 +41,15 @@ function dateWord(iso: string) {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
 }
 
-function stalledDays(t: Task, now: number): number | null {
+function stalledDays(t: TaskResource, now: number): number | null {
   const idle = Math.floor((now - new Date(t.updatedAt).getTime()) / DAY)
   if (WAITING.includes(t.status)) return idle >= 14 ? idle : null
   if (!MOVING.includes(t.status)) return null
-  const near = t.deadline && t.deadline.daysRemaining <= 7
+  const near = t.deadline?.daysRemaining != null && t.deadline.daysRemaining <= 7
   return idle >= (near ? 3 : 7) ? idle : null
 }
 
-function stalledInsight(t: Task, days: number, key: string): Insight {
+function stalledInsight(t: TaskResource, days: number, key: string): Insight {
   const waiting = WAITING.includes(t.status)
   return {
     id: key,
@@ -60,7 +61,7 @@ function stalledInsight(t: Task, days: number, key: string): Insight {
     evidence: [
       { label: 'いまの状態', value: STATUS_WORD[t.status] ?? t.status, taskId: t.id },
       { label: '最後に更新した日', value: dateWord(t.updatedAt) },
-      ...(t.deadline ? [{ label: '期限', value: `${dateWord(t.deadline.dueDate)}（あと${t.deadline.daysRemaining}日）` }] : []),
+      ...(t.deadline?.dueDate ? [{ label: '期限', value: `${dateWord(t.deadline.dueDate)}（あと${t.deadline.daysRemaining}日）` }] : []),
     ],
     detectedAt: new Date().toISOString(),
     relatedTaskId: t.id,
@@ -106,7 +107,7 @@ export function watchCase(caseId: string) {
   */
   const decision = decisionTask(caseId)
   const settled =
-    (before != null && [...before.keys()].some((id) => db.decisions[id] != null)) ||
+    (before != null && [...before.keys()].some((id) => db.decisions.some((d) => d.personId === id && d.method != null))) ||
     (decision != null && decision.status !== 'NOT_STARTED')
   if (before && before.size > 0 && settled) {
     const added = [...heirs].filter(([id, name]) => !before.has(id) && name !== kase.ownerName)
@@ -149,7 +150,8 @@ export function watchCase(caseId: string) {
 
   /* ---- 3. 相続放棄を選んだ方がいる ---- */
   for (const [personId, name] of heirs) {
-    if (db.decisions[personId] !== 'RENUNCIATION') {
+    const method = db.decisions.find((d) => d.personId === personId)?.method
+    if (method !== 'RENUNCIATION') {
       // 取り消されたら、次に選び直したときにもう一度知らせる
       renunciationNotified.delete(personId)
       continue

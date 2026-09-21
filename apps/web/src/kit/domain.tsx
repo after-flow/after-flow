@@ -4,8 +4,15 @@
  */
 import type { ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import type { DeadlineSummary, InheritanceDecisionSummary, Task, TaskStatus } from '@aftercare/public-contracts'
-import { useCaseOverview, useConsents, usePersons } from '@/lib/api/queries'
+import type {
+  CaseOverviewResource,
+  CaseProfile,
+  CaseResource,
+  DeadlineResource,
+  TaskResource,
+  TaskStatusResource,
+} from '@aftercare/public-contracts'
+import { useCaseOverview, useConsents } from '@/lib/api/queries'
 import { Icon, type IconName } from '@/kit/Icon'
 import { formatDate } from '@/lib/format'
 import { TASK_STATUS_META, taskCategoryMeta } from '@/lib/labels'
@@ -18,21 +25,31 @@ export function useCaseBase() {
   return { caseId, base: `/cases/${caseId}` }
 }
 
+/**
+ * 故人の状況（`Case.profile`）。契約に無い（BE ユニット4 が `CaseResource.profile`
+ * を追加するまで）ため、`CaseResource` の型には乗せず局所的な optional 読みにする。
+ * マージ後に型が揃ったら `caseResource.profile` に置き換えて、この関数は消せる。
+ */
+export function caseProfileOf(caseResource: CaseResource): CaseProfile | undefined {
+  return (caseResource as { profile?: CaseProfile }).profile
+}
+
 /* ---------- 放棄前ロック ---------- */
 
 export type LockReason = 'undecided' | 'renunciation' | 'limited' | null
+type InheritanceDecisionSummary = CaseOverviewResource['inheritanceDecision']
 
 /**
  * 財産処分・現金化にあたる導線を閉じるかどうか。
  *
- * 開けるのは「ログインしている本人が単純承認を選んだ」と記録されたときだけ。
+ * 開けるのは「ログインしている本人（`case.selfPersonId`）が単純承認を選んだ」と
+ * 本人自身が確定した（`confirmed`）ときだけ。
  *  - 相続放棄を選んだ人が故人の財産を使ったり処分したりすると、放棄が認められなくなるおそれがある
  *    （民法921条。受理された後でも、財産を隠したり使ったりすれば同じ）
  *  - 限定承認では、財産の処分は裁判所の手続きに沿って行う。自分の判断で解約・換金するものではない
- * そのため「全員が方法を決めた」ことは開ける理由にならない。
  *
- * 本人が相続人の一覧から特定できないときは、全員が単純承認の場合に限って開ける。
- * 取得前・特定できない場合は安全側に倒して閉じたままにする。
+ * `case.selfPersonId` が無い（本人が Person に紐付いていない）場合は、
+ * 全員が単純承認で確定している場合に限って開ける。取得前・特定できない場合は安全側に倒して閉じる。
  */
 export function useLock(caseId: string): {
   locked: boolean
@@ -40,23 +57,23 @@ export function useLock(caseId: string): {
   decision?: InheritanceDecisionSummary
 } {
   const { data } = useCaseOverview(caseId)
-  const persons = usePersons(caseId)
-  if (!data || !persons.data) return { locked: true, reason: 'undecided', decision: data?.inheritanceDecision }
-
+  if (!data) return { locked: true, reason: 'undecided' }
   const decision = data.inheritanceDecision
-  const owner = persons.data.items.find((p) => p.isHeir && sameName(p.name, data.case.ownerName))
-  const methods = owner
-    ? [decision.perHeir.find((h) => h.personId === owner.id)?.method ?? null]
-    : decision.perHeir.map((h) => h.method)
+  if (decision.unknown) return { locked: true, reason: 'undecided', decision }
 
-  if (methods.length === 0 || methods.some((m) => m == null)) return { locked: true, reason: 'undecided', decision }
-  if (methods.includes('RENUNCIATION')) return { locked: true, reason: 'renunciation', decision }
-  if (methods.includes('LIMITED_ACCEPTANCE')) return { locked: true, reason: 'limited', decision }
-  return { locked: false, reason: null, decision }
-}
+  const selfId = data.case.selfPersonId
+  const self = selfId ? decision.perHeir.find((h) => h.personId === selfId) : undefined
+  if (self) {
+    if (self.confirmed && self.method === 'SIMPLE_ACCEPTANCE') return { locked: false, reason: null, decision }
+    if (self.confirmed && self.method === 'RENUNCIATION') return { locked: true, reason: 'renunciation', decision }
+    if (self.confirmed && self.method === 'LIMITED_ACCEPTANCE') return { locked: true, reason: 'limited', decision }
+    return { locked: true, reason: 'undecided', decision }
+  }
 
-function sameName(a: string, b: string) {
-  return a.replace(/\s/g, '') === b.replace(/\s/g, '')
+  if (decision.decided && decision.perHeir.length > 0 && decision.perHeir.every((h) => h.method === 'SIMPLE_ACCEPTANCE')) {
+    return { locked: false, reason: null, decision }
+  }
+  return { locked: true, reason: 'undecided', decision }
 }
 
 const LOCK_TEXT: Record<Exclude<LockReason, null>, { title: string; body: string; link: string }> = {
@@ -88,6 +105,7 @@ export function LockNotice({ caseId, compact, strip }: { caseId: string; compact
   const { locked, reason, decision } = useLock(caseId)
   if (!locked || !reason) return null
   const t = LOCK_TEXT[reason]
+  const deadline = decision?.deliberationDeadline
   if (strip) {
     return (
       // 文と行き先を1つの段落に流し込む。狭い画面でも折り返しが最小（おおむね2行）で済む
@@ -118,9 +136,9 @@ export function LockNotice({ caseId, compact, strip }: { caseId: string; compact
       <p className="min-w-[12rem] flex-1 text-[0.94rem] leading-relaxed">
         <strong className="text-rd-danger-text">{t.title}</strong>
         {!compact && <> {t.body}</>}
-        {reason === 'undecided' && decision?.deliberationDeadline && (
+        {reason === 'undecided' && deadline?.dueDate && (
           <span className="ml-1 inline-block text-rd-text-2">
-            （相続の方法を決める期限 {formatDate(decision.deliberationDeadline, { weekday: true })}）
+            （相続の方法を決める期限 {formatDate(deadline.dueDate, { weekday: true })}）
           </span>
         )}
       </p>
@@ -141,14 +159,11 @@ export function LockNotice({ caseId, compact, strip }: { caseId: string; compact
  *
  * この同意は任意で、断っても手続きと期限の管理は使える、と同意画面で約束している。
  * 約束どおり、同意が無い間は書類の解析・AI相談・自律調査の入口を閉じる。
- * 同意の状態が取れないときも、送らない側に倒す。
+ * 版ずれの判定は BE の `availability.externalAi` に任せる（自己判定をやめる）。
  */
 export function useAiConsent() {
   const { data, isLoading } = useConsents()
-  const doc = data?.documents.find((d) => d.kind === 'CROSS_BORDER_AI')
-  // 同意の対象として出ていない（＝移転が無い運用）なら妨げない
-  const allowed = data ? !doc || doc.agreedVersion === doc.version : false
-  return { allowed, loading: isLoading }
+  return { allowed: data?.availability.externalAi ?? false, loading: isLoading }
 }
 
 /** 同意が無いときに、入口の代わりに出す説明 */
@@ -182,13 +197,13 @@ export type TaskGroup = 'todo' | 'waiting' | 'done'
  * 利用者にとっての状態は3つで足りる。
  * 「自分がやること」「相手の返事を待つもの」「済んだもの」。
  */
-export function taskGroup(status: TaskStatus): TaskGroup {
+export function taskGroup(status: TaskStatusResource): TaskGroup {
   if (status === 'COMPLETED') return 'done'
   if (status === 'SUBMITTED' || status === 'WAITING_EXTERNAL' || status === 'ESCALATED') return 'waiting'
   return 'todo'
 }
 
-const STATUS_TONE: Record<TaskStatus, Tone> = {
+const STATUS_TONE: Record<TaskStatusResource, Tone> = {
   NOT_STARTED: 'gray',
   COLLECTING_INFORMATION: 'blue',
   WAITING_DOCUMENTS: 'yellow',
@@ -200,7 +215,7 @@ const STATUS_TONE: Record<TaskStatus, Tone> = {
   ESCALATED: 'purple',
 }
 
-export function TaskStatusBadge({ status }: { status: TaskStatus }) {
+export function TaskStatusBadge({ status }: { status: TaskStatusResource }) {
   const meta = TASK_STATUS_META[status]
   return (
     <Badge tone={STATUS_TONE[status]} icon={meta.icon}>
@@ -209,10 +224,13 @@ export function TaskStatusBadge({ status }: { status: TaskStatus }) {
   )
 }
 
-/** 故人の状況によっては不要な手続きに添える印 */
-export function ConditionalBadge({ task }: { task: Task }) {
-  if (!task.conditional) return null
-  return <Badge tone="gray">あてはまる場合</Badge>
+/**
+ * 故人の状況によっては不要な手続きに添える印。
+ * `conditional` は契約に無い（BE ユニット4 が `Case.profile` を返し始めるまで、
+ * Task にもこの区別は乗らない）。それまでは何も出さない。
+ */
+export function ConditionalBadge(_props: { task: TaskResource }) {
+  return null
 }
 
 /**
@@ -224,22 +242,26 @@ export function ConditionalBadge({ task }: { task: Task }) {
  *
  * 本来は Rule Engine が目安の期限を返すべきもので、それまでの応急処置（申し送り済み）。
  */
-export function prepDeadline(task: Task, all: Task[]): DeadlineSummary | undefined {
+export function prepDeadline(task: TaskResource, all: TaskResource[]): DeadlineResource | undefined {
   if (task.deadline || task.stage !== 'investigation' || task.status === 'COMPLETED') return undefined
-  return all.find((t) => t.stage === 'decision' && t.status !== 'COMPLETED')?.deadline
+  const decisionTask = all.find((t) => t.stage === 'decision' && t.status !== 'COMPLETED')
+  return decisionTask?.deadline ?? undefined
 }
 
 /**
- * 期限が近い順。期限の無いものは後ろ。
+ * 期限が近い順。期限の無いもの・未確定のものは後ろ。
  * 下準備は、その判断の期限と同じ位置の「手前」に並べる（判断より先に手を付けるものなので）。
  */
-export function byDeadlineIn(all: Task[]) {
-  const key = (t: Task) => {
-    if (t.deadline) return `${t.deadline.dueDate}1`
+export function byDeadlineIn(all: TaskResource[]) {
+  const key = (t: TaskResource) => {
+    if (t.deadline?.dueDate) return `${t.deadline.dueDate}1`
     const prep = prepDeadline(t, all)
-    return prep ? `${prep.dueDate}0` : '9999'
+    if (prep?.dueDate) return `${prep.dueDate}0`
+    // 期限を確認中（dueDate が無い）ものは、期限なしより前・確定期限より後
+    if (t.deadline && t.deadline.dueDate === null) return '9998'
+    return '9999'
   }
-  return (a: Task, b: Task) => key(a).localeCompare(key(b))
+  return (a: TaskResource, b: TaskResource) => key(a).localeCompare(key(b))
 }
 
 /** 行き先（役所・銀行…）を色と形で */
@@ -258,15 +280,19 @@ export function CategoryIcon({ category, size = 36 }: { category: string; size?:
 
 /* ---------- 期限 ---------- */
 
-function dueTone(d: DeadlineSummary) {
-  if (d.severity === 'OVERDUE' || d.severity === 'URGENT' || d.daysRemaining <= 3)
-    return 'text-rd-danger-text'
+function dueTone(d: DeadlineResource) {
+  if (d.daysRemaining == null) return 'text-rd-text-3'
+  if (d.severity === 'OVERDUE' || d.severity === 'URGENT' || d.daysRemaining <= 3) return 'text-rd-danger-text'
   if (d.severity === 'SOON' || d.daysRemaining <= 7) return 'text-rd-warning-text'
   return 'text-rd-text-2'
 }
 
 /** 残日数の文言。Rule Engine の daysRemaining をそのまま使い、再計算しない。 */
-export function dueWords(d: DeadlineSummary) {
+export function dueWords(d: DeadlineResource): string {
+  if (d.daysRemaining == null) {
+    if (d.unresolvedReason === 'MISSING_BASIS_DATE') return '起算日が未入力のため期限を出せません'
+    return '期限を確認中です'
+  }
   if (d.daysRemaining < 0) return `${Math.abs(d.daysRemaining)}日過ぎています`
   if (d.daysRemaining === 0) return '今日まで'
   return `あと${d.daysRemaining}日`
@@ -278,25 +304,25 @@ export function Due({
   withDate = true,
   prep,
 }: {
-  deadline?: DeadlineSummary
+  deadline?: DeadlineResource | null
   done?: boolean
   withDate?: boolean
   /** 期限の無い下準備のとき、目安にする「相続の方法を決める」の期限 */
-  prep?: DeadlineSummary
+  prep?: DeadlineResource
 }) {
   if (!deadline && prep && !done)
     return (
       <span className="inline-flex flex-col items-end leading-tight whitespace-nowrap">
         <span className="text-[0.94rem] font-bold text-rd-warning-text">早めに</span>
-        {/* 何の期限かは、一覧の見出し・手続きの詳細で説明している。ここは日付だけにして列の幅に収める */}
-        {withDate && (
+        {withDate && prep.dueDate && (
           <span className="hidden text-[0.8rem] text-rd-text-3 sm:block">
-            {formatDate(prep.dueDate, { weekday: true })}より前に
+            判断の期限 {formatDate(prep.dueDate, { weekday: true })}より前に
           </span>
         )}
       </span>
     )
   if (!deadline) return <span className="text-[0.9rem] text-rd-text-3">期限なし</span>
+  if (deadline.dueDate == null) return <span className="text-[0.9rem] text-rd-text-3">期限：要確認</span>
   if (done)
     return <span className="text-[0.9rem] text-rd-text-3">{formatDate(deadline.dueDate)}</span>
   return (
@@ -304,7 +330,10 @@ export function Due({
       <span className={`text-[0.94rem] font-bold ${dueTone(deadline)}`}>{dueWords(deadline)}</span>
       {/* 狭い画面では日付を省き、手続きの名前に幅を回す（日付は手続きの詳細で見られる） */}
       {withDate && (
-        <span className="hidden text-[0.8rem] text-rd-text-3 sm:block">{formatDate(deadline.dueDate, { weekday: true })}まで</span>
+        <span className="hidden text-[0.8rem] text-rd-text-3 sm:block">
+          {formatDate(deadline.dueDate, { weekday: true })}まで
+          {deadline.confirmation === 'UNCONFIRMED' && '（確認中の目安）'}
+        </span>
       )}
     </span>
   )

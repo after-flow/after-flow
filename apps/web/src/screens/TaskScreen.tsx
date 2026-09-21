@@ -1,26 +1,25 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
+  useAcknowledgeInsight,
   useAddEvidence,
-  useAssignTask,
   useCaseOverview,
   useInsights,
   usePersons,
-  useReopenTask,
+  useRunTaskCommand,
   useTask,
+  useTaskGuidance,
   useTasks,
-  useUpdateInsightStatus,
   useUpdateRequiredDocuments,
-  useUpdateTaskStatus,
+  useUpdateTask,
 } from '@/lib/api/queries'
-import type { Evidence, RequiredDocument, Task, TaskStatus } from '@aftercare/public-contracts'
+import type { TaskRequiredDocumentResource, TaskResource } from '@aftercare/public-contracts'
 import { toast } from '@/kit/toast'
 import { isCarriedOver, isDisplayableInsight } from '@/lib/insights'
 import { INSIGHT_KIND_META } from '@/lib/labels'
 import { Icon } from '@/kit/Icon'
 import { formatDate, formatDateTime } from '@/lib/format'
-import { TASK_STATUS_ORDER } from '@/lib/labels'
-import { TASK_STATUS_WORD } from '@/kit/words'
+import { TASK_COMMAND_WORD, taskDependencies, visibleActions } from '@/lib/model/task'
 import { safeExternalUrl, urlHostname } from '@/lib/url'
 import {
   Button,
@@ -69,12 +68,12 @@ export function TaskScreen() {
 
 function TaskScreenBody({ taskId }: { taskId: string }) {
   const { caseId, base } = useCaseBase()
-  const { data: task, isLoading, isError, refetch } = useTask(taskId)
+  const { data: task, isLoading, isError, refetch } = useTask(caseId, taskId)
   const all = useTasks(caseId)
   const overview = useCaseOverview(caseId)
+  const guidance = useTaskGuidance(caseId, taskId)
   const { locked, reason } = useLock(caseId)
-  const reopen = useReopenTask(caseId)
-  const updateStatus = useUpdateTaskStatus(caseId)
+  const runCommand = useRunTaskCommand(caseId)
 
   const [confirming, setConfirming] = useState(false)
   const [justDone, setJustDone] = useState(false)
@@ -103,16 +102,16 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
     )
   }
 
-  const g = task.guidance
+  const g = guidance.data
   const d = task.deadline
   // 期限の無い下準備（戸籍の収集など）は、相続の方法を決める期限を目安として示す
   const prep = prepDeadline(task, all.data?.items ?? [])
   const done = task.status === 'COMPLETED'
-  const unmet = (task.dependencies ?? []).filter((x) => !x.satisfied)
+  const unmet = taskDependencies(task, all.data?.items ?? []).filter((x) => !x.satisfied)
   const where = g?.where ?? task.submitTo
-  const form = safeExternalUrl(g?.formExampleUrl)
+  const form = safeExternalUrl(g?.formExampleUrl ?? undefined)
 
-  const dueTone = !d || done
+  const dueTone = !d || done || d.daysRemaining == null
     ? 'text-rd-text-3'
     : d.daysRemaining <= 3
       ? 'text-rd-danger-text'
@@ -120,6 +119,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
         ? 'text-rd-warning-text'
         : ''
   const isDecision = task.stage === 'decision'
+  const actions = visibleActions(task)
 
   const next = (all.data?.items ?? [])
     .filter((t) => t.id !== task.id && taskGroup(t.status) === 'todo' && !(locked && t.assetDisposal))
@@ -165,7 +165,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
           <div className="min-w-0 flex-1">
             <p className={`text-[1.2rem] font-bold leading-tight ${dueTone}`}>{done ? '完了' : dueWords(d)}</p>
             <p className="text-[0.86rem] text-rd-text-2">
-              {formatDate(d.dueDate, { weekday: true })}まで（{d.basisLabel}）
+              {d.dueDate ? `${formatDate(d.dueDate, { weekday: true })}まで（${d.basisLabel}）` : d.basisLabel}
             </p>
           </div>
         </div>
@@ -174,20 +174,16 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
       {!d && prep && !done && (
         <div className="rounded-lg border border-rd-warning-line bg-rd-warning-soft px-4 py-3 text-[0.9rem] leading-relaxed xl:hidden">
           <strong className="text-rd-warning-text">早めに始めたい手続きです。</strong>
-          相続の方法を決める期限（{formatDate(prep.dueDate, { weekday: true })}）より前に済ませます。
+          {prep.dueDate && <>相続の方法を決める期限（{formatDate(prep.dueDate, { weekday: true })}）より前に済ませます。</>}
         </div>
       )}
 
       {unmet.length > 0 && (
         <Notice tone="warning" title="先に済ませておくことがあります">
           <ul className="list-disc pl-5">
-            {unmet.map((x, i) => (
-              <li key={i}>
-                {x.taskId ? (
-                  <Link className="underline" to={`${base}/tasks/${x.taskId}`}>{x.label}</Link>
-                ) : (
-                  x.label
-                )}
+            {unmet.map((x) => (
+              <li key={x.taskId}>
+                <Link className="underline" to={`${base}/tasks/${x.taskId}`}>{x.label}</Link>
               </li>
             ))}
           </ul>
@@ -213,7 +209,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
               </InfoBlock>
 
               <InfoBlock icon="bag" title="持ち物">
-                <BringList caseId={caseId} base={base} task={task} />
+                <BringList caseId={caseId} base={base} task={task} bring={g?.bring ?? []} />
               </InfoBlock>
 
               {(g?.steps?.length ?? 0) > 0 && (
@@ -236,13 +232,18 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                   <a href={form} target="_blank" rel="noreferrer" className="font-bold text-rd-primary-text underline">
                     {g?.formExampleLabel ?? '様式と記入例を見る'}
                   </a>
-                  <span className="ml-1.5 text-[0.82rem] text-rd-text-3">外部サイト（{urlHostname(g?.formExampleUrl)}）</span>
+                  <span className="ml-1.5 text-[0.82rem] text-rd-text-3">外部サイト（{urlHostname(g?.formExampleUrl ?? undefined)}）</span>
                 </InfoBlock>
               )}
 
               {g?.note && <p className="rounded-md bg-rd-bg px-3 py-2 text-[0.94rem] text-rd-text-2">{g.note}</p>}
 
-              <ResearchBox caseId={caseId} task={task} municipality={overview.data?.case.municipality} />
+              <ResearchBox
+                caseId={caseId}
+                task={task}
+                municipality={overview.data?.case.municipality}
+                caseVersion={overview.data?.case.version}
+              />
 
               <p className="text-[0.82rem] leading-relaxed text-rd-text-3">
                 ご案内するのは、行き先・持ち物・手順までです。書類の作成や、窓口への提出・送信は行いません。
@@ -258,11 +259,11 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
               </Button>
             }
           >
-            {(task.evidences?.length ?? 0) === 0 ? (
+            {task.evidences.length === 0 ? (
               <p className="text-[0.9rem] text-rd-text-2">窓口で受け付けてもらった控えや、振込の記録などを残しておくと、あとで見返せます。</p>
             ) : (
               <ul className="flex flex-col">
-                {task.evidences!.map((e) => (
+                {task.evidences.map((e) => (
                   <li key={e.id} className="border-b border-rd-border-2 py-2 last:border-b-0">
                     <p className="text-[0.97rem] font-bold">{e.label}</p>
                     <p className="text-[0.82rem] text-rd-text-3">
@@ -294,14 +295,14 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                 )}
               </div>
             </div>
-            {!d && prep && !done && (
+            {!d && prep && !done && prep.dueDate && (
               <p className="mt-3 rounded-md bg-rd-warning-soft px-3 py-2 text-[0.86rem] leading-relaxed text-rd-text">
                 法律上の期限はありませんが、相続の方法を決める期限（<strong>{formatDate(prep.dueDate, { weekday: true })}</strong>）より前に済ませたい手続きです。
               </p>
             )}
             {d && (
               <div className="mt-3 rounded-md bg-rd-bg px-3 py-2 text-[0.86rem] leading-relaxed text-rd-text-2">
-                <p><strong className="text-rd-text">{formatDate(d.dueDate, { weekday: true })}</strong> まで</p>
+                {d.dueDate && <p><strong className="text-rd-text">{formatDate(d.dueDate, { weekday: true })}</strong> まで</p>}
                 <p>期限の数え方：{d.basisLabel}</p>
                 {d.extendable && <p>家庭裁判所への申立てで延ばせる場合があります。</p>}
               </div>
@@ -309,41 +310,35 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
 
             <div className="mt-4 flex flex-col gap-2">
               {done ? (
-                <Button onClick={() => void reopen.mutateAsync({ taskId: task.id })} disabled={reopen.isPending}>
-                  完了を取り消す
-                </Button>
+                actions.includes('reopen') && (
+                  <Button
+                    onClick={() => void runCommand.mutateAsync({ taskId: task.id, command: 'reopen', expectedVersion: task.version })}
+                    disabled={runCommand.isPending}
+                  >
+                    完了を取り消す
+                  </Button>
+                )
               ) : (
                 <>
-                  <Button variant="primary" size="lg" icon="check" onClick={() => setConfirming(true)}>
-                    済んだので記録する
-                  </Button>
-                  {taskGroup(task.status) === 'todo' && (
-                    <Button
-                      disabled={updateStatus.isPending}
-                      onClick={() => void updateStatus.mutateAsync({ taskId: task.id, status: 'WAITING_EXTERNAL' })}
-                    >
-                      提出したので結果を待つ
+                  {actions.includes('complete') && (
+                    <Button variant="primary" size="lg" icon="check" onClick={() => setConfirming(true)}>
+                      済んだので記録する
                     </Button>
                   )}
+                  {actions
+                    .filter((a) => a !== 'complete')
+                    .map((a) => (
+                      <Button
+                        key={a}
+                        disabled={runCommand.isPending}
+                        onClick={() => void runCommand.mutateAsync({ taskId: task.id, command: a, expectedVersion: task.version })}
+                      >
+                        {TASK_COMMAND_WORD[a]}
+                      </Button>
+                    ))}
                 </>
               )}
             </div>
-
-            {!done && (
-              <details className="mt-3 text-[0.86rem]">
-                <summary className="cursor-pointer text-rd-text-2">状態をくわしく変える</summary>
-                <select
-                  className={`${inputClass} mt-2`}
-                  aria-label="状態"
-                  value={task.status}
-                  onChange={(e) => void updateStatus.mutateAsync({ taskId: task.id, status: e.target.value as TaskStatus })}
-                >
-                  {TASK_STATUS_ORDER.filter((s) => s !== 'COMPLETED').map((s) => (
-                    <option key={s} value={s}>{TASK_STATUS_WORD[s]}</option>
-                  ))}
-                </select>
-              </details>
-            )}
           </section>
 
           <Panel title="この手続きについて">
@@ -370,23 +365,36 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
       <div className="h-20 xl:hidden" aria-hidden />
       <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-rd-border bg-rd-card px-4 py-3 lg:left-60 xl:hidden">
         {done ? (
-          <Button className="flex-1" onClick={() => void reopen.mutateAsync({ taskId: task.id })} disabled={reopen.isPending}>
-            完了を取り消す
-          </Button>
+          actions.includes('reopen') && (
+            <Button
+              className="flex-1"
+              onClick={() => void runCommand.mutateAsync({ taskId: task.id, command: 'reopen', expectedVersion: task.version })}
+              disabled={runCommand.isPending}
+            >
+              完了を取り消す
+            </Button>
+          )
         ) : (
           <>
-            <Button variant="primary" size="lg" icon="check" className="min-w-0 flex-1 px-3" onClick={() => setConfirming(true)}>
-              済んだので記録する
-            </Button>
-            {taskGroup(task.status) === 'todo' && (
-              <Button
-                size="lg"
-                disabled={updateStatus.isPending}
-                onClick={() => void updateStatus.mutateAsync({ taskId: task.id, status: 'WAITING_EXTERNAL' })}
-              >
-                結果待ち
+            {actions.includes('complete') && (
+              <Button variant="primary" size="lg" icon="check" className="min-w-0 flex-1 px-3" onClick={() => setConfirming(true)}>
+                済んだので記録する
               </Button>
             )}
+            {(() => {
+              const secondary = actions.find((a) => a !== 'complete')
+              return (
+                secondary && (
+                  <Button
+                    size="lg"
+                    disabled={runCommand.isPending}
+                    onClick={() => void runCommand.mutateAsync({ taskId: task.id, command: secondary, expectedVersion: task.version })}
+                  >
+                    {TASK_COMMAND_WORD[secondary]}
+                  </Button>
+                )
+              )
+            })()}
           </>
         )}
       </div>
@@ -410,7 +418,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
 function EvidenceDialog({ caseId, taskId, open, onClose }: { caseId: string; taskId: string; open: boolean; onClose: () => void }) {
   const add = useAddEvidence(caseId)
   const [label, setLabel] = useState('')
-  const [kind, setKind] = useState<Evidence['kind']>('RECEIPT')
+  const [kind, setKind] = useState<TaskResource['evidences'][number]['kind']>('RECEIPT')
   const [note, setNote] = useState('')
 
   return (
@@ -435,7 +443,12 @@ function EvidenceDialog({ caseId, taskId, open, onClose }: { caseId: string; tas
         </Field>
         <Field label="種類">
           {(id) => (
-            <select id={id} className={inputClass} value={kind} onChange={(e) => setKind(e.target.value as Evidence['kind'])}>
+            <select
+              id={id}
+              className={inputClass}
+              value={kind}
+              onChange={(e) => setKind(e.target.value as TaskResource['evidences'][number]['kind'])}
+            >
               <option value="RECEIPT">受理・受付</option>
               <option value="NOTICE">通知</option>
               <option value="PAYMENT">入金・支払い</option>
@@ -458,8 +471,8 @@ function EvidenceDialog({ caseId, taskId, open, onClose }: { caseId: string; tas
  */
 function CarriedOver({ caseId, taskId }: { caseId: string; taskId: string }) {
   const insights = useInsights(caseId)
-  const update = useUpdateInsightStatus(caseId)
-  const items = (insights.data?.items ?? []).filter(
+  const acknowledge = useAcknowledgeInsight(caseId)
+  const items = (insights.data ?? []).filter(
     (i) =>
       i.relatedTaskId === taskId &&
       i.status === 'NEW' &&
@@ -475,7 +488,7 @@ function CarriedOver({ caseId, taskId }: { caseId: string; taskId: string }) {
           tone="warning"
           title={INSIGHT_KIND_META[ins.kind].label}
           action={
-            <Button size="sm" disabled={update.isPending} onClick={() => void update.mutateAsync({ id: ins.id, status: 'ACKNOWLEDGED' })}>
+            <Button size="sm" disabled={acknowledge.isPending} onClick={() => void acknowledge.mutateAsync({ id: ins.id })}>
               読みました
             </Button>
           }
@@ -496,16 +509,15 @@ function CarriedOver({ caseId, taskId }: { caseId: string; taskId: string }) {
  * 窓口や家で1つずつ消し込めるよう、行全体を押せる大きさにする。
  * 案内にだけ載っている持ち物も、押したときに持ち物の一覧へ加えて記録する。
  */
-function BringList({ caseId, base, task }: { caseId: string; base: string; task: Task }) {
+function BringList({ caseId, base, task, bring }: { caseId: string; base: string; task: TaskResource; bring: string[] }) {
   const update = useUpdateRequiredDocuments(caseId)
-  const docs = task.requiredDocuments ?? []
-  const bring = task.guidance?.bring ?? []
+  const docs = task.requiredDocuments
   /*
     並びは押しても変えない（窓口で消し込んでいる最中に行が動くと押し間違える）。
     持ち物の一覧 → 案内に載っている持ち物、の順。案内の持ち物は、押して記録した後も案内の位置に出す。
   */
-  const fromBring = (r: RequiredDocument) => r.id.startsWith('bring_') && bring.includes(r.label)
-  const rows: { label: string; doc?: RequiredDocument }[] = [
+  const fromBring = (r: TaskRequiredDocumentResource) => r.id.startsWith('bring_') && bring.includes(r.label)
+  const rows: { label: string; doc?: TaskRequiredDocumentResource }[] = [
     ...docs.filter((r) => !fromBring(r)).map((r) => ({ label: r.label, doc: r })),
     ...bring
       .filter((b) => !docs.some((r) => r.label === b && !fromBring(r)))
@@ -513,12 +525,16 @@ function BringList({ caseId, base, task }: { caseId: string; base: string; task:
   ]
   const total = rows.length
   if (total === 0) return <span className="text-rd-text-3">登録されている持ち物はありません</span>
-  const ready = rows.filter((r) => r.doc?.collected).length
+  // `collected` は BE ユニット2待ち（§6リスク）。それまでは documentId の有無を代わりに使う
+  const ready = rows.filter((r) => r.doc?.documentId != null).length
 
-  const save = (next: RequiredDocument[]) => void update.mutateAsync({ taskId: task.id, requiredDocuments: next }).catch(() => {})
-  const toggle = (id: string) => save(docs.map((r) => (r.id === id ? { ...r, collected: !r.collected } : r)))
+  const save = (next: TaskRequiredDocumentResource[]) =>
+    void update.mutateAsync({ taskId: task.id, expectedVersion: task.version, requiredDocuments: next }).catch(() => {})
+  // documentId を消すと未用意に戻る。実物の書類が無いまま用意済みにする場合は、
+  // '' を「用意した（書類の紐付けなし）」の印にする（null は未用意と区別できないため）
+  const toggle = (id: string) => save(docs.map((r) => (r.id === id ? { ...r, documentId: r.documentId == null ? '' : null } : r)))
   const addChecked = (label: string) =>
-    save([...docs, { id: `bring_${Math.random().toString(36).slice(2, 10)}`, label, collected: true, source: 'AI' }])
+    save([...docs, { id: `bring_${crypto.randomUUID().slice(0, 8)}`, label, documentId: '', source: 'AI' }])
 
   return (
     <div className="mt-1">
@@ -528,7 +544,7 @@ function BringList({ caseId, base, task }: { caseId: string; base: string; task:
       </p>
       <ul className="mt-1.5 flex flex-col">
         {rows.map(({ label, doc }) => {
-          const on = Boolean(doc?.collected)
+          const on = doc?.documentId != null
           return (
             <li key={doc?.id ?? `bring-${label}`} className="flex flex-wrap items-center gap-x-2 border-b border-rd-border-2 last:border-b-0">
               <button
@@ -559,21 +575,21 @@ function BringList({ caseId, base, task }: { caseId: string; base: string; task:
 }
 
 /** 担当者。家族で手分けするときに、誰が進めるかを決めておく。 */
-function AssigneeSelect({ caseId, task, ownerName }: { caseId: string; task: Task; ownerName?: string }) {
+function AssigneeSelect({ caseId, task, ownerName }: { caseId: string; task: TaskResource; ownerName?: string }) {
   const persons = usePersons(caseId)
-  const assign = useAssignTask(caseId)
-  const people = (persons.data?.items ?? []).filter((p) => !p.excludedAt)
+  const assign = useUpdateTask(caseId)
+  const people = (persons.data ?? []).filter((p) => !p.excludedAt)
 
   return (
     <select
-      className={inputClass.replace('h-11', 'h-9')}
+      className={`${inputClass} h-9 py-0`}
       aria-label="担当"
       value={task.assigneeId ?? ''}
       disabled={assign.isPending || !persons.data}
       onChange={async (e) => {
         const id = e.target.value || null
         try {
-          await assign.mutateAsync({ taskId: task.id, assigneeId: id })
+          await assign.mutateAsync({ taskId: task.id, expectedVersion: task.version, assigneeId: id })
         } catch {
           return // 失敗の知らせは共通の処理（MutationCache）が出す
         }

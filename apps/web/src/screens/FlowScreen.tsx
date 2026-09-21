@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { FlowStage, FlowStageId, InheritanceMethod, Task } from '@aftercare/public-contracts'
+import type { FlowStageId, FlowStageResource, InheritanceMethod, TaskResource } from '@aftercare/public-contracts'
 import { useCaseOverview, useTasks } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { FLOW_STAGE_WORD, METHOD_HINT, TASK_STATUS_WORD } from '@/kit/words'
@@ -43,7 +43,7 @@ const STAGE_META: Record<FlowStageId, { group: GroupId; hint: string }> = {
  * 色だけに頼らず、状態は記号と言葉でも出す。
  * 実APIは手続きが0件の段階を NO_TASKS で返す（完了ではない）。旧DTOの型には無いので、ここで受ける
  */
-type StageState = FlowStage['state'] | 'NO_TASKS'
+type StageState = FlowStageResource['state'] | 'NO_TASKS'
 const STATE: Record<StageState, { word: string; icon: 'check' | 'progress' | 'circle'; fg: string }> = {
   COMPLETED: { word: '済み', icon: 'check', fg: 'text-rd-success-text' },
   IN_PROGRESS: { word: '進行中', icon: 'progress', fg: 'text-rd-primary-text' },
@@ -51,7 +51,7 @@ const STATE: Record<StageState, { word: string; icon: 'check' | 'progress' | 'ci
   NO_TASKS: { word: '手続きなし', icon: 'circle', fg: 'text-rd-text-3' },
 }
 
-function stageState(s: FlowStage): StageState {
+function stageState(s: FlowStageResource): StageState {
   return s.totalTasks === 0 ? 'NO_TASKS' : s.state
 }
 
@@ -64,7 +64,7 @@ const AFTER_FUNERAL: FlowStageId[] = ['government', 'contracts', 'investigation'
  * ③〜⑤のどれかに入っていれば済みとみなす。ただし葬儀・火葬に残っている手続きがあるときは、
  * それを隠さないよう、実際の状態のまま出す
  */
-function shownStates(stages: FlowStage[]) {
+function shownStates(stages: FlowStageResource[]) {
   const map = new Map(stages.map((s) => [s.id, { state: stageState(s), auto: false }]))
   const funeral = stages.find((s) => s.id === 'funeral')
   const entered = stages.some(
@@ -109,7 +109,7 @@ export function FlowScreen() {
   const stages = overview.data.flowStages
   const byId = new Map(stages.map((s, i) => [s.id, { stage: s, no: i }]))
   const shown = shownStates(stages)
-  const stateOf = (s: FlowStage) => shown.get(s.id)!.state
+  const stateOf = (s: FlowStageResource) => shown.get(s.id)!.state
   const withTasks = stages.filter((s) => stateOf(s) !== 'NO_TASKS')
   const done = withTasks.filter((s) => stateOf(s) === 'COMPLETED').length
   // 「いまここ」は、進行中のうち最も前にある段階。進行中が複数あっても、目印は1つにする。
@@ -231,7 +231,7 @@ export function FlowScreen() {
   )
 }
 
-function stageName(s: FlowStage) {
+function stageName(s: FlowStageResource) {
   return FLOW_STAGE_WORD[s.id] ?? s.label.replace(/（.*?）/, '')
 }
 
@@ -245,12 +245,12 @@ function StageNode({
   hidden,
   base,
 }: {
-  stage: FlowStage
+  stage: FlowStageResource
   no: number
   state: StageState
   autoDone: boolean
   here: boolean
-  tasks: Task[]
+  tasks: TaskResource[]
   hidden: number
   base: string
 }) {

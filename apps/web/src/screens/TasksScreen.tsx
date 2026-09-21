@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useCreateTask, useInsights, useTasks } from '@/lib/api/queries'
-import type { Task } from '@aftercare/public-contracts'
+import { useCreateTask, useInsights, usePersons, useTasks } from '@/lib/api/queries'
+import type { FlowStageId, TaskResource } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
 import { DEADLINE_BUCKETS, TASK_CATEGORY_META, deadlineBucket } from '@/lib/labels'
+import { FLOW_STAGE_WORD } from '@/kit/words'
 import {
   Badge,
   Button,
@@ -47,6 +48,7 @@ export function TasksScreen() {
   const { caseId, base } = useCaseBase()
   const tasks = useTasks(caseId)
   const insights = useInsights(caseId)
+  const persons = usePersons(caseId)
   const { locked, reason } = useLock(caseId)
   const [params, setParams] = useSearchParams()
   const rawTab = params.get('tab')
@@ -57,18 +59,21 @@ export function TasksScreen() {
   if (tasks.isError) return <ErrorState message="手続きを読み込めませんでした。" onRetry={() => void tasks.refetch()} />
   if (!tasks.data) return <Loading />
 
+  const nameOf = (personId: string | null) => (personId ? persons.data?.find((p) => p.id === personId)?.name : undefined)
   const visible = tasks.data.items.filter((t) => !(locked && t.assetDisposal))
   const hiddenCount = tasks.data.items.length - visible.length
 
   // 家族で手分けしているときは、担当で絞り込めるようにする（誰かが担当を決めたときだけ出す）
-  const assignees = [...new Map(visible.flatMap((t) => (t.assigneeId ? [[t.assigneeId, t.assigneeName ?? '']] : []))).entries()]
+  const assignees = [
+    ...new Map(visible.flatMap((t) => (t.assigneeId ? [[t.assigneeId, nameOf(t.assigneeId) ?? '']] : []))).entries(),
+  ]
   const rawWho = params.get('who')
   const who = rawWho === 'none' || assignees.some(([id]) => id === rawWho) ? rawWho : null
   const shown = who == null ? visible : visible.filter((t) => (who === 'none' ? !t.assigneeId : t.assigneeId === who))
 
   // 止まっている手続き（AIの気づき）には印を付ける
   const stalled = new Set(
-    (insights.data?.items ?? [])
+    (insights.data ?? [])
       .filter((i) => i.kind === 'STALLED_TASK' && i.status !== 'DISMISSED' && i.relatedTaskId)
       .map((i) => i.relatedTaskId!),
   )
@@ -84,7 +89,7 @@ export function TasksScreen() {
       { replace: true },
     )
 
-  const groups: Record<TaskGroup, Task[]> = { todo: [], waiting: [], done: [] }
+  const groups: Record<TaskGroup, TaskResource[]> = { todo: [], waiting: [], done: [] }
   for (const t of shown) groups[taskGroup(t.status)].push(t)
   const order = byDeadlineIn(visible)
   groups.todo.sort(order)
@@ -154,9 +159,9 @@ export function TasksScreen() {
             {who != null ? '「担当」を「全員」にすると、すべての手続きが表示されます。' : tab === 'waiting' && '役所や金融機関に出し終えた手続きが、ここに並びます。'}
           </Empty>
         ) : tab === 'todo' ? (
-          <BucketedList tasks={list} all={visible} base={base} stalled={stalled} />
+          <BucketedList tasks={list} all={visible} base={base} stalled={stalled} nameOf={nameOf} />
         ) : (
-          <TaskTable tasks={list} all={visible} base={base} stalled={stalled} />
+          <TaskTable tasks={list} all={visible} base={base} stalled={stalled} nameOf={nameOf} />
         )}
       </div>
 
@@ -180,8 +185,20 @@ export function TasksScreen() {
  */
 const PREP_BUCKET = { id: 'prep', label: '早めに始めたいこと（相続の方法を決める前に）', tone: 'warning' as const }
 
-function BucketedList({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[]; base: string; stalled: Set<string> }) {
-  const bucketOf = (t: Task) => (prepDeadline(t, all) ? 'prep' : deadlineBucket(t.deadline?.daysRemaining))
+function BucketedList({
+  tasks,
+  all,
+  base,
+  stalled,
+  nameOf,
+}: {
+  tasks: TaskResource[]
+  all: TaskResource[]
+  base: string
+  stalled: Set<string>
+  nameOf: (personId: string | null) => string | undefined
+}) {
+  const bucketOf = (t: TaskResource) => (prepDeadline(t, all) ? 'prep' : deadlineBucket(t.deadline))
   const buckets = DEADLINE_BUCKETS.flatMap((b) => (b.id === 'later' ? [PREP_BUCKET, b] : [b]))
   return (
     <div>
@@ -207,7 +224,7 @@ function BucketedList({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[
                 法律上の期限はありませんが、相続の方法を決める前に済ませたい手続きです。戸籍の取り寄せには数週間かかることがあります。
               </p>
             )}
-            <TaskTable tasks={items} all={all} base={base} stalled={stalled} />
+            <TaskTable tasks={items} all={all} base={base} stalled={stalled} nameOf={nameOf} />
           </section>
         )
       })}
@@ -215,12 +232,26 @@ function BucketedList({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[
   )
 }
 
-function TaskTable({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[]; base: string; stalled: Set<string> }) {
+function TaskTable({
+  tasks,
+  all,
+  base,
+  stalled,
+  nameOf,
+}: {
+  tasks: TaskResource[]
+  all: TaskResource[]
+  base: string
+  stalled: Set<string>
+  nameOf: (personId: string | null) => string | undefined
+}) {
   return (
     <ul>
       {tasks.map((t) => {
         const done = t.status === 'COMPLETED'
-        const docsLeft = t.requiredDocuments?.filter((r) => !r.collected).length ?? 0
+        // `collected` は BE ユニット2待ち。それまでは documentId の有無で代替する
+        const docsLeft = t.requiredDocuments.filter((r) => r.documentId == null).length
+        const assigneeName = nameOf(t.assigneeId)
         return (
           <li key={t.id} className="border-b border-rd-border-2 last:border-b-0">
             <Link to={`${base}/tasks/${t.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-rd-bg">
@@ -235,7 +266,7 @@ function TaskTable({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[]; 
                 <span className="mt-0.5 flex flex-wrap gap-x-3 text-[0.82rem] leading-snug text-rd-text-2">
                   {t.submitTo && <span className="line-clamp-1 break-all sm:break-normal">{t.submitTo}</span>}
                   {!done && docsLeft > 0 && <span className="text-rd-warning-text">必要な書類があと{docsLeft}点</span>}
-                  {t.assigneeName && <span>担当：{t.assigneeName}</span>}
+                  {assigneeName && <span>担当：{assigneeName}</span>}
                 </span>
               </span>
               {/* 状態はタブでもおおよそ分かるため、幅が足りない画面では手続きの名前を優先する */}
@@ -259,6 +290,7 @@ function AddTaskDialog({ caseId, open, onClose }: { caseId: string; open: boolea
   const create = useCreateTask(caseId)
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState('その他')
+  const [stage, setStage] = useState<FlowStageId>('government')
   const [submitTo, setSubmitTo] = useState('')
   const [summary, setSummary] = useState('')
   const [error, setError] = useState<string>()
@@ -268,6 +300,7 @@ function AddTaskDialog({ caseId, open, onClose }: { caseId: string; open: boolea
     setSubmitTo('')
     setSummary('')
     setCategory('その他')
+    setStage('government')
     setError(undefined)
   }
 
@@ -287,7 +320,7 @@ function AddTaskDialog({ caseId, open, onClose }: { caseId: string; open: boolea
           setError('手続きの名前を入れてください')
           return
         }
-        await create.mutateAsync({ title: title.trim(), summary: summary.trim(), category, submitTo: submitTo.trim() || undefined })
+        await create.mutateAsync({ title: title.trim(), summary: summary.trim(), stage, category, submitTo: submitTo.trim() || undefined })
         reset()
         onClose()
       }}
@@ -303,6 +336,17 @@ function AddTaskDialog({ caseId, open, onClose }: { caseId: string; open: boolea
               placeholder="例：クレジットカードを解約する"
               onChange={(e) => setTitle(e.target.value)}
             />
+          )}
+        </Field>
+        <Field label="段階">
+          {(id) => (
+            <select id={id} className={inputClass} value={stage} onChange={(e) => setStage(e.target.value as FlowStageId)}>
+              {Object.entries(FLOW_STAGE_WORD).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
           )}
         </Field>
         <Field label="種類">

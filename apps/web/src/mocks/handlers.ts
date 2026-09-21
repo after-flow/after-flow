@@ -1,754 +1,1105 @@
+/**
+ * モック API。
+ *
+ * 応答の形は Backend と同じ（封筒・Case 配下パス・Idempotency-Key/expectedVersion の検査・
+ * strict body）にする。差があると、モックでだけ通る画面の分岐が生まれてしまうため。
+ * `/auth/login` は無い（`lib/auth/mock.ts` がサインインを担い、ここは Authorization を検査しない）。
+ * 本番コードからは参照しない。
+ */
 import { HttpResponse, http, delay } from 'msw'
-import {
-  CASE_ID,
-  FLOW_STAGE_LABELS,
-  db,
-  ruleKeys,
-  nextId,
-  todayISO,
-} from './db'
-import { analysisRuns, isMaskedCase, startAnalysis } from './analysis'
-import { deliberationDue, syncRuleTasks } from './rules'
-import { sampleContent, uploadedFiles } from './content'
-import { watchCase } from './watch'
 import type {
-  Approval,
+  AcknowledgeInsightRequest,
   Asset,
   Benefit,
-  CaseDocument,
-  CaseOverview,
-  ChatMessage,
+  CaseResource,
   Contract,
-  Evidence,
-  FlowStage,
+  ConsentKind,
+  CreateAssetRequest,
+  CreateBenefitRequest,
+  CreateContractRequest,
+  CreateLiabilityRequest,
+  CreatePersonRequest,
+  CreateRelationshipRequest,
+  DocumentKind,
+  ExcludePersonRequest,
+  GuidanceResource,
   InheritanceMethod,
-  Insight,
   Liability,
+  MeResource,
+  MessageAcceptedResource,
+  MessageResource,
   Person,
-  Task,
-  TaskStatus,
+  ReportProgressRequest,
+  SetContractPolicyRequest,
+  TaskCommandResource,
+  UpdateAssetRequest,
+  UpdateBenefitRequest,
+  UpdateContractRequest,
+  UpdateLiabilityRequest,
+  UpdatePersonRequest,
 } from '@aftercare/public-contracts'
+import { SELF_PERSON_ID, db, nextId } from './db'
+import { computeFlowStages, taskActions } from './rules'
+import { guessKind, startAnalysis } from './analysis'
+import { sampleContent, uploadedFiles } from './content'
+import { watchCase } from './watch'
+import { stableHash } from './proposals'
+import { fail, jsonBody, notFound, ok, page, requireExpectedVersion, requireIdempotencyKey } from './http'
 
 const BASE = '/api/v1'
-const list = <T>(items: T[]) => HttpResponse.json({ items, total: items.length })
 
-/** 担当者の名前は、人の登録から毎回引く（名前の直し・削除に追従させるため） */
-function withAssignee(t: Task): Task {
-  const person = t.assigneeId ? db.persons.find((p) => p.id === t.assigneeId) : undefined
-  return { ...t, assigneeId: person?.id, assigneeName: person?.name }
-}
-
-/** マイナンバーが載っている可能性が高い書類は受け付けない（企画書セクション5） */
+/** マイナンバーが載っている可能性が高い書類は受け付けない（企画書セクション5）。 */
 const MY_NUMBER_HINTS = ['マイナンバー', '個人番号', '住民票', '源泉徴収', 'mynumber']
 
-function overview(caseId: string): CaseOverview {
-  const kase = db.cases.find((c) => c.id === caseId)!
-  const tasks = db.tasks.filter((t) => t.caseId === caseId)
+function caseOf(caseId: string) {
+  return db.cases.find((c) => c.id === caseId)
+}
 
-  const flowStages: FlowStage[] = FLOW_STAGE_LABELS.map(({ id, label }) => {
-    const inStage = tasks.filter((t) => t.stage === id)
-    const done = inStage.filter((t) => t.status === 'COMPLETED').length
+function taskOf(caseId: string, taskId: string) {
+  return db.tasks.find((t) => t.caseId === caseId && t.id === taskId)
+}
+
+/** 手続きの `allowedActions`/`blockedActions` を、いまの状態から作り直す。 */
+function refreshTaskActions(task: (typeof db.tasks)[number]) {
+  const decided =
+    db.persons.filter((p) => p.caseId === task.caseId && p.isHeir && !p.excludedAt).length > 0 &&
+    db.persons
+      .filter((p) => p.caseId === task.caseId && p.isHeir && !p.excludedAt)
+      .every((h) => db.decisions.find((d) => d.personId === h.id)?.confirmed)
+  const { allowed, blocked } = taskActions(task.status, {
+    assetDisposal: task.assetDisposal,
+    decided,
+    evidenceRequired: task.evidenceRequired,
+    hasEvidence: task.evidences.length > 0,
+  })
+  task.allowedActions = allowed
+  task.blockedActions = blocked
+}
+
+function refreshAllTaskActions(caseId: string) {
+  for (const t of db.tasks.filter((x) => x.caseId === caseId)) refreshTaskActions(t)
+}
+
+function overviewOf(caseId: string) {
+  const kase = caseOf(caseId)!
+  const tasks = db.tasks.filter((t) => t.caseId === caseId)
+  const flowStages = computeFlowStages(tasks)
+
+  const heirs = db.persons.filter((p) => p.caseId === caseId && p.isHeir && !p.excludedAt)
+  const perHeir = heirs.map((p) => {
+    const d = db.decisions.find((x) => x.personId === p.id)
     return {
-      id,
-      label,
-      totalTasks: inStage.length,
-      completedTasks: done,
-      state:
-        inStage.length === 0
-          ? 'NOT_STARTED'
-          : done === inStage.length
-            ? 'COMPLETED'
-            : done > 0 || inStage.some((t) => t.status !== 'NOT_STARTED')
-              ? 'IN_PROGRESS'
-              : 'NOT_STARTED',
+      personId: p.id,
+      personName: p.name,
+      method: d?.method ?? null,
+      state: d?.state ?? 'DRAFT',
+      confirmed: d?.confirmed ?? false,
     }
   })
 
-  const heirs = db.persons.filter((p) => p.caseId === caseId && p.isHeir)
-  const perHeir = heirs.map((p) => ({
-    personId: p.id,
-    personName: p.name,
-    method: db.decisions[p.id] ?? null,
-  }))
-
-  const upcomingDeadlines = tasks
+  const upcoming = tasks
     .map((t) => t.deadline)
-    .filter((d): d is NonNullable<typeof d> => Boolean(d))
-    .filter((d) => d.daysRemaining <= 7)
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+    .filter((d): d is NonNullable<typeof d> => Boolean(d) && d!.dueDate != null)
+    .filter((d) => d.daysRemaining != null && d.daysRemaining <= 7)
+    .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''))
 
-  const taskCounts: Partial<Record<TaskStatus, number>> = {}
+  const taskCounts: Partial<Record<(typeof tasks)[number]['status'], number>> = {}
   for (const t of tasks) taskCounts[t.status] = (taskCounts[t.status] ?? 0) + 1
+
+  const decisionTask = tasks.find((t) => t.stage === 'decision')
 
   return {
     case: kase,
-    upcomingDeadlines,
-    pendingApprovalCount: db.approvals.filter((a) => a.caseId === caseId && a.status === 'PENDING')
-      .length,
-    flowStages,
-    inheritanceDecision: {
-      decided: perHeir.length > 0 && perHeir.every((h) => h.method != null),
-      perHeir,
-      deliberationDeadline: deliberationDue(kase),
-    },
-    recentAgentRuns: [
-      ...analysisRuns.filter((r) => r.caseId === caseId),
-      {
-        id: 'run_3',
-        caseId,
-        type: 'case_planning',
-        status: 'SUCCEEDED',
-        summary: '書類の内容をもとに、手続きの候補と期限を整理しました。',
-        startedAt: new Date(Date.now() - 5 * 3600_000).toISOString(),
-        finishedAt: new Date(Date.now() - 5 * 3600_000 + 40_000).toISOString(),
-        producedApprovalIds: ['apr_3'],
-      },
-      {
-        id: 'run_2',
-        caseId,
-        type: 'document_analysis',
-        status: 'SUCCEEDED',
-        summary: '「預金通帳_表紙.jpg」を解析し、2件の提案を作成しました。',
-        startedAt: new Date(Date.now() - 20 * 3600_000).toISOString(),
-        finishedAt: new Date(Date.now() - 20 * 3600_000 + 25_000).toISOString(),
-        producedApprovalIds: ['apr_1', 'apr_2'],
-      },
-    ],
+    aggregatedAt: new Date().toISOString(),
+    consistency: 'SNAPSHOT' as const,
+    caseVersion: kase.caseVersion,
     taskCounts,
+    totalTasks: tasks.length,
+    flowStages,
+    upcomingDeadlines: upcoming,
+    unresolvedDeadlineCount: tasks.filter((t) => t.deadline && t.deadline.dueDate == null).length,
+    pendingApprovalCount: db.approvals.filter((a) => a.caseId === caseId && a.status === 'PENDING').length,
+    appliedApprovalCount: db.approvals.filter((a) => a.caseId === caseId && a.applicationStatus === 'APPLIED').length,
+    inheritanceDecision: {
+      decided: perHeir.length > 0 && perHeir.every((h) => h.confirmed),
+      unknown: heirs.length === 0,
+      perHeir,
+      deliberationDeadline: decisionTask?.deadline
+        ? { ...decisionTask.deadline, id: 'deliberation-period', taskId: null }
+        : null,
+    },
+    recentAgentRuns: db.agentRuns.filter((r) => r.caseId === caseId).slice(0, 10),
+    aiConnected: true,
   }
 }
 
 function consentStatus() {
+  const missingRequired = db.consents.filter((c) => c.required && !c.satisfied).map((c) => c.kind)
+  const missingOptional = db.consents.filter((c) => !c.required && !c.satisfied).map((c) => c.kind)
   return {
     documents: db.consents,
-    outstanding: db.consents.some((c) => c.required && c.agreedVersion !== c.version),
+    outstanding: missingRequired.length > 0,
+    availability: {
+      manualManagement: true,
+      externalAi: !missingOptional.includes('CROSS_BORDER_AI'),
+      missingRequired,
+      missingOptional,
+    },
+  }
+}
+
+/** 承認された提案を業務状態へ反映する。反映できたら true を返す。 */
+function applyProposal(proposalId: string): { applied: boolean; reason?: string } {
+  const proposal = db.proposals.find((p) => p.id === proposalId)
+  if (!proposal) return { applied: false, reason: '提案が見つかりません。' }
+  const fieldsOf = () => (proposal.payload.fields ?? proposal.payload) as Record<string, unknown>
+  const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
+
+  switch (proposal.kind) {
+    case 'ASSET_PROPOSAL': {
+      const f = fieldsOf()
+      const asset: Asset = {
+        id: nextId('asset'),
+        caseId: proposal.caseId,
+        name: str(f.name, '（名称未設定）'),
+        kind: (f.kind as Asset['kind']) ?? 'OTHER',
+        institution: typeof f.institution === 'string' ? f.institution : undefined,
+        amount: typeof f.amount === 'number' ? f.amount : undefined,
+        currency: 'JPY',
+        source: 'AI',
+        confirmation: 'UNCONFIRMED',
+        version: 1,
+      }
+      db.assets.push(asset)
+      return { applied: true }
+    }
+    case 'LIABILITY_PROPOSAL': {
+      const f = fieldsOf()
+      const liability: Liability = {
+        id: nextId('liab'),
+        caseId: proposal.caseId,
+        name: str(f.name, '（名称未設定）'),
+        kind: (f.kind as Liability['kind']) ?? 'OTHER',
+        creditor: typeof f.creditor === 'string' ? f.creditor : undefined,
+        amount: typeof f.amount === 'number' ? f.amount : undefined,
+        currency: 'JPY',
+        source: 'AI',
+        confirmation: 'UNCONFIRMED',
+        version: 1,
+      }
+      db.liabilities.push(liability)
+      return { applied: true }
+    }
+    case 'CONTRACT_PROPOSAL': {
+      const f = fieldsOf()
+      const contract: Contract = {
+        id: nextId('contract'),
+        caseId: proposal.caseId,
+        name: str(f.name, '（名称未設定）'),
+        kind: (f.kind as Contract['kind']) ?? 'OTHER',
+        provider: typeof f.provider === 'string' ? f.provider : undefined,
+        policy: 'UNDECIDED',
+        progress: 'NOT_STARTED',
+        source: 'AI',
+        version: 1,
+      }
+      db.contracts.push(contract)
+      return { applied: true }
+    }
+    case 'PERSON_PROPOSAL': {
+      const f = fieldsOf()
+      const person: Person = {
+        id: nextId('person'),
+        caseId: proposal.caseId,
+        name: str(f.name, '（名前未設定）'),
+        relationship: str(f.relationship, ''),
+        role: (f.role as Person['role']) ?? 'RELATED',
+        isHeir: Boolean(f.isHeir),
+        version: 1,
+      }
+      db.persons.push(person)
+      refreshAllTaskActions(proposal.caseId)
+      return { applied: true }
+    }
+    case 'TASK_PROPOSAL': {
+      const p = proposal.payload
+      const status = 'NOT_STARTED' as const
+      const assetDisposal = Boolean(p.assetDisposal)
+      const { allowed, blocked } = taskActions(status, {
+        assetDisposal,
+        decided: false,
+        evidenceRequired: false,
+        hasEvidence: false,
+      })
+      const now = new Date().toISOString()
+      db.tasks.push({
+        id: nextId('task'),
+        caseId: proposal.caseId,
+        conditional: false,
+        submitToSource: 'MANUAL',
+        targetDate: null,
+        title: str(p.title, proposal.title),
+        summary: str(p.summary, proposal.summary),
+        status,
+        stage: (p.stage as (typeof db.tasks)[number]['stage'] | undefined) ?? 'contracts',
+        category: str(p.category, '手続き'),
+        submitTo: typeof p.submitTo === 'string' ? p.submitTo : null,
+        assigneeId: null,
+        dependencyTaskIds: [],
+        escalation: null,
+        source: 'AI',
+        evidenceRequired: false,
+        assetDisposal,
+        requiredDocuments: [],
+        completionReportedBy: null,
+        completionReportedAt: null,
+        deadline: null,
+        evidences: [],
+        allowedActions: allowed,
+        blockedActions: blocked,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      })
+      return { applied: true }
+    }
+    case 'DOCUMENT_REQUEST':
+    case 'EVIDENCE_PROPOSAL':
+    case 'ESCALATION_PROPOSAL':
+      // これらは記録・お願いの共有そのものが結果であり、業務データを新設しない
+      return { applied: true }
+    default:
+      return { applied: false, reason: 'この種類の提案には対応していません。' }
   }
 }
 
 export const handlers = [
-  /* ---------- 認証 ---------- */
-  http.post(`${BASE}/auth/login`, async () => {
-    await delay(300)
-    return HttpResponse.json({ token: 'mock-token' })
-  }),
+  /* ---------- 利用登録 ---------- */
+  http.get(`${BASE}/me`, () => ok<MeResource>(me())),
+  http.post(`${BASE}/me`, () => ok<MeResource>(me(), 200)),
 
   /* ---------- 同意 ---------- */
-  http.get(`${BASE}/consents`, () => HttpResponse.json(consentStatus())),
-
+  http.get(`${BASE}/consents`, () => ok(consentStatus())),
   http.post(`${BASE}/consents`, async ({ request }) => {
-    const body = (await request.json()) as {
-      agreements: { kind: string; version: string }[]
-    }
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const agreements = Array.isArray(body.agreements) ? (body.agreements as { kind: ConsentKind; version: string }[]) : []
     const now = new Date().toISOString()
-    for (const a of body.agreements) {
+    for (const a of agreements) {
       const doc = db.consents.find((c) => c.kind === a.kind)
       if (doc) {
         doc.agreedVersion = a.version
         doc.agreedAt = now
+        doc.satisfied = a.version === doc.version
       }
     }
-    return HttpResponse.json(consentStatus())
+    return ok(consentStatus())
   }),
 
   /* ---------- Case ---------- */
-  http.get(`${BASE}/cases`, () => list(db.cases)),
-
+  http.get(`${BASE}/cases`, () => page(db.cases)),
   http.post(`${BASE}/cases`, async ({ request }) => {
-    const body = (await request.json()) as Record<string, string>
-    const created = {
-      id: nextId('case'),
-      deceasedName: body.deceasedName,
-      deceasedNameKana: body.deceasedNameKana,
-      dateOfDeath: body.dateOfDeath,
-      dateOfBirth: body.dateOfBirth,
-      knownAt: body.knownAt,
-      ownerName: body.ownerName,
-      relationshipToDeceased: body.relationshipToDeceased,
-      status: 'ACTIVE' as const,
-      createdAt: new Date().toISOString(),
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const now = new Date().toISOString()
+    const id = nextId('case')
+    const created: CaseResource = {
+      id,
+      deceasedName: String(body.deceasedName ?? ''),
+      deceasedNameKana: typeof body.deceasedNameKana === 'string' ? body.deceasedNameKana : null,
+      dateOfDeath: String(body.dateOfDeath ?? ''),
+      dateOfBirth: typeof body.dateOfBirth === 'string' ? body.dateOfBirth : null,
+      knownAt: typeof body.knownAt === 'string' ? body.knownAt : null,
+      ownerName: String(body.ownerName ?? ''),
+      relationshipToDeceased: String(body.relationshipToDeceased ?? ''),
+      municipality: null,
+      ownerPersonId: null,
+      selfPersonId: null,
+      aiPlanningRestriction: null,
+      status: 'ACTIVE',
+      version: 1,
+      caseVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+      allowedActions: ['UPDATE_BASIC_INFO', 'ADMINISTER'],
+    }
+    if (body.ownerPerson && typeof body.ownerPerson === 'object') {
+      const personId = nextId('person')
+      db.persons.push({
+        id: personId,
+        caseId: id,
+        name: created.ownerName,
+        relationship: created.relationshipToDeceased,
+        role: 'HEIR_CANDIDATE',
+        isHeir: Boolean((body.ownerPerson as { isHeir?: boolean }).isHeir),
+        version: 1,
+      })
+      created.ownerPersonId = personId
+      created.selfPersonId = personId
     }
     db.cases.push(created)
-
-    // Rule Engine 相当：ご逝去日が分かった時点で、あてはまる可能性のある手続きと期限を用意する
-    db.tasks = syncRuleTasks(created, db.tasks, ruleKeys, nextId)
-
-    return HttpResponse.json(created, { status: 201 })
+    return ok(created, 201)
   }),
-
   http.get(`${BASE}/cases/:caseId/overview`, ({ params }) => {
-    const kase = db.cases.find((c) => c.id === params.caseId)
-    if (!kase) return HttpResponse.json({ code: 'NOT_FOUND', message: 'ケースが見つかりません' }, { status: 404 })
-    return HttpResponse.json(overview(String(params.caseId)))
+    const kase = caseOf(String(params.caseId))
+    if (!kase) return notFound()
+    watchCase(kase.id)
+    return ok(overviewOf(kase.id))
   }),
-
   http.get(`${BASE}/cases/:caseId`, ({ params }) => {
-    const kase = db.cases.find((c) => c.id === params.caseId)
-    return kase
-      ? HttpResponse.json(kase)
-      : HttpResponse.json({ code: 'NOT_FOUND', message: 'ケースが見つかりません' }, { status: 404 })
+    const kase = caseOf(String(params.caseId))
+    return kase ? ok(kase) : notFound()
   }),
-
   http.patch(`${BASE}/cases/:caseId`, async ({ params, request }) => {
-    const kase = db.cases.find((c) => c.id === params.caseId)
-    if (!kase) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    Object.assign(kase, await request.json())
-    // 故人の状況（生年月日・質問への答え）が変わったら、あてはまる手続きを洗い出し直す
-    db.tasks = syncRuleTasks(kase, db.tasks, ruleKeys, nextId)
-    return HttpResponse.json(kase)
-  }),
-
-  /* ---------- 自律調査（task_execution 相当） ---------- */
-  http.post(`${BASE}/tasks/:taskId/guidance/research`, ({ params }) => {
-    const t = db.tasks.find((x) => x.id === params.taskId)
-    if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-
-    const kase = db.cases.find((c) => c.id === t.caseId)
-    const target = kase?.municipality ?? 'お住まいの自治体'
-
-    t.guidance = {
-      ...t.guidance,
-      research: {
-        status: 'RESEARCHING',
-        target,
-        startedAt: new Date().toISOString(),
-        agentRunId: nextId('run'),
-      },
-    }
-
-    // エージェントが調べ終わるまでの時間を模擬する
-    setTimeout(() => {
-      const current = db.tasks.find((x) => x.id === params.taskId)
-      if (!current?.guidance?.research) return
-
-      // 3回に1回くらいは調べきれない、という状況も再現する
-      const roll = Math.random()
-      const now = new Date().toISOString()
-
-      if (roll < 0.15) {
-        current.guidance.research = {
-          ...current.guidance.research,
-          status: 'FAILED',
-          completedAt: now,
-          failureReason: `${target}の公開ページで、この手続きの案内を見つけられませんでした。`,
-        }
-        return
-      }
-
-      current.guidance = {
-        ...current.guidance,
-        where: `${target} 戸籍住民課（本庁舎1階 ②番窓口）`,
-        bring: ['死亡診断書（原本）', '届出人の本人確認書類'],
-        steps: [
-          '病院などで受け取った死亡診断書の左側（死亡届）に記入します。',
-          '火葬許可申請書と一緒に、戸籍住民課の窓口へ提出します。',
-          '火葬許可証を受け取ります（火葬の当日に火葬場へ出します）。',
-        ],
-        note: '時間外・休日は宿直窓口でも受け付けています。',
-        researchedBy: 'AI',
-        sources: [
-          {
-            label: `${target} 公式サイト「死亡届」`,
-            url: 'https://www.city.example.lg.jp/kurashi/koseki/shibou.html',
-            checkedAt: now,
-          },
-          {
-            label: '法務省「死亡届」',
-            url: 'https://www.moj.go.jp/MINJI/minji79.html',
-            checkedAt: now,
-          },
-        ],
-        research: {
-          ...current.guidance.research,
-          status: roll < 0.5 ? 'PARTIAL' : 'COMPLETED',
-          completedAt: now,
-          confidence: roll < 0.5 ? 'MEDIUM' : 'HIGH',
-          missing: roll < 0.5 ? ['宿直窓口の受付時間', '駐車場の有無'] : undefined,
-        },
-      }
-    }, 4500)
-
-    return HttpResponse.json(t)
+    const kase = caseOf(String(params.caseId))
+    if (!kase) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, kase)
+    if (ver) return ver
+    if ('deceasedName' in body && typeof body.deceasedName === 'string') kase.deceasedName = body.deceasedName
+    if ('municipality' in body) kase.municipality = typeof body.municipality === 'string' ? body.municipality : null
+    if ('dateOfBirth' in body) kase.dateOfBirth = typeof body.dateOfBirth === 'string' ? body.dateOfBirth : null
+    if ('knownAt' in body) kase.knownAt = typeof body.knownAt === 'string' ? body.knownAt : null
+    kase.version += 1
+    kase.caseVersion += 1
+    kase.updatedAt = new Date().toISOString()
+    refreshAllTaskActions(kase.id)
+    return ok(kase)
   }),
 
   /* ---------- Document ---------- */
-  http.get(`${BASE}/cases/:caseId/documents`, ({ params }) =>
-    list(db.documents.filter((d) => d.caseId === params.caseId)),
-  ),
-
+  http.get(`${BASE}/cases/:caseId/documents`, ({ params }) => page(db.documents.filter((d) => d.caseId === String(params.caseId) && !d.archived))),
   http.post(`${BASE}/cases/:caseId/documents`, async ({ params, request }) => {
+    const caseId = String(params.caseId)
+    if (!caseOf(caseId)) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
     const form = await request.formData()
-    const file = form.get('file') as File | null
-    await delay(900)
+    const file = form.get('file')
+    const kindField = form.get('kind')
+    if (!(file instanceof File)) return fail('VALIDATION_FAILED', 'file が必要です。', { field: 'file' })
+    if (file.size > 10 * 1024 * 1024) return fail('PAYLOAD_TOO_LARGE', '10MBまでの書類をお預かりできます。', { maxBytes: 10 * 1024 * 1024 })
+    if (!['application/pdf', 'image/jpeg', 'image/png'].includes(file.type) && file.type !== '')
+      return fail('UNSUPPORTED_MEDIA_TYPE', 'PDF・JPEG・PNGのみお預かりできます。')
 
-    if (!file) {
-      return HttpResponse.json({ code: 'INVALID_REQUEST', message: 'ファイルがありません' }, { status: 400 })
-    }
-
-    // Cloud Storage への保存より前に検知する（企画書セクション5）
-    const name = file.name.toLowerCase()
-    if (MY_NUMBER_HINTS.some((h) => file.name.includes(h) || name.includes(h))) {
-      return HttpResponse.json(
-        {
-          code: 'MY_NUMBER_DETECTED',
-          message: 'マイナンバーが記載された書類はアップロードできません。',
-        },
-        { status: 422 },
-      )
-    }
-    if (!/\.(pdf|jpe?g|png|heic)$/i.test(file.name)) {
-      return HttpResponse.json(
-        { code: 'UNSUPPORTED_FILE_TYPE', message: '対応していないファイル形式です。' },
-        { status: 415 },
-      )
-    }
-
-    const doc: CaseDocument = {
-      id: nextId('doc'),
-      caseId: String(params.caseId),
+    await delay(200)
+    const now = new Date().toISOString()
+    const isSensitive = MY_NUMBER_HINTS.some((h) => file.name.toLowerCase().includes(h.toLowerCase()))
+    const id = nextId('doc')
+    uploadedFiles.set(id, file)
+    const doc = {
+      id,
+      caseId,
       fileName: file.name,
-      kind: 'OTHER',
-      kindSource: 'AI',
-      analysisStatus: 'ANALYZING',
+      contentType: file.type || 'application/octet-stream',
       sizeBytes: file.size,
-      uploadedAt: new Date().toISOString(),
-      myNumberScan: isMaskedCase(file.name) ? 'MASKED' : 'CLEAN',
-      extractions: [],
+      sha256: stableHash({ name: file.name, size: file.size }),
+      kind: (typeof kindField === 'string' ? (kindField as DocumentKind) : guessKind(file.name)) ?? 'OTHER',
+      kindSource: 'MANUAL' as const,
+      storageState: (isSensitive ? 'FAILED' : 'STORED') as 'FAILED' | 'STORED',
+      inspection: isSensitive
+        ? {
+            status: 'REJECTED' as const,
+            completed: true,
+            findings: [{ kind: 'SENSITIVE_NUMBER' as const, message: 'マイナンバーが書かれている可能性があるため、お預かりできません。', locationHint: null }],
+          }
+        : { status: 'PASSED' as const, completed: true, findings: [] },
+      analysis: { state: 'NOT_REQUESTED' as const, agentRunId: null, canRequest: !isSensitive, blockedReasons: [], run: null },
+      extractionCandidates: [],
+      proposalRefs: [],
+      approvalRefs: [],
+      evidenceRefs: [],
+      archived: false,
+      archivedAt: null,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
     }
-    db.documents.unshift(doc)
-    uploadedFiles.set(doc.id, file)
-
-    // 読み取りの完了をあとから反映する（document_analysis の代役。ファイル名で結果を出し分ける）
-    startAnalysis(doc)
-
-    return HttpResponse.json(doc, { status: 201 })
+    db.documents.push(doc)
+    if (!isSensitive) startAnalysis(doc)
+    return ok(doc, 201)
   }),
-
-  http.get(`${BASE}/documents/:documentId`, ({ params }) => {
-    const doc = db.documents.find((d) => d.id === params.documentId)
-    return doc
-      ? HttpResponse.json(doc)
-      : HttpResponse.json({ code: 'NOT_FOUND', message: '書類が見つかりません' }, { status: 404 })
+  http.get(`${BASE}/cases/:caseId/documents/:documentId`, ({ params }) => {
+    const doc = db.documents.find((d) => d.id === String(params.documentId) && d.caseId === String(params.caseId))
+    return doc ? ok(doc) : notFound()
   }),
-
-  // 原本。本物の Backend と同じ道筋（ケースの下）で返す
   http.get(`${BASE}/cases/:caseId/documents/:documentId/content`, async ({ params }) => {
-    const doc = db.documents.find((d) => d.id === params.documentId && d.caseId === params.caseId)
-    if (!doc) return HttpResponse.json({ code: 'NOT_FOUND', message: '書類が見つかりません' }, { status: 404 })
-    await delay(300)
+    const doc = db.documents.find((d) => d.id === String(params.documentId) && d.caseId === String(params.caseId))
+    if (!doc) return notFound()
     const blob = uploadedFiles.get(doc.id) ?? sampleContent(doc)
-    return new HttpResponse(blob, { headers: { 'Content-Type': blob.type || 'application/octet-stream' } })
+    return new HttpResponse(blob, { headers: { 'Content-Type': blob.type || doc.contentType } })
   }),
-
-  http.delete(`${BASE}/documents/:documentId`, ({ params }) => {
-    db.documents = db.documents.filter((d) => d.id !== params.documentId)
-    uploadedFiles.delete(String(params.documentId))
-    return new HttpResponse(null, { status: 204 })
+  http.post(`${BASE}/cases/:caseId/documents/:documentId/archive`, async ({ params, request }) => {
+    const doc = db.documents.find((d) => d.id === String(params.documentId) && d.caseId === String(params.caseId))
+    if (!doc) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, doc)
+    if (ver) return ver
+    doc.archived = true
+    doc.archivedAt = new Date().toISOString()
+    doc.version += 1
+    doc.updatedAt = doc.archivedAt
+    return ok(doc)
   }),
 
   /* ---------- Task ---------- */
-  http.get(`${BASE}/cases/:caseId/tasks`, ({ params }) =>
-    list(db.tasks.filter((t) => t.caseId === params.caseId).map(withAssignee)),
-  ),
-
+  http.get(`${BASE}/cases/:caseId/tasks`, ({ params }) => page(db.tasks.filter((t) => t.caseId === String(params.caseId)))),
   http.post(`${BASE}/cases/:caseId/tasks`, async ({ params, request }) => {
-    const body = (await request.json()) as Record<string, string>
-    const created: Task = {
+    const caseId = String(params.caseId)
+    if (!caseOf(caseId)) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const now = new Date().toISOString()
+    const status = 'NOT_STARTED' as const
+    const { allowed, blocked } = taskActions(status, { assetDisposal: false, decided: false, evidenceRequired: Boolean(body.evidenceRequired), hasEvidence: false })
+    const created = {
       id: nextId('task'),
-      caseId: String(params.caseId),
-      title: body.title,
-      summary: body.summary ?? '',
-      submitTo: body.submitTo,
-      status: 'NOT_STARTED',
-      stage: 'government',
-      category: body.category ?? 'その他',
-      source: 'MANUAL',
+      caseId,
+      title: String(body.title ?? ''),
+      summary: typeof body.summary === 'string' ? body.summary : '',
+      status,
+      stage: (body.stage as (typeof db.tasks)[number]['stage']) ?? 'contracts',
+      category: String(body.category ?? '手続き'),
+      submitTo: typeof body.submitTo === 'string' ? body.submitTo : null,
+      assigneeId: null,
+      dependencyTaskIds: [],
+      escalation: null,
+      source: 'MANUAL' as const,
+      conditional: false,
+      submitToSource: 'MANUAL' as const,
+      targetDate: null,
+      evidenceRequired: Boolean(body.evidenceRequired),
       assetDisposal: false,
+      requiredDocuments: [],
+      completionReportedBy: null,
+      completionReportedAt: null,
+      deadline: null,
       evidences: [],
-      updatedAt: new Date().toISOString(),
+      allowedActions: allowed,
+      blockedActions: blocked,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
     }
     db.tasks.push(created)
-    return HttpResponse.json(created, { status: 201 })
+    return ok(created, 201)
   }),
-
-  http.get(`${BASE}/tasks/:taskId`, ({ params }) => {
-    const t = db.tasks.find((x) => x.id === params.taskId)
-    if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    return HttpResponse.json({
-      ...withAssignee(t),
-      evidences: db.evidences.filter((e) => e.taskId === t.id),
+  http.get(`${BASE}/cases/:caseId/tasks/:taskId`, ({ params }) => {
+    const t = taskOf(String(params.caseId), String(params.taskId))
+    return t ? ok(t) : notFound()
+  }),
+  http.patch(`${BASE}/cases/:caseId/tasks/:taskId`, async ({ params, request }) => {
+    const t = taskOf(String(params.caseId), String(params.taskId))
+    if (!t) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, t)
+    if (ver) return ver
+    if (typeof body.title === 'string') t.title = body.title
+    if (typeof body.summary === 'string') t.summary = body.summary
+    if ('submitTo' in body) t.submitTo = typeof body.submitTo === 'string' ? body.submitTo : null
+    if ('assigneeId' in body) t.assigneeId = typeof body.assigneeId === 'string' ? body.assigneeId : null
+    if (Array.isArray(body.requiredDocuments)) {
+      t.requiredDocuments = (body.requiredDocuments as { id: string; label: string; documentId: string | null }[]).map((r) => ({
+        id: r.id,
+        label: r.label,
+        documentId: r.documentId,
+        source: t.requiredDocuments.find((x) => x.id === r.id)?.source ?? 'MANUAL',
+      }))
+    }
+    t.version += 1
+    t.updatedAt = new Date().toISOString()
+    return ok(t)
+  }),
+  http.post(`${BASE}/cases/:caseId/tasks/:taskId/commands`, async ({ params, request }) => {
+    const t = taskOf(String(params.caseId), String(params.taskId))
+    if (!t) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, t)
+    if (ver) return ver
+    const command = body.command as TaskCommandResource
+    if (!t.allowedActions.includes(command)) {
+      const blocked = t.blockedActions.find((b) => b.action === command)
+      return fail('PRECONDITION_FAILED', 'いまの状態ではこの操作はできません。', { reason: blocked?.reason ?? 'INVALID_TRANSITION' })
+    }
+    const TRANSITIONS: Partial<Record<TaskCommandResource, (typeof db.tasks)[number]['status']>> = {
+      start: 'COLLECTING_INFORMATION',
+      requestDocuments: 'WAITING_DOCUMENTS',
+      markReady: 'READY',
+      reportSubmission: 'SUBMITTED',
+      awaitExternal: 'WAITING_EXTERNAL',
+      complete: 'COMPLETED',
+      reopen: 'ACTION_REQUIRED',
+      flagActionRequired: 'ACTION_REQUIRED',
+    }
+    const next = TRANSITIONS[command]
+    if (next) t.status = next
+    if (command === 'complete') {
+      t.completionReportedBy = SELF_PERSON_ID
+      t.completionReportedAt = new Date().toISOString()
+    }
+    t.version += 1
+    t.updatedAt = new Date().toISOString()
+    refreshTaskActions(t)
+    return ok(t)
+  }),
+  http.post(`${BASE}/cases/:caseId/tasks/:taskId/evidences`, async ({ params, request }) => {
+    const t = taskOf(String(params.caseId), String(params.taskId))
+    if (!t) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    t.evidences.push({
+      id: nextId('ev'),
+      label: String(body.label ?? ''),
+      kind: (body.kind as (typeof t.evidences)[number]['kind']) ?? 'OTHER',
+      note: typeof body.note === 'string' ? body.note : null,
+      recordedAt: new Date().toISOString(),
+    })
+    t.version += 1
+    t.updatedAt = new Date().toISOString()
+    refreshTaskActions(t)
+    return ok(t)
+  }),
+  http.get(`${BASE}/cases/:caseId/tasks/:taskId/guidance`, ({ params }) => {
+    const taskId = String(params.taskId)
+    const existing = db.guidance[taskId]
+    if (existing) return ok(existing)
+    return ok<GuidanceResource>({
+      taskId,
+      status: 'NOT_REQUESTED',
+      target: null,
+      where: null,
+      bring: [],
+      steps: [],
+      formExampleUrl: null,
+      formExampleLabel: null,
+      note: null,
+      sources: [],
+      missing: [],
+      failureReason: null,
+      researchedBy: null,
+      agentRunId: null,
+      version: 0,
+      updatedAt: new Date().toISOString(),
     })
   }),
-
-  http.patch(`${BASE}/tasks/:taskId`, async ({ params, request }) => {
-    const t = db.tasks.find((x) => x.id === params.taskId)
-    if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    const body = (await request.json()) as Partial<Task> & { assigneeId?: string | null }
-    if (body.assigneeId) {
-      const person = db.persons.find((p) => p.id === body.assigneeId && p.caseId === t.caseId)
-      if (!person || person.excludedAt) {
-        return HttpResponse.json({ code: 'PRECONDITION_FAILED', message: 'その方は担当にできません' }, { status: 409 })
+  http.post(`${BASE}/cases/:caseId/tasks/:taskId/guidance/requests`, async ({ params, request }) => {
+    const t = taskOf(String(params.caseId), String(params.taskId))
+    if (!t) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const taskId = t.id
+    const now = new Date().toISOString()
+    const researching: GuidanceResource = {
+      taskId,
+      status: 'RESEARCHING',
+      target: t.submitTo ?? t.title,
+      where: null,
+      bring: [],
+      steps: [],
+      formExampleUrl: null,
+      formExampleLabel: null,
+      note: null,
+      sources: [],
+      missing: [],
+      failureReason: null,
+      researchedBy: 'AI',
+      agentRunId: nextId('run'),
+      version: 1,
+      updatedAt: now,
+    }
+    db.guidance[taskId] = researching
+    setTimeout(() => {
+      db.guidance[taskId] = {
+        ...researching,
+        status: 'COMPLETED',
+        where: t.submitTo ?? '窓口にご確認ください',
+        bring: ['本人確認書類', '印鑑'],
+        steps: ['窓口で申請書を受け取ります。', '必要書類とあわせて提出します。'],
+        note: '受付時間は自治体・機関によって異なります。事前にご確認ください。',
+        sources: [{ label: `${t.submitTo ?? '窓口'}の案内`, url: 'https://example.com/guidance', checkedAt: new Date().toISOString() }],
+        version: researching.version + 1,
+        updatedAt: new Date().toISOString(),
       }
-    }
-    const { assigneeId, assigneeName: _ignored, ...rest } = body
-    Object.assign(t, rest, { updatedAt: new Date().toISOString() })
-    if (assigneeId !== undefined) t.assigneeId = assigneeId ?? undefined
-    return HttpResponse.json({ ...withAssignee(t), evidences: db.evidences.filter((e) => e.taskId === t.id) })
+    }, 4500)
+    return ok(researching, 202)
   }),
-
-  http.post(`${BASE}/tasks/:taskId/complete`, ({ params }) => {
-    const t = db.tasks.find((x) => x.id === params.taskId)
-    if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    t.status = 'COMPLETED'
-    t.updatedAt = new Date().toISOString()
-    return HttpResponse.json({ ...withAssignee(t), evidences: db.evidences.filter((e) => e.taskId === t.id) })
-  }),
-
-  http.post(`${BASE}/tasks/:taskId/reopen`, ({ params }) => {
-    const t = db.tasks.find((x) => x.id === params.taskId)
-    if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    t.status = 'ACTION_REQUIRED'
-    t.updatedAt = new Date().toISOString()
-    return HttpResponse.json({ ...withAssignee(t), evidences: db.evidences.filter((e) => e.taskId === t.id) })
-  }),
-
-  http.post(`${BASE}/tasks/:taskId/evidences`, async ({ params, request }) => {
-    const body = (await request.json()) as Partial<Evidence>
-    const created: Evidence = {
-      id: nextId('ev'),
-      taskId: String(params.taskId),
-      label: body.label ?? '',
-      kind: body.kind ?? 'OTHER',
-      note: body.note,
-      recordedAt: new Date().toISOString(),
-    }
-    db.evidences.push(created)
-    return HttpResponse.json(created, { status: 201 })
-  }),
-
-  /* ---------- Deadline ---------- */
-  http.get(`${BASE}/cases/:caseId/deadlines`, ({ params }) =>
-    list(
-      db.tasks
-        .filter((t) => t.caseId === params.caseId && t.deadline)
-        .map((t) => t.deadline!)
-        .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    ),
-  ),
 
   /* ---------- Asset / Liability / Contract / Benefit ---------- */
-  http.get(`${BASE}/cases/:caseId/assets`, ({ params }) =>
-    list(db.assets.filter((a) => a.caseId === params.caseId)),
-  ),
+  http.get(`${BASE}/cases/:caseId/assets`, ({ params }) => page(db.assets.filter((a) => a.caseId === String(params.caseId)))),
   http.post(`${BASE}/cases/:caseId/assets`, async ({ params, request }) => {
-    const body = (await request.json()) as Partial<Asset>
-    const created = { id: nextId('asset'), caseId: String(params.caseId), ...body } as Asset
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as CreateAssetRequest
+    const created: Asset = { id: nextId('asset'), caseId: String(params.caseId), name: body.name, kind: body.kind, institution: body.institution, amount: body.amount ?? undefined, currency: 'JPY', source: 'MANUAL', confirmation: 'UNCONFIRMED', taxAttention: body.taxAttention, note: body.note, version: 1 }
     db.assets.push(created)
-    return HttpResponse.json(created, { status: 201 })
+    return ok(created, 201)
   }),
-  http.patch(`${BASE}/assets/:id`, async ({ params, request }) => {
-    const a = db.assets.find((x) => x.id === params.id)
-    if (!a) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    Object.assign(a, await request.json())
-    return HttpResponse.json(a)
+  http.patch(`${BASE}/cases/:caseId/assets/:id`, async ({ params, request }) => {
+    const a = db.assets.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!a) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as UpdateAssetRequest
+    const ver = requireExpectedVersion(body, a)
+    if (ver) return ver
+    Object.assign(a, body, { version: a.version + 1 })
+    return ok(a)
+  }),
+  http.post(`${BASE}/cases/:caseId/assets/:id/confirm`, async ({ params, request }) => {
+    const a = db.assets.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!a) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, a)
+    if (ver) return ver
+    a.confirmation = 'CONFIRMED'
+    a.confirmationRecord = { state: 'CONFIRMED', confirmedAt: new Date().toISOString(), confirmedBy: SELF_PERSON_ID, confirmedVersion: a.version + 1 }
+    a.version += 1
+    return ok(a)
   }),
 
-  http.get(`${BASE}/cases/:caseId/liabilities`, ({ params }) =>
-    list(db.liabilities.filter((l) => l.caseId === params.caseId)),
-  ),
+  http.get(`${BASE}/cases/:caseId/liabilities`, ({ params }) => page(db.liabilities.filter((l) => l.caseId === String(params.caseId)))),
   http.post(`${BASE}/cases/:caseId/liabilities`, async ({ params, request }) => {
-    const body = (await request.json()) as Partial<Liability>
-    const created = { id: nextId('liab'), caseId: String(params.caseId), ...body } as Liability
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as CreateLiabilityRequest
+    const created: Liability = { id: nextId('liab'), caseId: String(params.caseId), name: body.name, kind: body.kind, creditor: body.creditor, amount: body.amount ?? undefined, currency: 'JPY', source: 'MANUAL', confirmation: 'UNCONFIRMED', note: body.note, version: 1 }
     db.liabilities.push(created)
-    return HttpResponse.json(created, { status: 201 })
+    return ok(created, 201)
   }),
-  http.patch(`${BASE}/liabilities/:id`, async ({ params, request }) => {
-    const l = db.liabilities.find((x) => x.id === params.id)
-    if (!l) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    Object.assign(l, await request.json())
-    return HttpResponse.json(l)
+  http.patch(`${BASE}/cases/:caseId/liabilities/:id`, async ({ params, request }) => {
+    const l = db.liabilities.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!l) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as UpdateLiabilityRequest
+    const ver = requireExpectedVersion(body, l)
+    if (ver) return ver
+    Object.assign(l, body, { version: l.version + 1 })
+    return ok(l)
+  }),
+  http.post(`${BASE}/cases/:caseId/liabilities/:id/confirm`, async ({ params, request }) => {
+    const l = db.liabilities.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!l) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, l)
+    if (ver) return ver
+    l.confirmation = 'CONFIRMED'
+    l.confirmationRecord = { state: 'CONFIRMED', confirmedAt: new Date().toISOString(), confirmedBy: SELF_PERSON_ID, confirmedVersion: l.version + 1 }
+    l.version += 1
+    return ok(l)
   }),
 
-  http.get(`${BASE}/cases/:caseId/contracts`, ({ params }) =>
-    list(db.contracts.filter((c) => c.caseId === params.caseId)),
-  ),
+  http.get(`${BASE}/cases/:caseId/contracts`, ({ params }) => page(db.contracts.filter((c) => c.caseId === String(params.caseId)))),
   http.post(`${BASE}/cases/:caseId/contracts`, async ({ params, request }) => {
-    const body = (await request.json()) as Partial<Contract>
-    const created = { id: nextId('contract'), caseId: String(params.caseId), ...body } as Contract
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as CreateContractRequest
+    const created: Contract = { id: nextId('contract'), caseId: String(params.caseId), name: body.name, kind: body.kind, provider: body.provider, policy: 'UNDECIDED', progress: 'NOT_STARTED', source: 'MANUAL', note: body.note, version: 1 }
     db.contracts.push(created)
-    return HttpResponse.json(created, { status: 201 })
+    return ok(created, 201)
   }),
-  http.patch(`${BASE}/contracts/:id`, async ({ params, request }) => {
-    const c = db.contracts.find((x) => x.id === params.id)
-    if (!c) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    Object.assign(c, await request.json())
-    return HttpResponse.json(c)
+  http.patch(`${BASE}/cases/:caseId/contracts/:id`, async ({ params, request }) => {
+    const c = db.contracts.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!c) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as UpdateContractRequest
+    const ver = requireExpectedVersion(body, c)
+    if (ver) return ver
+    Object.assign(c, body, { version: c.version + 1 })
+    return ok(c)
+  }),
+  http.post(`${BASE}/cases/:caseId/contracts/:id/policy`, async ({ params, request }) => {
+    const c = db.contracts.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!c) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as SetContractPolicyRequest
+    const ver = requireExpectedVersion(body, c)
+    if (ver) return ver
+    c.policy = body.policy
+    c.policyRecord = { decidedAt: new Date().toISOString(), decidedBy: SELF_PERSON_ID, note: body.note ?? null }
+    c.version += 1
+    return ok(c)
+  }),
+  http.post(`${BASE}/cases/:caseId/contracts/:id/progress`, async ({ params, request }) => {
+    const c = db.contracts.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!c) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as ReportProgressRequest
+    const ver = requireExpectedVersion(body, c)
+    if (ver) return ver
+    c.progress = body.progress
+    c.progressRecord = { reportedAt: new Date().toISOString(), reportedBy: SELF_PERSON_ID, source: 'USER_REPORTED', note: body.note ?? null }
+    c.version += 1
+    return ok(c)
   }),
 
-  http.get(`${BASE}/cases/:caseId/benefits`, ({ params }) =>
-    list(db.benefits.filter((b) => b.caseId === params.caseId)),
-  ),
-  http.patch(`${BASE}/benefits/:id`, async ({ params, request }) => {
-    const b = db.benefits.find((x) => x.id === params.id)
-    if (!b) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    Object.assign(b, (await request.json()) as Partial<Benefit>)
-    return HttpResponse.json(b)
+  http.get(`${BASE}/cases/:caseId/benefits`, ({ params }) => page(db.benefits.filter((b) => b.caseId === String(params.caseId)))),
+  http.post(`${BASE}/cases/:caseId/benefits`, async ({ params, request }) => {
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as CreateBenefitRequest
+    const created: Benefit = { id: nextId('benefit'), caseId: String(params.caseId), name: body.name, kind: body.kind, provider: body.provider, amount: body.amount ?? undefined, currency: 'JPY', progress: 'NOT_STARTED', note: body.note, version: 1 }
+    db.benefits.push(created)
+    return ok(created, 201)
+  }),
+  http.patch(`${BASE}/cases/:caseId/benefits/:id`, async ({ params, request }) => {
+    const b = db.benefits.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!b) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as UpdateBenefitRequest
+    const ver = requireExpectedVersion(body, b)
+    if (ver) return ver
+    Object.assign(b, body, { version: b.version + 1 })
+    return ok(b)
+  }),
+  http.post(`${BASE}/cases/:caseId/benefits/:id/progress`, async ({ params, request }) => {
+    const b = db.benefits.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!b) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as ReportProgressRequest
+    const ver = requireExpectedVersion(body, b)
+    if (ver) return ver
+    b.progress = body.progress
+    b.progressRecord = { reportedAt: new Date().toISOString(), reportedBy: SELF_PERSON_ID, source: 'USER_REPORTED', note: body.note ?? null }
+    b.version += 1
+    return ok(b)
   }),
 
-  /* ---------- Approval ---------- */
-  http.get(`${BASE}/cases/:caseId/approvals`, ({ params }) =>
-    list(
-      db.approvals
-        .filter((a) => a.caseId === params.caseId)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    ),
-  ),
-
-  http.get(`${BASE}/approvals/:id`, ({ params }) => {
-    const a = db.approvals.find((x) => x.id === params.id)
-    return a
-      ? HttpResponse.json(a)
-      : HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
+  /* ---------- Proposal / Approval ---------- */
+  http.get(`${BASE}/cases/:caseId/proposals`, ({ params }) => page(db.proposals.filter((p) => p.caseId === String(params.caseId)))),
+  http.get(`${BASE}/cases/:caseId/proposals/:proposalId`, ({ params }) => {
+    const p = db.proposals.find((x) => x.id === String(params.proposalId) && x.caseId === String(params.caseId))
+    return p ? ok(p) : notFound()
   }),
-
-  http.post(`${BASE}/approvals/:id/approve`, async ({ params, request }) => {
-    const a = db.approvals.find((x) => x.id === params.id)
-    if (!a) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    const body = (await request.json()) as { edits?: Record<string, string>; note?: string }
-
-    if (body.edits) {
-      for (const row of a.diff) {
-        if (body.edits[row.field] !== undefined) row.after = body.edits[row.field]
-      }
+  http.patch(`${BASE}/cases/:caseId/proposals/:proposalId`, async ({ params, request }) => {
+    const prev = db.proposals.find((x) => x.id === String(params.proposalId) && x.caseId === String(params.caseId))
+    if (!prev) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, prev)
+    if (ver) return ver
+    const payload = (body.payload ?? prev.payload) as Record<string, unknown>
+    const now = new Date().toISOString()
+    const revised = {
+      ...prev,
+      payload,
+      payloadHash: stableHash(payload),
+      proposalVersion: prev.proposalVersion + 1,
+      supersedesProposalVersion: prev.proposalVersion,
+      status: 'SUBMITTED' as const,
+      version: prev.version + 1,
+      updatedAt: now,
     }
-    a.status = 'APPROVED'
-    a.decidedAt = new Date().toISOString()
-    a.decisionNote = body.note
-
-    applyProposal(a)
-    return HttpResponse.json(a)
+    db.proposals.push(revised)
+    // 旧版に結びついた確認待ちの Approval は無効になる
+    for (const a of db.approvals.filter((x) => x.proposalId === prev.id && x.status === 'PENDING')) {
+      a.status = 'EXPIRED'
+      a.updatedAt = now
+    }
+    return ok(revised)
+  }),
+  http.post(`${BASE}/cases/:caseId/proposals/:proposalId/approval-requests`, async ({ params, request }) => {
+    const p = db.proposals.find((x) => x.id === String(params.proposalId) && x.caseId === String(params.caseId))
+    if (!p) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, p)
+    if (ver) return ver
+    const now = new Date().toISOString()
+    const approval = {
+      id: nextId('apr'),
+      caseId: p.caseId,
+      proposalId: p.id,
+      proposalVersion: p.proposalVersion,
+      payloadHash: p.payloadHash,
+      status: 'PENDING' as const,
+      applicationStatus: 'NOT_APPLIED' as const,
+      applicationFailureReason: null,
+      decidedByUserId: null,
+      decidedAt: null,
+      decisionNote: null,
+      expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      assetDisposal: p.assetDisposal,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    }
+    db.approvals.push(approval)
+    p.status = 'AWAITING_APPROVAL'
+    p.updatedAt = now
+    return ok(approval, 201)
   }),
 
-  http.post(`${BASE}/approvals/:id/reject`, async ({ params, request }) => {
-    const a = db.approvals.find((x) => x.id === params.id)
-    if (!a) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    const body = (await request.json()) as { note?: string }
+  http.get(`${BASE}/cases/:caseId/approvals`, ({ params }) => page(db.approvals.filter((a) => a.caseId === String(params.caseId)))),
+  http.get(`${BASE}/cases/:caseId/approvals/:approvalId`, ({ params }) => {
+    const a = db.approvals.find((x) => x.id === String(params.approvalId) && x.caseId === String(params.caseId))
+    return a ? ok(a) : notFound()
+  }),
+  http.post(`${BASE}/cases/:caseId/approvals/:approvalId/approve`, async ({ params, request }) => {
+    const a = db.approvals.find((x) => x.id === String(params.approvalId) && x.caseId === String(params.caseId))
+    if (!a) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, a)
+    if (ver) return ver
+    if (a.status !== 'PENDING') return fail('PRECONDITION_FAILED', 'すでに結論が出ています。', { reason: 'ALREADY_DECIDED' })
+    if (body.payloadHash !== a.payloadHash) return fail('PRECONDITION_FAILED', '内容が更新されています。開き直してから、もう一度お試しください。', { reason: 'STALE_PAYLOAD' })
+    const { applied, reason } = applyProposal(a.proposalId)
+    const now = new Date().toISOString()
+    a.status = 'APPROVED'
+    a.applicationStatus = applied ? 'APPLIED' : 'FAILED'
+    a.applicationFailureReason = applied ? null : (reason ?? '反映できませんでした。')
+    a.decidedByUserId = SELF_PERSON_ID
+    a.decidedAt = now
+    a.decisionNote = typeof body.note === 'string' ? body.note : null
+    a.version += 1
+    a.updatedAt = now
+    const proposal = db.proposals.find((p) => p.id === a.proposalId)
+    if (proposal) {
+      proposal.status = applied ? 'APPLIED' : proposal.status
+      proposal.updatedAt = now
+    }
+    refreshAllTaskActions(a.caseId)
+    return ok(a)
+  }),
+  http.post(`${BASE}/cases/:caseId/approvals/:approvalId/reject`, async ({ params, request }) => {
+    const a = db.approvals.find((x) => x.id === String(params.approvalId) && x.caseId === String(params.caseId))
+    if (!a) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const ver = requireExpectedVersion(body, a)
+    if (ver) return ver
+    const now = new Date().toISOString()
     a.status = 'REJECTED'
-    a.decidedAt = new Date().toISOString()
-    a.decisionNote = body.note
-    return HttpResponse.json(a)
+    a.decidedByUserId = SELF_PERSON_ID
+    a.decidedAt = now
+    a.decisionNote = typeof body.note === 'string' ? body.note : null
+    a.version += 1
+    a.updatedAt = now
+    const proposal = db.proposals.find((p) => p.id === a.proposalId)
+    if (proposal) {
+      proposal.status = 'REJECTED'
+      proposal.updatedAt = now
+    }
+    return ok(a)
   }),
 
   /* ---------- Person ---------- */
-  http.get(`${BASE}/cases/:caseId/persons`, ({ params }) =>
-    list(db.persons.filter((p) => p.caseId === params.caseId)),
-  ),
+  http.get(`${BASE}/cases/:caseId/persons`, ({ params }) => page(db.persons.filter((p) => p.caseId === String(params.caseId)))),
   http.post(`${BASE}/cases/:caseId/persons`, async ({ params, request }) => {
-    const body = (await request.json()) as Partial<Person>
-    const created = { id: nextId('person'), caseId: String(params.caseId), ...body } as Person
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as CreatePersonRequest
+    const created: Person = {
+      id: nextId('person'),
+      caseId: String(params.caseId),
+      name: body.name,
+      nameKana: body.nameKana,
+      relationship: body.relationship,
+      role: body.role ?? 'RELATED',
+      isHeir: body.isHeir ?? false,
+      dateOfBirth: body.dateOfBirth,
+      specialCircumstance: body.specialCircumstance ?? null,
+      contact: body.contact,
+      note: body.note,
+      version: 1,
+    }
     db.persons.push(created)
-    return HttpResponse.json(created, { status: 201 })
+    refreshAllTaskActions(created.caseId)
+    return ok(created, 201)
   }),
-  http.patch(`${BASE}/persons/:id`, async ({ params, request }) => {
-    const p = db.persons.find((x) => x.id === params.id)
-    if (!p) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    Object.assign(p, await request.json())
-    return HttpResponse.json(p)
+  http.patch(`${BASE}/cases/:caseId/persons/:id`, async ({ params, request }) => {
+    const p = db.persons.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!p) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as UpdatePersonRequest
+    const ver = requireExpectedVersion(body, p)
+    if (ver) return ver
+    Object.assign(p, body, { version: p.version + 1 })
+    return ok(p)
   }),
-  http.delete(`${BASE}/persons/:id`, ({ params }) => {
-    db.persons = db.persons.filter((p) => p.id !== params.id)
-    delete db.decisions[String(params.id)]
-    return new HttpResponse(null, { status: 204 })
+  http.post(`${BASE}/cases/:caseId/persons/:id/exclude`, async ({ params, request }) => {
+    const p = db.persons.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!p) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as ExcludePersonRequest
+    const ver = requireExpectedVersion(body, p)
+    if (ver) return ver
+    p.excludedAt = new Date().toISOString()
+    p.version += 1
+    refreshAllTaskActions(p.caseId)
+    return ok(p)
+  }),
+  http.post(`${BASE}/cases/:caseId/relationships`, async ({ params, request }) => {
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as CreateRelationshipRequest
+    const created = { id: nextId('rel'), caseId: String(params.caseId), fromPersonId: body.fromPersonId, toPersonId: body.toPersonId, kind: body.kind, note: body.note, version: 1 }
+    return ok(created, 201)
   }),
 
-  /* ---------- Decision ---------- */
-  http.post(`${BASE}/cases/:caseId/inheritance-decisions`, async ({ request }) => {
-    const body = (await request.json()) as { personId: string; method: InheritanceMethod | null }
-    db.decisions[body.personId] = body.method
-    return new HttpResponse(null, { status: 204 })
+  /* ---------- 相続方法（Decision） ---------- */
+  http.get(`${BASE}/cases/:caseId/inheritance-decisions`, ({ params }) => page(db.decisions.filter((d) => d.personId && db.persons.some((p) => p.id === d.personId && p.caseId === String(params.caseId))))),
+  http.post(`${BASE}/cases/:caseId/inheritance-decisions/:personId`, async ({ params, request }) => {
+    const personId = String(params.personId)
+    if (!db.persons.some((p) => p.id === personId && p.caseId === String(params.caseId))) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as { method: InheritanceMethod | null; state: 'DRAFT' | 'REPORTED'; note?: string }
+    const now = new Date().toISOString()
+    let d = db.decisions.find((x) => x.personId === personId)
+    if (!d) {
+      d = { personId, method: null, state: 'DRAFT', confirmed: false, reportedByUserId: null, confirmedByUserId: null, confirmedAt: null, note: null, version: 0, updatedAt: now }
+      db.decisions.push(d)
+    }
+    if (d.confirmed && body.state !== 'DRAFT') return fail('CONFLICT', 'すでに本人が確定しています。', { reason: 'ALREADY_CONFIRMED_BY_SELF' })
+    d.method = body.method
+    d.state = body.state
+    d.confirmed = false
+    d.reportedByUserId = SELF_PERSON_ID
+    d.note = body.note ?? null
+    d.version += 1
+    d.updatedAt = now
+    refreshAllTaskActions(String(params.caseId))
+    return ok(d)
+  }),
+  http.post(`${BASE}/cases/:caseId/inheritance-decisions/:personId/confirm`, async ({ params, request }) => {
+    const personId = String(params.personId)
+    if (!db.persons.some((p) => p.id === personId && p.caseId === String(params.caseId))) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as { expectedVersion: number; method: InheritanceMethod; note?: string }
+    const d = db.decisions.find((x) => x.personId === personId)
+    if (!d) return fail('CONFLICT', '先に相続の方法を記録してください。', { reason: 'NOT_RECORDED' })
+    const ver = requireExpectedVersion(body, d)
+    if (ver) return ver
+    const now = new Date().toISOString()
+    d.method = body.method
+    d.state = 'CONFIRMED'
+    d.confirmed = true
+    d.confirmedByUserId = SELF_PERSON_ID
+    d.confirmedAt = now
+    d.note = body.note ?? d.note
+    d.version += 1
+    d.updatedAt = now
+    refreshAllTaskActions(String(params.caseId))
+    return ok(d)
   }),
 
   /* ---------- Insight ---------- */
-  http.get(`${BASE}/cases/:caseId/insights`, ({ params }) => {
-    watchCase(String(params.caseId))
-    return list(
-      db.insights
-        .filter((i) => i.caseId === params.caseId)
-        .sort((a, b) => b.detectedAt.localeCompare(a.detectedAt)),
-    )
+  http.get(`${BASE}/cases/:caseId/insights`, ({ params }) => page(db.insights.filter((i) => i.caseId === String(params.caseId)))),
+  http.post(`${BASE}/cases/:caseId/insights/:id/acknowledge`, async ({ params, request }) => {
+    const i = db.insights.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!i) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = (await jsonBody(request)) as unknown as AcknowledgeInsightRequest
+    i.status = 'ACKNOWLEDGED'
+    i.statusUpdatedAt = new Date().toISOString()
+    if (body.note) i.professionalReviewNote = body.note
+    return ok(i)
   }),
-
-  http.patch(`${BASE}/insights/:id`, async ({ params, request }) => {
-    const i = db.insights.find((x) => x.id === params.id)
-    if (!i) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    const body = (await request.json()) as { status: Insight['status'] }
-    i.status = body.status
-    return HttpResponse.json(i)
+  http.post(`${BASE}/cases/:caseId/insights/:id/dismiss`, async ({ params, request }) => {
+    const i = db.insights.find((x) => x.id === String(params.id) && x.caseId === String(params.caseId))
+    if (!i) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    await jsonBody(request)
+    i.status = 'DISMISSED'
+    i.statusUpdatedAt = new Date().toISOString()
+    return ok(i)
   }),
 
   /* ---------- Chat ---------- */
-  http.get(`${BASE}/cases/:caseId/messages`, ({ params }) =>
-    list(db.messages.filter((m) => m.caseId === params.caseId)),
-  ),
-
+  http.get(`${BASE}/cases/:caseId/messages`, ({ params }) => page(db.messages.filter((m) => m.caseId === String(params.caseId)))),
   http.post(`${BASE}/cases/:caseId/messages`, async ({ params, request }) => {
     const caseId = String(params.caseId)
-    const { body } = (await request.json()) as { body: string }
-
-    db.messages.push({
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const now = new Date().toISOString()
+    const message: MessageResource = {
       id: nextId('msg'),
       caseId,
       role: 'user',
-      body,
-      createdAt: new Date().toISOString(),
-    })
-
-    await delay(800)
-
-    const needsProfessional = /放棄|限定承認|相続税|登記|裁判|遺留分|分割/.test(body)
-    const reply: ChatMessage = {
-      id: nextId('msg'),
-      caseId,
-      role: 'assistant',
-      body: buildReply(caseId, body),
-      createdAt: new Date().toISOString(),
-      professionalNotice: needsProfessional,
-      escalationApprovalId: needsProfessional ? ensureEscalationApproval(caseId) : undefined,
+      body: String(body.body ?? ''),
+      agentRunId: null,
+      replyRunId: null,
+      professionalNotice: false,
+      escalationProposalId: null,
+      createdAt: now,
     }
-    db.messages.push(reply)
-    return HttpResponse.json(reply, { status: 201 })
+    db.messages.push(message)
+    const runId = nextId('run')
+    const accepted: MessageAcceptedResource = { message, runId, runAccepted: true, reason: null }
+    setTimeout(() => {
+      db.messages.push({
+        id: nextId('msg'),
+        caseId,
+        role: 'assistant',
+        body: 'ご相談ありがとうございます。個別の法律・税務判断が必要な内容については、専門家へのご相談をおすすめします。手続きの進め方については、引き続きこちらでご案内します。',
+        agentRunId: runId,
+        replyRunId: null,
+        professionalNotice: true,
+        escalationProposalId: null,
+        createdAt: new Date().toISOString(),
+      })
+    }, 800)
+    return HttpResponse.json({ data: accepted, meta: { requestId: crypto.randomUUID() } }, { status: 202 })
+  }),
+
+  /* ---------- Agent Run（自動調査の依頼） ---------- */
+  http.post(`${BASE}/cases/:caseId/agent-runs`, async ({ params, request }) => {
+    const caseId = String(params.caseId)
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    if (body.operation === 'document_analysis' && typeof body.targetId === 'string') {
+      const doc = db.documents.find((d) => d.id === body.targetId && d.caseId === caseId)
+      if (!doc) return notFound()
+      if (!doc.analysis.canRequest) return fail('PRECONDITION_FAILED', 'いまは読み取りを依頼できません。')
+      startAnalysis(doc)
+      const run = db.agentRuns.find((r) => r.id === doc.analysis.agentRunId)
+      return ok(run, 202)
+    }
+    return fail('FEATURE_NOT_CONNECTED', 'この環境ではまだ使えません。')
   }),
 ]
 
-function buildReply(caseId: string, question: string): string {
-  const ov = overview(caseId)
-  const nearest = ov.upcomingDeadlines[0]
-
-  if (/優先|なに|何を|次/.test(question)) {
-    return nearest
-      ? `いま期限がいちばん近いのは「${nearest.taskTitle ?? nearest.label}」です（${nearest.dueDate} まで、${nearest.basisLabel}）。「やること」の画面から、必要な書類と窓口をご確認ください。\n\n手続きそのもの（提出・届出）はご本人にお願いしています。`
-      : '直近7日以内に期限を迎える手続きはありません。まずは書類の追加から進めてみてください。'
-  }
-  if (/死亡届/.test(question)) {
-    return '死亡届は、亡くなった方の本籍地・死亡地・届出人の住所地のいずれかの市区町村の窓口に提出します。死亡診断書と一緒に提出し、火葬許可証を受け取ります。期限は死亡を知った日から7日以内です。'
-  }
-  if (/放棄/.test(question)) {
-    return '相続放棄を検討される場合、故人の預金を使う、故人の財産を売ったり捨てたりする、故人の財産から借金を返すといった行為は避けてください。これらは単純承認とみなされ、放棄ができなくなるおそれがあります。期限は、自分が相続人になったと知った時から原則3か月です。'
-  }
-  // 画面の「聞いてみる例」に出している質問。答えが無いと、決まり文句だけが返っていた
-  if (/口座|銀行/.test(question)) {
-    return '故人の口座は、金融機関が亡くなったことを知った時点で止められます。死亡届を出しても、役所から金融機関へ自動で知らせることはありません。止まると、公共料金などの引き落としもできなくなるので、引き落とし先の変更を先に確かめておくと安心です。相続の手続きが済むまで、原則として引き出しはできません（一定額までの仮払いの制度はあります）。'
-  }
-  return `ご質問ありがとうございます。いまのケースの状況（未完了の手続き ${
-    Object.entries(ov.taskCounts)
-      .filter(([k]) => k !== 'COMPLETED')
-      .reduce((n, [, v]) => n + (v ?? 0), 0)
-  } 件、確認待ちの提案 ${ov.pendingApprovalCount} 件）をふまえてお答えします。より具体的な内容は、「やること」の画面からご確認ください。`
-}
-
-function ensureEscalationApproval(caseId: string): string {
-  const existing = db.approvals.find(
-    (a) => a.caseId === caseId && a.kind === 'ESCALATION_PROPOSAL' && a.status === 'PENDING',
-  )
-  if (existing) return existing.id
-
-  const created: Approval = {
-    id: nextId('apr'),
-    caseId,
-    kind: 'ESCALATION_PROPOSAL',
-    status: 'PENDING',
-    title: '専門家への相談を記録として追加する',
-    summary:
-      'ご質問の内容には個別の法律・税務判断が含まれます。専門家への相談を手続きとして追加する提案です。',
-    createdAt: new Date().toISOString(),
-    assetDisposal: false,
-    diff: [
-      { field: '手続き名', before: null, after: '弁護士に相続方法について相談する' },
-      { field: '状態', before: null, after: '専門家対応中（ESCALATED）' },
-    ],
-  }
-  db.approvals.push(created)
-  return created.id
-}
-
-/** 承認された提案を、アプリ内の情報として反映する（外部への提出等は行わない） */
-function applyProposal(a: Approval) {
-  const value = (field: string) => a.diff.find((d) => d.field === field)?.after ?? ''
-
-  const yen = (field: string) => {
-    const digits = value(field).replace(/[^\d]/g, '')
-    return digits ? Number(digits) : undefined
-  }
-
-  if (a.kind === 'ASSET_PROPOSAL') {
-    db.assets.push({
-      id: nextId('asset'),
-      caseId: a.caseId,
-      name: value('名称'),
-      kind: 'BANK',
-      institution: value('金融機関') || undefined,
-      amount: yen('残高'),
-      source: 'AI',
-      confirmation: 'CONFIRMED',
-      version: 1,
-    })
-  }
-
-  if (a.kind === 'LIABILITY_PROPOSAL') {
-    db.liabilities.push({
-      id: nextId('liability'),
-      caseId: a.caseId,
-      name: value('名称'),
-      kind: 'LOAN',
-      creditor: value('借りている先') || undefined,
-      amount: yen('金額'),
-      source: 'AI',
-      confirmation: 'CONFIRMED',
-      version: 1,
-    })
-  }
-
-  if (a.kind === 'CONTRACT_PROPOSAL') {
-    db.contracts.push({
-      id: nextId('contract'),
-      caseId: a.caseId,
-      name: value('名称'),
-      kind: value('名称').includes('保険') ? 'INSURANCE' : 'OTHER',
-      provider: value('契約先') || undefined,
-      policy: 'UNDECIDED',
-      progress: 'NOT_STARTED',
-      source: 'AI',
-      version: 1,
-    })
-  }
-
-  // 「故人の情報を登録する」のように手続き名を持たない提案からは、手続きを作らない。
-  // 作ると名前も期限もない手続きができ、ほかを片づけたあとに「まずはこれ」へ出てきてしまう。
-  if ((a.kind === 'TASK_PROPOSAL' || a.kind === 'ESCALATION_PROPOSAL') && value('手続き名').trim()) {
-    db.tasks.push({
-      id: nextId('task'),
-      caseId: a.caseId,
-      title: value('手続き名'),
-      summary: a.summary,
-      submitTo: value('提出先') || undefined,
-      status: a.kind === 'ESCALATION_PROPOSAL' ? 'ESCALATED' : 'NOT_STARTED',
-      stage: a.assetDisposal ? 'transfer' : 'government',
-      category: a.kind === 'ESCALATION_PROPOSAL' ? '相続' : 'その他',
-      source: 'AI',
-      assetDisposal: a.assetDisposal,
-      evidences: [],
-      updatedAt: new Date().toISOString(),
-    })
-  }
-
-  if (a.kind === 'DOCUMENT_REQUEST') {
-    const target = db.tasks.find((t) => t.caseId === a.caseId && t.id === 'task_4')
-    target?.requiredDocuments?.push({
-      id: nextId('rd'),
-      label: value('必要書類'),
-      collected: false,
-      source: 'AI',
-    })
+function me(): MeResource {
+  return {
+    userId: 'mock_user',
+    tenantId: 'mock-tenant',
+    registered: true,
+    active: true,
+    emailVerified: true,
+    registeredAt: new Date(Date.now() - 7 * 86_400_000).toISOString(),
   }
 }
-
-export { CASE_ID, todayISO }
