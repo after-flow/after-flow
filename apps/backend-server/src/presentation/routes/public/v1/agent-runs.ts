@@ -10,6 +10,7 @@ import {
   acceptAgentRunBodySchema,
   answerPlanningQuestionsSchema,
   agentRunActionBodySchema,
+  agentRunEventResourceSchema,
   agentRunIdParamsSchema,
   agentRunResourceSchema,
 } from '../../../schemas/agent.js'
@@ -18,6 +19,7 @@ import { listQuerySchema, successEnvelope } from '../../../schemas/common.js'
 
 const runEnvelope = successEnvelope(agentRunResourceSchema)
 const runListEnvelope = successEnvelope(z.array(agentRunResourceSchema))
+const runEventListEnvelope = successEnvelope(z.array(agentRunEventResourceSchema))
 
 export const agentRunSpecs = {
   acceptAgentRun: {
@@ -66,6 +68,20 @@ export const agentRunSpecs = {
     request: { params: agentRunIdParamsSchema },
     success: { status: 200, description: '実行', schema: runEnvelope },
     failures: ['VALIDATION_FAILED', 'UNAUTHENTICATED', 'NOT_FOUND', 'CONSENT_REQUIRED'],
+  },
+  listAgentRunEvents: {
+    operationId: 'listAgentRunEvents',
+    method: 'get',
+    path: '/cases/:caseId/agent-runs/:runId/events',
+    summary: 'AIの処理の進捗履歴',
+    description:
+      '受付・処理中・待機・再開・完了の履歴をRun内の発生順で返す。prompt・非公開の思考・資格情報・原本文は含まない。',
+    tags: ['agent-runs'],
+    auth: 'user',
+    request: { params: agentRunIdParamsSchema, query: listQuerySchema },
+    success: { status: 200, description: '進捗イベントの一覧', schema: runEventListEnvelope },
+    failures: ['VALIDATION_FAILED', 'UNAUTHENTICATED', 'NOT_FOUND', 'CONSENT_REQUIRED'],
+    list: true,
   },
   cancelAgentRun: {
     operationId: 'cancelAgentRun',
@@ -156,6 +172,14 @@ export function createAgentRunRoutes(service: AgentRunService): RegisteredRoute[
     defineRoute(agentRunSpecs.getAgentRun, async (c, input) =>
       ok(c, await service.get(requireUser(c), input.params.caseId, input.params.runId)),
     ),
+
+    defineRoute(agentRunSpecs.listAgentRunEvents, async (c, input) => {
+      const page = await service.listEvents(requireUser(c), input.params.caseId, input.params.runId, {
+        limit: input.query.limit,
+        cursor: input.query.cursor,
+      })
+      return ok(c, page.items, page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor })
+    }),
 
     defineRoute(agentRunSpecs.cancelAgentRun, async (c, input) =>
       ok(

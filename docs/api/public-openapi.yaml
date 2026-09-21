@@ -13207,6 +13207,168 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
+  /cases/{caseId}/agent-runs/{runId}/events:
+    get:
+      operationId: listAgentRunEvents
+      summary: AIの処理の進捗履歴
+      description: 受付・処理中・待機・再開・完了の履歴をRun内の発生順で返す。prompt・非公開の思考・資格情報・原本文は含まない。
+      tags:
+        - agent-runs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9_-]+$
+        - name: limit
+          in: query
+          required: false
+          schema:
+            default: 50
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: ^[A-Za-z0-9_-]+={0,2}$
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 進捗イベントの一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        runId:
+                          type: string
+                        eventId:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - ACCEPTED
+                            - PROGRESS
+                            - WAITING
+                            - RESUMED
+                            - RESULT
+                            - CANCELLED
+                            - RETRIED
+                        status:
+                          type: string
+                          enum:
+                            - QUEUED
+                            - RUNNING
+                            - WAITING_DOCUMENT
+                            - WAITING_APPROVAL
+                            - RETRY_SCHEDULED
+                            - NEEDS_ATTENTION
+                            - SUCCEEDED
+                            - FAILED
+                            - CANCELLED
+                        attempt:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
+                        sequence:
+                          type: integer
+                          minimum: 0
+                          exclusiveMinimum: true
+                          maximum: 9007199254740991
+                        detail:
+                          type: object
+                          additionalProperties: {}
+                        occurredAt:
+                          type: string
+                          format: date-time
+                          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                      required:
+                        - id
+                        - runId
+                        - eventId
+                        - kind
+                        - status
+                        - attempt
+                        - sequence
+                        - detail
+                        - occurredAt
+                      additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "400":
+          description: "error.code: VALIDATION_FAILED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: CONSENT_REQUIRED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "404":
+          description: "error.code: NOT_FOUND"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
   /cases/{caseId}/agent-runs/{runId}/cancel:
     post:
       operationId: cancelAgentRun

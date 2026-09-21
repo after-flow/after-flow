@@ -64,6 +64,7 @@ export const publicV1Specs: RouteSpec[] = [
   agentRunSpecs.acceptAgentRun,
   agentRunSpecs.listAgentRuns,
   agentRunSpecs.getAgentRun,
+  agentRunSpecs.listAgentRunEvents,
   agentRunSpecs.cancelAgentRun,
   agentRunSpecs.retryAgentRun,
   ...Object.values(proposalSpecs),

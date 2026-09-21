@@ -23,6 +23,7 @@ import {
 } from './helpers/app.js'
 import type { Json } from './helpers/app.js'
 import {
+  agentRunEvents,
   describeFirestore,
   firestore,
   newId,
@@ -142,7 +143,7 @@ describeFirestore('AI実行の受付', () => {
   })
 
   it('取消は実行を止めるだけで、確定済みの変更を戻さない', async () => {
-    const { app, caseId } = await setup()
+    const { tenantId, app, caseId } = await setup()
     const accepted = await call(
       app,
       `/cases/${caseId}/agent-runs`,
@@ -166,6 +167,12 @@ describeFirestore('AI実行の受付', () => {
       jsonRequest('POST', { expectedVersion: cancelled.body.data.version }),
     )
     assert.equal(again.status, 409)
+
+    // 受付と取消の履歴が時系列で残る（Issue #125）。再送で行は増えない。
+    const events = await agentRunEvents(tenantId, caseId, run.id)
+    assert.deepEqual(events.map((e) => e.kind), ['ACCEPTED', 'CANCELLED'])
+    assert.equal(events[1]!.status, 'CANCELLED')
+    assert.equal(events[1]!.detail.previousStatus, 'QUEUED')
   })
 
   it('成功済みの実行を再試行できない', async () => {
@@ -212,6 +219,16 @@ describeFirestore('AI実行の受付', () => {
     assert.equal(response.body.data.attempt, 2)
     assert.equal(response.body.data.status, 'QUEUED')
     assert.equal(response.body.data.failureReason, null)
+
+    // 再試行も履歴へ残る(Issue #125)。ここではRunをFirestoreへ直接書き換えているため
+    // ACCEPTEDイベントの後に監査を経ないFAILEDへの遷移があるが、RETRIEDはRunの
+    // versionから正しく採番される。
+    const events = await agentRunEvents(tenantId, caseId, run.id)
+    const retried = events.find((e) => e.kind === 'RETRIED')
+    assert.ok(retried, 'RETRIEDイベントが記録されていない')
+    assert.equal(retried!.status, 'QUEUED')
+    assert.equal(retried!.attempt, 2)
+    assert.equal(retried!.detail.attempt, 2)
   })
 
   it('待機中を失敗と区別して返す', async () => {
@@ -681,5 +698,92 @@ describeFirestore('権限と境界', () => {
 
     assert.equal(collected.length, 3)
     assert.equal(new Set(collected).size, 3)
+  })
+})
+
+describeFirestore('AgentRunの進捗履歴(Issue #125)', () => {
+  it('受付から取消までの履歴を発生順でカーソルページングできる', async () => {
+    const { app, caseId } = await setup()
+    const accepted = await call(
+      app,
+      `/cases/${caseId}/agent-runs`,
+      jsonRequest('POST', acceptBody(caseId), nextKey('idem-run')),
+    )
+    const run = accepted.body.data
+    const cancelled = await call(
+      app,
+      `/cases/${caseId}/agent-runs/${run.id}/cancel`,
+      jsonRequest('POST', { expectedVersion: run.version }),
+    )
+    assert.equal(cancelled.status, 200)
+
+    const collected: Json[] = []
+    let cursor: string | undefined
+    do {
+      const query = cursor ? `?limit=1&cursor=${encodeURIComponent(cursor)}` : '?limit=1'
+      const page = await call(app, `/cases/${caseId}/agent-runs/${run.id}/events${query}`)
+      assert.equal(page.status, 200, JSON.stringify(page.body))
+      collected.push(...page.body.data)
+      cursor = page.body.meta.nextCursor
+    } while (cursor)
+
+    assert.deepEqual(collected.map((e) => e.kind), ['ACCEPTED', 'CANCELLED'])
+    assert.equal(new Set(collected.map((e) => e.id)).size, 2, 'カーソルで同じ行が重複している')
+
+    // 公開DTOは決めた項目だけを返す。prompt・非公開の思考・資格情報・原本文を含めない。
+    for (const event of collected) {
+      assert.deepEqual(
+        Object.keys(event).sort(),
+        ['attempt', 'detail', 'eventId', 'id', 'kind', 'occurredAt', 'runId', 'sequence', 'status'].sort(),
+      )
+      assert.equal(event.runId, run.id)
+    }
+  })
+
+  it('別Caseのrun-idへ差し替えても取得できない', async () => {
+    const owner = await setup()
+    const accepted = await call(
+      owner.app,
+      `/cases/${owner.caseId}/agent-runs`,
+      jsonRequest('POST', acceptBody(owner.caseId), nextKey('idem-run')),
+    )
+    const another = await call(owner.app, '/cases', jsonRequest('POST', caseBody, nextKey('idem-case')))
+
+    const response = await call(
+      owner.app,
+      `/cases/${another.body.data.id}/agent-runs/${accepted.body.data.id}/events`,
+    )
+    assert.equal(response.status, 404)
+  })
+
+  it('参加していない利用者は履歴を見られない', async () => {
+    const owner = await setup()
+    const accepted = await call(
+      owner.app,
+      `/cases/${owner.caseId}/agent-runs`,
+      jsonRequest('POST', acceptBody(owner.caseId), nextKey('idem-run')),
+    )
+
+    await seedTenantMember(owner.tenantId, 'user-outsider-events')
+    const outsider = buildApp(owner.tenantId, 'user-outsider-events')
+    await agreeRequiredConsents(outsider)
+
+    const response = await call(
+      outsider,
+      `/cases/${owner.caseId}/agent-runs/${accepted.body.data.id}/events`,
+    )
+    assert.equal(response.status, 404)
+  })
+
+  it('別Runのイベントを混同しない', async () => {
+    const { app, caseId } = await setup()
+    const first = await call(app, `/cases/${caseId}/agent-runs`, jsonRequest('POST', acceptBody(caseId), nextKey('idem-run')))
+    const second = await call(app, `/cases/${caseId}/agent-runs`, jsonRequest('POST', acceptBody(caseId), nextKey('idem-run')))
+    assert.notEqual(first.body.data.id, second.body.data.id)
+
+    const events = await call(app, `/cases/${caseId}/agent-runs/${first.body.data.id}/events`)
+    assert.equal(events.status, 200)
+    assert.equal(events.body.data.length, 1)
+    assert.equal(events.body.data[0].runId, first.body.data.id)
   })
 })

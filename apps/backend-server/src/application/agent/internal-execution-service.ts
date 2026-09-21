@@ -26,6 +26,7 @@ import type { ProposalService } from '../proposal/proposal-service.js'
 import { acquireLease, assertLease, leaseLocation, releaseLease } from './lease-service.js'
 import { terminateQueuedRun } from './run-termination.js'
 import { createPendingWait, recordWaiting, validateWaitCondition } from './wait-requests.js'
+import { recordRunTransitionEvent } from './agent-run-events.js'
 import type { ProposalEntity } from '../../domain/proposal/proposal.js'
 import type { WaitRequestEntity } from '../../domain/agent/wait-request.js'
 
@@ -273,6 +274,14 @@ export class InternalExecutionService {
         fencingToken: grant.fencingToken,
         contentHash: fingerprintOf(snapshot.content), expiresAt: new Date(Date.now() + 300_000).toISOString() }
       tx.create<RunArtifactEntity>(location, { id, runId: run.id, jobId: claims.jobId, executionAttempt: claims.executionAttempt, artifact })
+      // QUEUED→RUNNINGはイベントとして記録しない(Issue #125レビュー指摘への対応)。
+      // AI側から明示のPROGRESS（`event()`）が送られない限り、公開履歴上は
+      // ACCEPTED→RESULTの間に「処理中」stageが現れない。既存テスト
+      // (internal-execution.test.tsの「dispatch→context→artifact→heartbeat→
+      // progress→result」)がAI側PROGRESSの個数・順序・detailを厳密に検証して
+      // おり、ここでBackend発のPROGRESSを自動追加すると重複してその契約を壊す。
+      // 将来Backend起点の処理中イベントを追加するなら、AI起点のPROGRESSと
+      // 区別できるdetail（"source": "BACKEND"等）を契約に含めてから行う。
       tx.update<AgentRunEntity>(runLocation(claims.caseId, run.id), run.version, {
         status: 'RUNNING', fencingToken: grant.fencingToken, startedAt: run.startedAt ?? new Date().toISOString(),
       })
@@ -347,11 +356,13 @@ export class InternalExecutionService {
 
   event(call: InternalCall, input: ProgressEvent) {
     return this.execute(call, async (tx, run) => {
-      if ('type' in input) return recordWaiting(tx, run, input.waitRequestId, input.snapshotId)
+      if ('type' in input) return recordWaiting(tx, run, input.waitRequestId, input.snapshotId, input.eventId)
       if (!run.fencingToken) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_REQUIRED' } })
       await assertLease(tx, call.claims.caseId, run.id, run.fencingToken)
       if (input.sequence <= (run.progressSequence ?? -1)) return { applied: false, reason: 'OLD_PROGRESS' }
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { progressSequence: input.sequence })
+      // 公開可能な進捗履歴。原文・prompt・非公開の思考は含めない。
+      await recordRunTransitionEvent(tx, run, 'PROGRESS', run.status, { eventId: input.eventId, detail: { phase: input.phase } })
       tx.audit({ caseId: call.claims.caseId, type: 'agent_run.progress',
         target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { phase: input.phase, sequence: input.sequence } })
       return { applied: true, reason: null }
@@ -377,6 +388,14 @@ export class InternalExecutionService {
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString(),
         failureReason: input.kind === 'execution_interrupted' ? input.failureReason : null,
         outcome: input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
+      // 公開可能な完了履歴。narrative本文・questionsは含めない（別途GET agent-runsで確認する）。
+      await recordRunTransitionEvent(tx, run, 'RESULT', input.status, {
+        eventId: input.resultId,
+        detail: {
+          operation: input.kind === 'execution_interrupted' ? input.operation : input.kind,
+          ...(input.kind === 'execution_interrupted' ? { failureReason: input.failureReason } : {}),
+        },
+      })
       tx.audit({ caseId: call.claims.caseId, type: 'agent_run.result',
         target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { resultId: input.resultId, status: input.status } })
       return { applied: true, reason: null }

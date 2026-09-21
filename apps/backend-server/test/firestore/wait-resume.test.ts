@@ -28,7 +28,7 @@ import { ScopedHttpAgentJobClient } from '../../src/infrastructure/agent/scoped-
 import { SignedExecutionAuthorization } from '../../src/infrastructure/identity/execution-authorization.js'
 import { createExecutionApp } from '../../src/presentation/routes/internal/v1/execution.js'
 import { buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
-import { describeFirestore, firestore, newTenantId, readRepository, unitOfWork } from './helpers/emulator.js'
+import { agentRunEvents, describeFirestore, firestore, newTenantId, readRepository, unitOfWork } from './helpers/emulator.js'
 import { startFakeAiServer } from './helpers/fake-ai-server.js'
 
 const signingKey = 'synthetic-test-signing-key-not-a-production-secret'
@@ -341,6 +341,16 @@ describeFirestore('待機と再開', () => {
     // 待っている間は書き込み権を持たない。他の実行を塞がない。
     const leaseAfter = await env.loadLease()
     assert.equal(leaseAfter?.holderRunId, null)
+
+    // 公開可能な待機履歴（Issue #125）。同じeventIdの再送は内部APIの
+    // receiptで弾かれるため、この関数を2回目は呼ばない前提のfnになる。
+    const events = await agentRunEvents(env.tenantId, env.caseId, exec.run.id)
+    const waiting = events.find((e) => e.kind === 'WAITING')
+    assert.ok(waiting, 'WAITINGイベントが記録されていない')
+    assert.equal(waiting!.eventId, 'event-waiting-1')
+    assert.equal(waiting!.status, 'WAITING_APPROVAL')
+    assert.equal(waiting!.detail.waitRequestId, proposal.waitRequestId)
+    assert.equal(waiting!.detail.conditionKind, 'APPROVAL')
   })
 
   it('承認がSnapshot保存前に届いても、後で一度だけ再開する', async (t) => {
@@ -379,6 +389,16 @@ describeFirestore('待機と再開', () => {
     assert.equal(resumes.length, 1, '再開が重複して積まれている')
     const after = await env.loadRun(exec.run.id)
     assert.equal(after.attempt, run.attempt, '照合のたびに試行が増えている')
+
+    // 公開可能な再開履歴（Issue #125）。何度照合してもRESUMEDは増えない。
+    const events = await agentRunEvents(env.tenantId, env.caseId, exec.run.id)
+    const resumed = events.filter((e) => e.kind === 'RESUMED')
+    assert.equal(resumed.length, 1, 'RESUMEDが重複して記録されている')
+    assert.equal(resumed[0]!.status, 'QUEUED')
+    assert.equal(resumed[0]!.attempt, run.attempt)
+    assert.equal(resumed[0]!.detail.kind, 'WAIT')
+    assert.equal(resumed[0]!.detail.outcome, 'APPLIED')
+    assert.equal(resumed[0]!.detail.waitRequestId, proposal.waitRequestId)
   })
 
   it('却下でも再開し、結果を反映済みとしない', async (t) => {
@@ -521,6 +541,12 @@ describeFirestore('待機と再開', () => {
 
     const lease = await env.loadLease()
     assert.equal(lease?.holderRunId, null)
+
+    // 公開可能な取消履歴（Issue #125）。同意撤回によるCANCELLEDもイベントに残る。
+    const events = await agentRunEvents(env.tenantId, env.caseId, exec.run.id)
+    const cancelled = events.filter((e) => e.kind === 'CANCELLED')
+    assert.equal(cancelled.length, 1, 'CANCELLEDイベントが記録されていない')
+    assert.equal(cancelled[0]!.status, 'CANCELLED')
   })
 
   it('他の実行の承認を待たせない', async (t) => {

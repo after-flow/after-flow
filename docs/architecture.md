@@ -679,7 +679,7 @@ tenants/{tenantId}
     evidence/{evidenceId}
     actions/{actionId}
     agentRuns/{runId}
-      events/{eventId}
+    agentRunEvents/{fingerprintOf(runId,eventId)}  # 公開進捗履歴。runIdで絞り込む（#125、下記参照）
     contextSnapshots/{snapshotId}
     waitRequests/{waitId}
     messages/{messageId}
@@ -694,6 +694,8 @@ runtimeTenants/{tenantId}
   workflowRuns/{runtimeRunId}       # Case/Run対応、Snapshot参照
     snapshots/{snapshotVersion}    # 実装方式はAdapterで管理
 ```
+
+`agentRunEvents`はCase直下のフラットなCollectionとし、`agentRuns/{runId}/events`のsubcollectionにしていない。ドキュメントIDは`fingerprintOf({runId, eventId})`で、`runId ==` + `orderBy sequence` + `orderBy __name__`の複合indexを`infra/firestore/firestore.indexes.json`へ用意して`where runId ==`で絞り込む。理由: Backendの既存Repository/UnitOfWork/Security Rulesの抽象はCase直下collectionを前提にしており（`collections.ts`のCollectionDescriptor）、真のsubcollectionにすると別の読み取り・書き込み経路を新設する必要がある。フラット配置は複合indexの追加コストと引き換えに、既存の型付きRepository・監査・冪等性の仕組みをそのまま再利用できる。Run単位のisolationはpath階層ではなく、`listEvents`が対象RunをCase配下から存在確認したうえで`where runId ==`を必ず付けることで保証する（`agent-run-service.ts`の`listEvents`）。
 
 業務Repositoryとruntime Storageは別のサービス・資格情報・Repositoryとして扱う。Mastra Storage Adapterだけがruntime領域へ書き込み、Case/Task等の業務領域へはアクセスしない。Backend ServerもSnapshotの中身を直接解釈せず、AI Serverから報告されたruntimeRunIdとstatusの対応だけを保持する。runtimeの保存はSingle Writerの「正式業務状態の確定」と区別する。
 
