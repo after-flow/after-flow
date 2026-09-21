@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "worker": "pnpm contracts:build && tsx src/worker-main.ts",
+    "worker:dev": "pnpm contracts:build && tsx watch src/worker-main.ts",
     "worker:once": "pnpm contracts:build && tsx src/worker-main.ts --once",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "pnpm contracts:build && node --import tsx --test \"test/**/*.test.ts\"",
