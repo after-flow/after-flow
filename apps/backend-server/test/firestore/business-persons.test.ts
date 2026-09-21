@@ -129,6 +129,17 @@ describeFirestore('persons API', () => {
     assert.equal(ex.json.error.code, 'PRECONDITION_FAILED')
   })
 
+  it('refuses exclusion of the person linked as the case owner (Case.ownerPersonId)', async () => {
+    const h = createHarness()
+    const p = await seedPerson(h)
+    // Case 作成時の本人登録と同じ状態を再現する: Case.ownerPersonId をこの Person に向ける。
+    await h.seed('cases', null, CASE_A, { deceasedName: 'テスト', status: 'ACTIVE', caseVersion: 1, ownerPersonId: p.id })
+    const ex = await h.request('POST', `/cases/${CASE_A}/persons/${p.id}/exclude`, { body: { expectedVersion: 1 } })
+    assert.equal(ex.status, 409)
+    assert.equal(ex.json.error.code, 'PRECONDITION_FAILED')
+    assert.equal(ex.json.error.details.linkedAsCaseOwner, true)
+  })
+
   it('enforces case membership and roles', async () => {
     const h = createHarness()
     const p = await seedPerson(h)
