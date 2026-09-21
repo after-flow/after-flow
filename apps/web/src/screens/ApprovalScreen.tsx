@@ -187,7 +187,8 @@ function ApprovalScreenBody({ approvalId }: { approvalId: string }) {
                   variant="primary"
                   size="lg"
                   icon="check"
-                  className="flex-1"
+                  // 文言が長い種類（「合っているので登録する」など）は、狭い画面では2行に折り返す（1行のままだと枠からはみ出す）
+                  className="h-auto! min-h-12 flex-1 py-2 whitespace-normal!"
                   disabled={approve.isPending || (needsAck && !ack)}
                   onClick={async () => {
                     await approve.mutateAsync({
@@ -262,17 +263,11 @@ function FieldRow({
 
   return (
     <li
-      className={`grid grid-cols-[7rem_1fr] items-start gap-3 border-b border-rd-border-2 py-2.5 last:border-b-0 ${active ? 'bg-rd-primary-soft/50' : ''}`}
+      // 狭い画面では項目名を上に置き、値（入力欄と札）に幅をすべて回す。横に並べると値の列が 120px ほどになり、札がはみ出していた
+      className={`grid grid-cols-1 items-start gap-x-3 gap-y-1 border-b border-rd-border-2 py-2.5 last:border-b-0 sm:grid-cols-[7rem_1fr] ${active ? 'bg-rd-primary-soft/50' : ''}`}
       onMouseEnter={onFocus}
     >
-      <div className="pt-2 text-[0.9rem] text-rd-text-2">
-        {row.field}
-        {low && (
-          <span className="mt-0.5 block">
-            <Badge tone="yellow" icon="warning">読み取りに自信なし</Badge>
-          </span>
-        )}
-      </div>
+      <div className="text-[0.9rem] text-rd-text-2 sm:pt-2">{row.field}</div>
       <div className="min-w-0">
         {editable ? (
           <input
@@ -285,6 +280,15 @@ function FieldRow({
           />
         ) : (
           <p className="pt-2 text-[0.97rem] font-bold">{display ?? '（空欄になります）'}</p>
+        )}
+        {/*
+          読み取りに自信が無いことは、値のすぐ下に添える。項目名の列（7rem）に置くと札が収まらず、
+          はみ出した分が入力欄の下に潜り込んで重なっていた
+        */}
+        {low && (
+          <span className="mt-1.5 block">
+            <Badge tone="yellow" icon="warning">読み取りに自信なし</Badge>
+          </span>
         )}
         {changed && (
           <p className="mt-1 text-[0.82rem] text-rd-text-3">いま登録されている内容：{row.before}</p>

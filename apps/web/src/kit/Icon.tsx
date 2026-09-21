@@ -171,6 +171,8 @@ export function Icon({
   const paths = PATHS[name]
   const fillFrom = FILLED[name]
 
+  // inline-block を必ず付けるので、className に hidden などの表示の切り替えを渡しても効かない
+  // （inline-block が勝つ）。画面の幅で出し分けるときは、外側の要素で隠す
   return (
     <svg
       viewBox="0 0 24 24"
