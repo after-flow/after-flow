@@ -59,10 +59,20 @@ services:
       BACKEND_EXECUTION_SIGNING_KEY: ${BACKEND_EXECUTION_SIGNING_KEY:-after-flow-local-execution-signing-key-2026}
       AI_CONNECTED_OPERATIONS: ${AI_CONNECTED_OPERATIONS-}
       READINESS_ACCESS_TOKEN: ${READINESS_ACCESS_TOKEN-}
+      # 利用者認証。未設定なら保護対象APIは401で fail closed する。
+      # ローカルでは `make dev-auth` が static-jwks（公開鍵のみ）を .env に追記する。
+      AUTH_MODE: ${AUTH_MODE-}
+      AUTH_ISSUER: ${AUTH_ISSUER-}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE-}
+      AUTH_JWKS_URI: ${AUTH_JWKS_URI-}
+      AUTH_STATIC_JWKS: ${AUTH_STATIC_JWKS-}
+      AUTH_TENANT_CLAIM: ${AUTH_TENANT_CLAIM-}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     volumes:
       - ./apps/backend-server/src:/workspace/apps/backend-server/src:ro
+      # 開発用の補助script（dev-auth / dev-seed）。imageの再buildなしで使う。
+      - ./apps/backend-server/scripts:/workspace/apps/backend-server/scripts:ro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -104,6 +114,44 @@ services:
     networks: [services, ai-runtime, ai-egress]
     depends_on:
       ai-runtime-emulator:
+        condition: service_healthy
+
+  # HTTP要求から独立してOutboxを配送するBackend専用worker。
+  # backend-serverと同じimageだが別container・別process。hostへportを公開しない。
+  # 業務Firestoreの data とAI Serverへの services にだけ参加し、frontend、AI Runtime、
+  # emulator-host には参加しない。原本Storage・AI→Backend資格情報・readiness tokenは渡さない。
+  # 業務Firestore Emulatorと同じ data profileで起動し、`make up` が有効にする。
+  backend-worker:
+    <<: *development
+    image: after-flow-backend-server:local
+    profiles: [data]
+    restart: unless-stopped
+    command: pnpm --filter @aftercare/backend-server worker
+    environment:
+      # 担当tenantを明示する。暗黙の全tenant走査はしない。
+      OUTBOX_TENANT_IDS: ${OUTBOX_TENANT_IDS:-after-flow-demo}
+      OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
+      # AI HTTP timeout（AI_SERVICE_TIMEOUT_MS）より必ず長くする。
+      OUTBOX_VISIBILITY_MS: ${OUTBOX_VISIBILITY_MS:-120000}
+      FIRESTORE_EMULATOR_HOST: ${FIRESTORE_EMULATOR_HOST-}
+      FIRESTORE_PROJECT_ID: ${FIRESTORE_PROJECT_ID:-after-flow-local}
+      # Backend→AIの配送先と資格情報。backend-serverと同じ値にする。
+      AI_SERVER_URL: http://ai-server:8081
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-after-flow-local-ai-service-token}
+      AI_SERVICE_AUDIENCE: ${AI_SERVICE_AUDIENCE:-ai-server}
+      AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS:-10000}
+      # Run capabilityの署名鍵と宛先。AIへは渡さない。
+      BACKEND_SERVICE_AUDIENCE: ${BACKEND_SERVICE_AUDIENCE:-backend-internal}
+      BACKEND_EXECUTION_SIGNING_KEY: ${BACKEND_EXECUTION_SIGNING_KEY:-after-flow-local-execution-signing-key-2026}
+    volumes:
+      - ./apps/backend-server/src:/workspace/apps/backend-server/src:ro
+    networks: [services, data]
+    depends_on:
+      firestore-emulator:
+        condition: service_healthy
+      backend-server:
+        condition: service_healthy
+      ai-server:
         condition: service_healthy
 
   # AIの実行receipt/snapshotだけを保存する専用Emulator。
