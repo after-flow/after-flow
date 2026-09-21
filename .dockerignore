@@ -1,0 +1,14 @@
+.git
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+.DS_Store
+.claude
+gha-creds-*.json
+reports
+images
+*.bundle

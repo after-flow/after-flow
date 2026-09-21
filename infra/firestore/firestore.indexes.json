@@ -1,0 +1,115 @@
+{
+  "comment": "実際に発行する Query に対応する複合 index だけを登録する。将来のコレクション用に先回りして作らない。",
+  "indexes": [
+    {
+      "collectionGroup": "agentRuns", "queryScope": "COLLECTION_GROUP",
+      "fields": [{ "fieldPath": "tenantId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" }, { "fieldPath": "id", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "runInbox", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "targetId", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "proposals", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "agentRunId", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "documents", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "inspection.status", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "outbox", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "outbox", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" }]
+    },
+    {
+      "comment": "自分が参加している案件の一覧。caseMembers を Case 横断で引き、更新時刻の降順で返す。caseId は同一時刻の順序を割るためのキー。",
+      "collectionGroup": "caseMembers",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "tenantId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "caseId",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "persons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "excludedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "relationships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "excludedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "persons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "excludedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isHeir",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

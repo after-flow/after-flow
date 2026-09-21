@@ -1,0 +1,242 @@
+name: CI
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality (${{ matrix.check }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [typecheck, lint, test, openapi, build, ai-eval]
+        include:
+          - check: openapi
+            command: openapi:check
+          - check: ai-eval
+            command: eval:ai
+    env:
+      VITE_USE_MOCK: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run workspace check
+        env:
+          CHECK: ${{ matrix.command || matrix.check }}
+        run: |
+          mkdir -p reports
+          pnpm "$CHECK" 2>&1 | tee reports/check.log
+      - name: Verify production excludes the mock service worker
+        if: matrix.check == 'build'
+        run: |
+          test -f apps/web/dist/index.html
+          test ! -f apps/web/dist/mockServiceWorker.js
+      - name: Upload check log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-${{ matrix.check }}
+          path: reports/
+          retention-days: 14
+          if-no-files-found: warn
+
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Actions expressions and embedded shell
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint" -color
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Reject high and critical dependency advisories
+        run: pnpm audit --audit-level high
+
+  firestore:
+    name: Firestore integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      # Emulatorに対してのみ実行する。実Firestoreの資格情報は使わない。
+      - name: Run Firestore integration tests against the emulator
+        run: |
+          mkdir -p reports
+          pnpm test:firestore 2>&1 | tee reports/firestore.log
+      - name: Upload integration test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: firestore-integration
+          path: reports/
+          retention-days: 14
+
+  docker-smoke:
+    name: Docker smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: after-flow-ci
+      WEB_PORT: '5173'
+      BACKEND_PORT: '8080'
+      VITE_USE_MOCK: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Validate Compose configuration
+        run: |
+          docker compose config --quiet
+          docker compose --profile data config --quiet
+      - name: Build and start all services
+        run: make up
+      - name: Verify HTTP connectivity and AI isolation
+        run: |
+          node scripts/smoke-compose.mjs
+          make data-check
+      - name: Show service status and logs
+        if: always()
+        run: |
+          mkdir -p reports
+          docker compose --profile data ps --all > reports/compose-status.txt
+          docker compose --profile data logs --no-color --tail 200 > reports/compose.log
+          cat reports/compose.log
+      - name: Upload container diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: development-containers
+          path: reports/
+          retention-days: 14
+      - name: Stop services
+        if: always()
+        run: docker compose --profile data down --volumes --remove-orphans
+
+  production:
+    name: Production containers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      COMPOSE_FILE: compose.production.yaml
+      COMPOSE_PROJECT_NAME: after-flow-production-ci
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Build and start production images
+        run: |
+          docker compose config --quiet
+          docker compose up --build --detach --wait --wait-timeout 120
+      - name: Verify production HTTP behavior and isolation
+        run: node scripts/smoke-production.mjs
+      - name: Export tested images for delivery
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p images
+          for service in web backend-server ai-server; do
+            docker save "after-flow-$service:$IMAGE_TAG" | gzip > "images/$service.tar.gz"
+          done
+      - name: Store tested images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-images
+          path: images/*.tar.gz
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p reports
+          docker compose ps --all > reports/production-status.txt
+          docker compose logs --no-color --tail 200 > reports/production.log
+          cat reports/production.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: production-containers
+          path: reports/
+          retention-days: 14
+      - name: Stop services
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  gate:
+    name: CI Gate
+    if: always()
+    needs: [quality, workflow-lint, dependency-audit, firestore, docker-smoke, production]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every check to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")'
