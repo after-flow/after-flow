@@ -525,16 +525,14 @@ function BringList({ caseId, base, task, bring }: { caseId: string; base: string
   ]
   const total = rows.length
   if (total === 0) return <span className="text-rd-text-3">登録されている持ち物はありません</span>
-  // `collected` は BE ユニット2待ち（§6リスク）。それまでは documentId の有無を代わりに使う
-  const ready = rows.filter((r) => r.doc?.documentId != null).length
+  const isReady = (r?: TaskRequiredDocumentResource) => Boolean(r && (r.collected || r.documentId != null))
+  const ready = rows.filter((r) => isReady(r.doc)).length
 
   const save = (next: TaskRequiredDocumentResource[]) =>
     void update.mutateAsync({ taskId: task.id, expectedVersion: task.version, requiredDocuments: next }).catch(() => {})
-  // documentId を消すと未用意に戻る。実物の書類が無いまま用意済みにする場合は、
-  // '' を「用意した（書類の紐付けなし）」の印にする（null は未用意と区別できないため）
-  const toggle = (id: string) => save(docs.map((r) => (r.id === id ? { ...r, documentId: r.documentId == null ? '' : null } : r)))
+  const toggle = (id: string) => save(docs.map((r) => (r.id === id ? { ...r, collected: !isReady(r) } : r)))
   const addChecked = (label: string) =>
-    save([...docs, { id: `bring_${crypto.randomUUID().slice(0, 8)}`, label, documentId: '', source: 'AI' }])
+    save([...docs, { id: `bring_${crypto.randomUUID().slice(0, 8)}`, label, documentId: null, collected: true, source: 'AI' }])
 
   return (
     <div className="mt-1">

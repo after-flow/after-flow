@@ -177,8 +177,8 @@ export const db: Store = {
         critical: true,
       }),
       requiredDocuments: [
-        { id: 'rd_1', label: '死亡診断書', documentId: null, source: 'AI' },
-        { id: 'rd_2', label: '届出人の印鑑', documentId: null, source: 'AI' },
+        { id: 'rd_1', label: '死亡診断書', documentId: null, source: 'AI', collected: false },
+        { id: 'rd_2', label: '届出人の印鑑', documentId: null, source: 'AI', collected: false },
       ],
       assigneeId: SELF_PERSON_ID,
       // 準備ができたまま数日たっている（「止まっている手続き」の見本）
@@ -203,7 +203,7 @@ export const db: Store = {
         ruleId: 'household',
         critical: true,
       }),
-      requiredDocuments: [{ id: 'rd_3', label: '本人確認書類', documentId: null, source: 'AI' }],
+      requiredDocuments: [{ id: 'rd_3', label: '本人確認書類', documentId: null, source: 'AI', collected: false }],
     }),
     task({
       id: 'task_3',
@@ -223,7 +223,7 @@ export const db: Store = {
         ruleId: 'health_insurance',
         reason: 'MISSING_BASIS_DATE',
       }),
-      requiredDocuments: [{ id: 'rd_4', label: '故人の保険証', documentId: null, source: 'AI' }],
+      requiredDocuments: [{ id: 'rd_4', label: '故人の保険証', documentId: null, source: 'AI', collected: false }],
     }),
     task({
       id: 'task_4',
@@ -235,8 +235,8 @@ export const db: Store = {
       category: '相続',
       source: 'AI',
       requiredDocuments: [
-        { id: 'rd_5', label: '故人の出生から死亡までの戸籍謄本', documentId: null, source: 'AI' },
-        { id: 'rd_6', label: '相続人全員の戸籍謄本', documentId: null, source: 'AI' },
+        { id: 'rd_5', label: '故人の出生から死亡までの戸籍謄本', documentId: null, source: 'AI', collected: false },
+        { id: 'rd_6', label: '相続人全員の戸籍謄本', documentId: null, source: 'AI', collected: false },
       ],
     }),
     task({

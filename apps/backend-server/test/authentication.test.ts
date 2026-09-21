@@ -22,6 +22,8 @@ const config = {
   algorithms: ['RS256', 'ES256'],
   clockToleranceSeconds: 0,
   requireEmailVerified: true,
+  // 試験用の固定鍵トークンには auth_time が無い（static-jwks と同じ扱い）
+  requireAuthTime: false,
 }
 
 let signingKey: KeyObject
@@ -177,10 +179,17 @@ describe('トークン検証', () => {
     assert.equal(identity.subject, 'user-1')
   })
 
-  it('auth_time が無いトークン（static-jwks 互換）は上限の対象外として通す', async () => {
+  it('auth_time が無いトークンは requireAuthTime:false（static-jwks）でだけ通す', async () => {
     const token = await signToken()
     const identity = await verifier().verify(token)
     assert.equal(identity.authTime, null)
+  })
+
+  it('requireAuthTime:true（jwks / firebase-emulator）では auth_time の無いトークンを401で拒否する', async () => {
+    const token = await signToken()
+    const error = await rejection(() => verifier({ requireAuthTime: true }).verify(token))
+    assert.equal(error.code, 'UNAUTHENTICATED')
+    assert.equal(error.details?.reason, 'AUTH_TIME_REQUIRED')
   })
 
   it('検証失敗の応答にトークンや失敗理由を載せない', async () => {

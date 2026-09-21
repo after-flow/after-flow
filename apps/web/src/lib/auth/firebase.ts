@@ -47,9 +47,20 @@ function rethrow(err: unknown): never {
   throw new AuthError(code, message)
 }
 
+/**
+ * `onAuthStateChanged` はサインイン・アウトでしか発火せず、`reload()` で
+ * `emailVerified` が変わっても呼ばれない。reload 後は自分で購読者に流す。
+ */
+const listeners = new Set<(state: AuthState) => void>()
+
 export const firebaseAuthPort: AuthPort = {
   subscribe(cb) {
-    return onAuthStateChanged(auth, (user) => cb(stateOf(user)))
+    listeners.add(cb)
+    const unsubscribe = onAuthStateChanged(auth, (user) => cb(stateOf(user)))
+    return () => {
+      listeners.delete(cb)
+      unsubscribe()
+    }
   },
   async signIn(email, password) {
     try {
@@ -88,6 +99,8 @@ export const firebaseAuthPort: AuthPort = {
   async reload() {
     if (!auth.currentUser) return
     await firebaseReload(auth.currentUser)
+    const state = stateOf(auth.currentUser)
+    for (const cb of listeners) cb(state)
   },
   async sendPasswordReset(email) {
     try {

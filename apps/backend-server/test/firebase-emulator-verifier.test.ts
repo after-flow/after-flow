@@ -14,6 +14,7 @@ const config: IdentityVerifierConfig = {
   audience: AUDIENCE,
   clockToleranceSeconds: 5,
   requireEmailVerified: false,
+  requireAuthTime: true,
 }
 
 function base64url(value: object): string {
@@ -30,6 +31,8 @@ interface EmulatorTokenOptions {
   iat?: number
   emailVerified?: boolean
   signInProvider?: string | null
+  /** null で auth_time を省く（Emulator の実トークンには必ず入る） */
+  authTime?: number | null
 }
 
 /** Firebase Auth Emulator が発行する形（alg:'none'、署名部が空）のトークンを組み立てる。 */
@@ -45,11 +48,20 @@ function emulatorToken(options: EmulatorTokenOptions = {}): string {
     iat: options.iat ?? now,
     email_verified: options.emailVerified ?? true,
   }
+  if (options.authTime !== null) payload.auth_time = options.authTime ?? now
   if (options.signInProvider !== null) {
     payload.firebase = { sign_in_provider: options.signInProvider ?? 'password' }
   }
   return `${base64url(header)}.${base64url(payload)}.`
 }
+
+describe('FirebaseEmulatorTokenVerifier: auth_time', () => {
+  it('auth_time の無いトークンは 401 AUTH_TIME_REQUIRED で拒否する', async () => {
+    const error = await rejection(() => verifier().verify(emulatorToken({ authTime: null })))
+    assert.equal(error.code, 'UNAUTHENTICATED')
+    assert.equal(error.details?.reason, 'AUTH_TIME_REQUIRED')
+  })
+})
 
 async function rejection(fn: () => Promise<unknown>): Promise<AppError> {
   try {

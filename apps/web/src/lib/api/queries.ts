@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 import { api, getAll, type Page } from './client'
+import { isDocumentInProgress } from '@/lib/model/document'
 import type {
   AgentOperationResource,
   Asset,
@@ -185,18 +186,8 @@ export function useDocument(caseId: string, documentId: string) {
     queryFn: () => api.get<DocumentResource>(`/cases/${caseId}/documents/${documentId}`),
     enabled: Boolean(caseId && documentId),
     // 保存中・検査中・解析中の書類は、終わるまで追いかける
-    refetchInterval: (q) => (isDocumentInProgress(q.state.data) ? 3_000 : false),
+    refetchInterval: (q) => (q.state.data && isDocumentInProgress(q.state.data) ? 3_000 : false),
   })
-}
-
-export function isDocumentInProgress(doc?: DocumentResource): boolean {
-  if (!doc) return false
-  return (
-    doc.storageState === 'UPLOADING' ||
-    doc.inspection.status === 'IN_PROGRESS' ||
-    doc.analysis.state === 'QUEUED' ||
-    doc.analysis.state === 'RUNNING'
-  )
 }
 
 /**
@@ -365,7 +356,7 @@ export function useUpdateRequiredDocuments(caseId: string) {
     }) =>
       api.patch<TaskResource>(`/cases/${caseId}/tasks/${taskId}`, {
         expectedVersion,
-        requiredDocuments: requiredDocuments.map((r) => ({ id: r.id, label: r.label, documentId: r.documentId })),
+        requiredDocuments: requiredDocuments.map((r) => ({ id: r.id, label: r.label, documentId: r.documentId, collected: r.collected })),
       }),
     scope: { id: `required-documents-${caseId}` },
     onMutate: async ({ taskId, requiredDocuments }) => {

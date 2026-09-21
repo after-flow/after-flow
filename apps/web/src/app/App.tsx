@@ -89,6 +89,7 @@ function RequireRegistered() {
     return <Loading label="利用登録を確認中" />
   }
   if (registration.status === 'inactive') return <AccountInactiveScreen />
+  if (registration.status === 'email-unverified') return <Navigate to="/verify-email" replace />
   if (registration.status === 'error') {
     return <ErrorState message="利用登録を確認できませんでした。時間をおいてもう一度お試しください。" />
   }

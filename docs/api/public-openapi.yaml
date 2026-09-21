@@ -10039,11 +10039,14 @@ paths:
                                   - MANUAL
                                   - AI
                                   - RULE_ENGINE
+                              collected:
+                                type: boolean
                             required:
                               - id
                               - label
                               - documentId
                               - source
+                              - collected
                             additionalProperties: false
                         completionReportedBy:
                           nullable: true
@@ -10494,6 +10497,8 @@ paths:
                         minLength: 1
                         maxLength: 128
                         pattern: ^[A-Za-z0-9_-]+$
+                      collected:
+                        type: boolean
                     required:
                       - id
                       - label
@@ -10622,11 +10627,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -11233,11 +11241,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -11666,6 +11677,8 @@ paths:
                         minLength: 1
                         maxLength: 128
                         pattern: ^[A-Za-z0-9_-]+$
+                      collected:
+                        type: boolean
                     required:
                       - id
                       - label
@@ -11803,11 +11816,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -12352,11 +12368,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true
@@ -12902,11 +12921,14 @@ paths:
                                 - MANUAL
                                 - AI
                                 - RULE_ENGINE
+                            collected:
+                              type: boolean
                           required:
                             - id
                             - label
                             - documentId
                             - source
+                            - collected
                           additionalProperties: false
                       completionReportedBy:
                         nullable: true

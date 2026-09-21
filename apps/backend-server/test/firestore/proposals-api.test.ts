@@ -279,7 +279,7 @@ describeFirestore('書類要求・根拠・専門家引継ぎのProposal', () =>
     assert.equal((await approve(app, caseId, approval)).status, 200)
     const task = (await call(app, `/cases/${caseId}/tasks/${taskId}`)).body.data
     assert.equal(task.status, 'WAITING_DOCUMENTS')
-    assert.deepEqual(task.requiredDocuments, [{ ...documents[0], documentId: null, source: 'MANUAL' }])
+    assert.deepEqual(task.requiredDocuments, [{ ...documents[0], documentId: null, source: 'MANUAL', collected: false }])
   })
 
   it('根拠の登録は承認後だけに行い、Taskを自動完了しない', async () => {

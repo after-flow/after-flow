@@ -23,6 +23,8 @@ export interface IdentityVerifierConfig {
    * 見て遮断せず、この検証が投げる FORBIDDEN に従う。
    */
   requireEmailVerified: boolean
+  /** `auth_time` の無いトークンを拒否するか。static-jwks の試験用トークン以外は true。 */
+  requireAuthTime: boolean
 }
 
 export interface JwtVerifierConfig extends IdentityVerifierConfig {
@@ -42,7 +44,7 @@ export function assertIdentityClaims(payload: JWTPayload, config: IdentityVerifi
     })
   }
   const authTimeSeconds = typeof payload.auth_time === 'number' ? payload.auth_time : undefined
-  assertWithinSessionCap(authTimeSeconds, Math.floor(Date.now() / 1000), config.clockToleranceSeconds)
+  assertWithinSessionCap(authTimeSeconds, Math.floor(Date.now() / 1000), config.clockToleranceSeconds, config.requireAuthTime)
 }
 
 export function identityFrom(payload: JWTPayload, issuer: string): VerifiedIdentity {

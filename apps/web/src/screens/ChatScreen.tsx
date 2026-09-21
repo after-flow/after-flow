@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { useMessages, useSendMessage } from '@/lib/api/queries'
+import { CHAT_REPLY_POLL_TIMEOUT_MS, useMessages, useSendMessage } from '@/lib/api/queries'
 import type { MessageResource } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
 import { formatDateTime } from '@/lib/format'
@@ -21,7 +21,9 @@ const SUGGESTIONS = [
  */
 export function ChatScreen() {
   const { caseId, base } = useCaseBase()
-  const { data, isLoading } = useMessages(caseId)
+  // 送信は 202 で受け付けられ、返答は後から履歴に現れる。受け付けられてから返答が来るまで（上限あり）だけ履歴を追いかける
+  const [awaitingSince, setAwaitingSince] = useState<number | null>(null)
+  const { data, isLoading } = useMessages(caseId, { refetchInterval: awaitingSince ? 2_000 : false })
   const send = useSendMessage(caseId)
   const [input, setInput] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
@@ -32,12 +34,19 @@ export function ChatScreen() {
     endRef.current?.scrollIntoView({ block: 'end' })
   }, [messages.length, send.isPending])
 
+  useEffect(() => {
+    if (!awaitingSince) return
+    const replied = messages.some((m) => m.role === 'assistant' && Date.parse(m.createdAt) >= awaitingSince)
+    if (replied || Date.now() - awaitingSince > CHAT_REPLY_POLL_TIMEOUT_MS) setAwaitingSince(null)
+  }, [messages, awaitingSince])
+
   async function submit(text?: string, e?: FormEvent) {
     e?.preventDefault()
     const body = (text ?? input).trim()
     if (!body || send.isPending || !consent.allowed) return
     setInput('')
-    await send.mutateAsync(body)
+    const accepted = await send.mutateAsync(body)
+    if (accepted.runAccepted) setAwaitingSince(Date.now() - 1_000)
   }
 
   return (
