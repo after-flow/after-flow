@@ -44,3 +44,9 @@ P-03は1 Runで1件の正式提案を処理する。承認で案件が変わる�
 PRは機能ごとのstack。起点はmain `9385b67`、順序と各PRは[継続計画](DELIVERY_PLAN.md)。個別PRには親ブランチへマージ済みのものがある。mainへの反映は別の統合PRでまとめて検証する。元の作業ディレクトリにあった未commit変更は触らず、隔離worktreeで作業した。
 
 Devinは着手許可を意味するラベルではない。共有PRの契約・依存が揃った周辺実装から担当可能。今回実装済みのIssueを重複着手しないよう、PRの範囲と残る実接続条件を先に確認する。Provider/Orch/業務判断の未確定部分は、任意の製品やFakeを選ばせて埋めない。
+
+### 公式資料PDFの読み取り
+
+レビュー済みCatalogの公式URLはHTML・UTF-8テキスト・PDFを取得できる。PDFはPDF.js 6.3.289で本文を抽出し、ページ番号を根拠に残す。5 MiB・40ページ・本文60,000文字・処理5秒を超える資料や暗号化/破損/文字のない資料は拒否する。画像文字はOCRしない。独立したWorkerを中断時に終了し、PDF内スクリプト・添付ファイル・外部リンクは実行/取得しない。URL/DNS/HTTPSの既存検証は共通。
+
+実装参照: [PDF.js Node example](https://github.com/mozilla/pdf.js/blob/master/examples/node/getinfo.mjs)、[v6.3.289](https://github.com/mozilla/pdf.js/releases/tag/v6.3.289)。

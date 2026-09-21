@@ -24,6 +24,7 @@
     "@mastra/core": "1.67.0",
     "hono": "4.13.8",
     "parse5": "8.0.0",
+    "pdfjs-dist": "6.3.289",
     "zod": "4.6.5"
   },
   "devDependencies": {
