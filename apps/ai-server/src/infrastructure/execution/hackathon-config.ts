@@ -18,7 +18,10 @@ const envSchema = z.object({
 
 const REVIEW_REFERENCE = 'hackathon-demo-2026-09-21; OrcaRouter gateway and public provider terms must be reviewed before production'
 const CATALOG_ID = 'kyoukaikenpo-burial-benefit'
+const CATALOG_VERSION = '2026-09-21'
 const POLICY_IDS = ['orca-core-primary', 'orca-core-fallback'] as const
+const REVIEWED_AT = '2026-09-21T00:00:00.000Z'
+const REVIEW_EXPIRES_AT = '2027-09-21T00:00:00.000Z'
 
 /** 協会けんぽの支部名に使われる都道府県名。 */
 const PREFECTURES = ['北海道', '青森', '岩手', '宮城', '秋田', '山形', '福島', '茨城', '栃木', '群馬', '埼玉', '千葉', '東京', '神奈川',
@@ -69,9 +72,8 @@ export function readHackathonComposition(
   })
   if (input.AI_SERVICE_TOKEN === input.BACKEND_INTERNAL_SERVICE_TOKEN) throw new Error('Inbound and outbound service credentials must differ')
 
-  const now = Date.now()
-  const approvedAt = new Date(now - 60_000).toISOString()
-  const expiresAt = new Date(now + 365 * 24 * 60 * 60 * 1000).toISOString()
+  const approvedAt = REVIEWED_AT
+  const expiresAt = REVIEW_EXPIRES_AT
   const modelIds = [input.AI_ORCA_CORE_MODEL, input.AI_ORCA_FALLBACK_MODEL]
   if (new Set(modelIds).size !== modelIds.length || new Set(modelIds.map(model => model.split('/')[0])).size !== modelIds.length) {
     throw new Error('Hackathon fallback requires two distinct model families')
@@ -89,7 +91,8 @@ export function readHackathonComposition(
   const scope = {
     id: 'burial-benefit-guidance', version: 'hackathon-v1', reviewedAt: approvedAt,
     procedure: '健康保険の埋葬料（費）支給申請', institution: '全国健康保険協会', jurisdiction: '日本', municipality: null,
-    taskTitles: ['健康保険の埋葬料（費）を確認する'], taskCategories: ['insurance-benefit'], sourceCatalogIds: [CATALOG_ID],
+    procedureIds: ['kyoukaikenpo-burial-benefit'], taskTitles: ['健康保険の埋葬料（費）を確認する'], taskCategories: ['insurance-benefit'],
+    sourceCatalogIds: [CATALOG_ID], sourceCatalogVersions: { [CATALOG_ID]: CATALOG_VERSION },
     // 案内の各区分（提出先・必要書類・手順・期限）に根拠の問いが対応するように分ける（#163）。
     questions: [
       { id: 'eligibility', text: '申請できる人と支給条件を確認してください。' },
@@ -131,7 +134,7 @@ export function readHackathonComposition(
       dataClasses: ['minimized_case', 'public_research'], expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), maxRetentionDays: 0 }),
     recordMetric: async (metric: ProviderMetric, identity) => writeMetric({ event: 'ai_provider_attempt', ...identity, ...metric }),
     catalogs: [{
-      id: CATALOG_ID, version: '2026-09-21', reviewedAt: approvedAt, expiresAt,
+      id: CATALOG_ID, version: CATALOG_VERSION, reviewedAt: approvedAt, expiresAt,
       reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/',
       allowedHosts: ['www.kyoukaikenpo.or.jp'],
       entries: [

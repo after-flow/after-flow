@@ -8,7 +8,7 @@ import { groundingRulesSchema } from '../playbooks/guidance-grounding.js'
 
 const fields = {
   case: ['deceasedName', 'dateOfDeath', 'knownAt', 'municipality', 'status'],
-  task: ['title', 'summary', 'status', 'stage', 'category', 'submitTo', 'source', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal'],
+  task: ['title', 'summary', 'status', 'stage', 'category', 'submitTo', 'source', 'procedureId', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal'],
   message: ['role', 'body'],
   persons: ['name', 'relationshipLabel', 'role', 'isHeir', 'specialCircumstance', 'excludedAt'],
   relationships: ['fromPersonId', 'toPersonId', 'kind', 'excludedAt'],
@@ -219,9 +219,11 @@ export const reviewedResearchScopeSchema = z.object({
   id: internalId, version: z.string().min(1).max(40), reviewedAt: z.string().datetime(),
   procedure: z.string().min(1).max(200), institution: z.string().min(1).max(200),
   jurisdiction: z.string().min(1).max(200), municipality: z.string().min(1).max(200).nullable(),
+  procedureIds: z.array(internalId).min(1).max(20),
   taskTitles: z.array(z.string().min(1).max(200)).min(1).max(20),
   taskCategories: z.array(z.string().min(1).max(100)).min(1).max(20),
   sourceCatalogIds: z.array(internalId).min(1).max(20),
+  sourceCatalogVersions: z.record(internalId, z.string().min(1).max(100)),
   questions: z.array(z.object({ id: internalId, text: z.string().min(1).max(300) }).strict()).min(1).max(12),
   /** 一般案内とは別に、この案件への適用を確かめる事項（#162）。未指定は確認事項なし。 */
   applicabilityChecks: z.array(applicabilityCheckSchema).max(10).optional(),
@@ -237,8 +239,7 @@ export function buildResearchBrief(context: CoreContext, rawScope: z.infer<typeo
     return { status: 'needs_input' as const, missing: ['対象の市区町村を確認してください。'] }
   }
   const taskValue = (field: string) => context.modelInput.facts.find(fact => fact.group === 'task' && fact.field === field)?.value
-  if (context.operation === 'task_guidance' && (taskValue('submitTo') !== scope.institution ||
-      !scope.taskTitles.includes(String(taskValue('title'))) || !scope.taskCategories.includes(String(taskValue('category'))))) {
+  if (context.operation === 'task_guidance' && !scope.procedureIds.includes(String(taskValue('procedureId')))) {
     return { status: 'needs_input' as const, missing: ['この手続き・提出先に対応する確認済み資料を指定してください。'] }
   }
   return { status: 'ready' as const, brief: researchBriefSchema.parse({

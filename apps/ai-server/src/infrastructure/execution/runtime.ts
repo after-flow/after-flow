@@ -10,6 +10,7 @@ import type { FirestoreExecutions } from '../runtime-storage/executions.js'
 import type { FirestoreWorkflowsStorage } from '../runtime-storage/workflows.js'
 import type { DispatchVault } from '../runtime-storage/credential-vault.js'
 import { ExecutionRejected, resumeSchema } from '../../application/execution/contracts.js'
+import { ClassifiedExecutionError } from '../../application/execution/contracts.js'
 import type { BudgetCharge, Receipt } from '../../application/execution/contracts.js'
 
 export type ExecutionBackend = Pick<BackendClient, 'control' | 'context' | 'heartbeat' | 'event' | 'result' | 'propose' | 'wait'>
@@ -152,8 +153,9 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
       const cause = controller.signal.reason instanceof ExecutionRejected ? controller.signal.reason : rejected ?? error
       const failure = cause instanceof ExecutionRejected && cause.code === 'BUDGET_EXCEEDED' ? 'BUDGET_EXCEEDED' :
         cause instanceof ExecutionRejected && cause.code === 'STOPPED' ? 'STOPPED' : sectionTimeout.aborted ? 'TIME_LIMIT' : 'EXECUTION_FAILED'
+      const classifiedFailure = failure === 'EXECUTION_FAILED' && cause instanceof ClassifiedExecutionError ? cause.code : failure
       // Reporting has its own short transport deadline, never another inference/tool allowance.
-      if (client && !shutdown.aborted && failure !== 'STOPPED' && !(cause instanceof ExecutionRejected && cause.code === 'STALE_OWNER')) {
+      if (client && !shutdown.aborted && classifiedFailure !== 'STOPPED' && !(cause instanceof ExecutionRejected && cause.code === 'STALE_OWNER')) {
         try {
           const saved = await this.deps.store.get(receipt.jobId)
           if (saved && !saved.waitRequestId && !saved.pendingResult) {
@@ -163,11 +165,11 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
             const progress = saved.progress?.caseVersion === latest.caseVersion ? saved.progress.output : {
               summary: '', completed: [], questions: [], remaining: ['最新の案件状態を確認して処理を再開してください。'],
             }
-            const summary = failure === 'BUDGET_EXCEEDED' ? '実行予算の上限に達したため、ここまでの結果を保存しました。' :
-              failure === 'TIME_LIMIT' ? '実行時間の上限に達したため、ここまでの結果を保存しました。' : '処理を完了できなかったため、確認が必要です。'
+            const summary = classifiedFailure === 'BUDGET_EXCEEDED' ? '実行予算の上限に達したため、ここまでの結果を保存しました。' :
+              classifiedFailure === 'TIME_LIMIT' ? '実行時間の上限に達したため、ここまでの結果を保存しました。' : '処理を完了できなかったため、確認が必要です。'
             const resultId = contentHash({ jobId: receipt.jobId, kind: 'interrupted-result' })
             await this.deps.store.stageResult(receipt.jobId, owner, { ...contextProofSchema.parse(latest), resultId,
-              kind: 'execution_interrupted', operation: receipt.operation, status: 'NEEDS_ATTENTION', failureReason: failure,
+              kind: 'execution_interrupted', operation: receipt.operation, status: 'NEEDS_ATTENTION', failureReason: classifiedFailure,
               basis: [], output: runSummarySchema.parse({ ...progress, summary }) })
             await this.deliverResult((await this.deps.store.get(receipt.jobId))!, owner, client, shutdown)
             return true
@@ -180,7 +182,7 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
         }
       }
       // A lost owner must never overwrite the new attempt. Backend reconciliation handles unavailable/stale Context.
-      try { await this.deps.store.finish(receipt.jobId, owner, failure === 'STOPPED' ? 'STOPPED' : 'FAILED', failure) }
+      try { await this.deps.store.finish(receipt.jobId, owner, classifiedFailure === 'STOPPED' ? 'STOPPED' : 'FAILED', classifiedFailure) }
       catch (finishError) { if (!(finishError instanceof ExecutionRejected && finishError.code === 'STALE_OWNER')) throw finishError }
     } finally {
       pulseStop.abort(); await pulse

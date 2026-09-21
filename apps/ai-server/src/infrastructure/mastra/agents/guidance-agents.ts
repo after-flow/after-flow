@@ -5,10 +5,12 @@ import type { DelegationConfig, ToolsInput, ModelWithRetries } from '@mastra/cor
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
 import { getPlaybook } from '../../../orchestration/playbooks/registry.js'
-import { finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema, validateFindings, validateResearchRequest } from '../../../orchestration/research/contracts.js'
+import { boundResearchSynthesis, finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema, validateFindings, validateResearchRequest } from '../../../orchestration/research/contracts.js'
 import type { ResearchBrief, ResearchEvidence, ResearchRequest } from '../../../orchestration/research/contracts.js'
 import type { SourceDocument } from '../../../orchestration/research/sources.js'
 import { createAgentSkills } from '../skills.js'
+import { resolveSkills } from '../../../orchestration/skills/catalog.js'
+import type { SkillId } from '../../../orchestration/skills/catalog.js'
 
 export const CORE_AGENT_ID = 'case-agent'
 export const RESEARCH_AGENT_ID = 'research-agent'
@@ -44,6 +46,9 @@ export interface GuidanceAgentDependencies {
   /** Guidance requires quote-level evidence from the exact retrieved sections. */
   evidenceSources?: (briefId: string) => readonly SourceDocument[]
   signal: AbortSignal
+  /** Stage-specific subset of the playbook's skills. Selection never adds capabilities. */
+  coreSkillIds?: readonly SkillId[]
+  researchSkillIds?: readonly SkillId[]
 }
 
 /**
@@ -70,8 +75,15 @@ export function createPlaybookAgents(dependencies: GuidanceAgentDependencies & {
       expectedTools.some((key) => !(key in dependencies.researchTools))) {
     throw new Error('Research tool set must contain only approved read tools')
   }
-  const coreSkills = createAgentSkills(playbook.coreSkillIds, 'core', playbook.mode, playbook.allowedCapabilities)
-  const researchSkills = createAgentSkills(playbook.researchSkillIds, 'research', playbook.mode, playbook.allowedCapabilities)
+  const coreSkillIds = dependencies.coreSkillIds ?? playbook.coreSkillIds
+  const researchSkillIds = dependencies.researchSkillIds ?? playbook.researchSkillIds
+  if (coreSkillIds.some(id => !playbook.coreSkillIds.includes(id)) || researchSkillIds.some(id => !playbook.researchSkillIds.includes(id))) {
+    throw new Error('Stage cannot load a skill outside the playbook')
+  }
+  const coreDefinitions = resolveSkills(coreSkillIds, 'core', playbook.mode, playbook.allowedCapabilities)
+  const researchDefinitions = resolveSkills(researchSkillIds, 'research', playbook.mode, playbook.allowedCapabilities)
+  const coreSkills = createAgentSkills(coreSkillIds, 'core', playbook.mode, playbook.allowedCapabilities)
+  const researchSkills = createAgentSkills(researchSkillIds, 'research', playbook.mode, playbook.allowedCapabilities)
 
   // All mandatory Skill bodies are supplied using Mastra's native objects, independently
   // of whether the model chooses to call the progressive-discovery skill tools.
@@ -102,7 +114,8 @@ ${mandatoryInstructions(researchSkills)}`
       abortSignal: dependencies.signal,
       // Mastra infers one static output type for the Agent instance; the
       // completion hook reparses with the mode-specific schema before use.
-      structuredOutput: { schema: (dependencies.evidenceSources ? researchSynthesisSchema : researchAgentOutputSchema) as unknown as typeof researchAgentOutputSchema, errorStrategy: 'strict' },
+      structuredOutput: { schema: (dependencies.evidenceSources ? researchSynthesisSchema : researchAgentOutputSchema) as unknown as typeof researchAgentOutputSchema,
+        errorStrategy: dependencies.evidenceSources ? 'warn' : 'strict' },
     },
   })
 
@@ -180,7 +193,7 @@ ${mandatoryInstructions(researchSkills)}`
         throw new Error('Invalid structured research result')
       }
       if (dependencies.evidenceSources) {
-        const parsed = researchSynthesisSchema.safeParse(result)
+        const parsed = researchSynthesisSchema.safeParse(boundResearchSynthesis(result))
         if (!parsed.success) {
           researchOutputNeedsRepair = true
           throw parsed.error
@@ -210,6 +223,10 @@ ${mandatoryInstructions(coreSkills)}`,
     defaultOptions: { maxSteps: 8, modelSettings: { maxRetries: 0 }, abortSignal: dependencies.signal, delegation },
   })
   return { coreAgent, researchAgent, playbook,
+    skillRefs: {
+      core: coreDefinitions.map(({ id, version, hash }) => ({ id, version, hash, role: 'core' as const })),
+      research: researchDefinitions.map(({ id, version, hash }) => ({ id, version, hash, role: 'research' as const })),
+    },
     researchRequests: () => researchRequestSchema.array().parse(structuredClone(requests)),
     researchOutputNeedsRepair: () => researchOutputNeedsRepair,
     // Schema parsing returns a detached snapshot; neither the model nor the caller can mutate the ledger.

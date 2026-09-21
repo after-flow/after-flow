@@ -77,5 +77,17 @@ export const PLACEHOLDER_RULE_CATALOG: RuleCatalog = {
       requiredDocuments: [],
       deadlineRuleId: null,
     },
+    {
+      id: 'kyoukaikenpo-burial-benefit',
+      title: '健康保険の埋葬料（費）を確認する',
+      summary: '協会けんぽの埋葬料（費）について、加入状況と申請者の関係に応じた必要書類を確認します。',
+      stage: 'government',
+      category: 'insurance-benefit',
+      submitTo: '全国健康保険協会',
+      evidenceRequired: true,
+      assetDisposal: false,
+      requiredDocuments: [],
+      deadlineRuleId: null,
+    },
   ],
 }
