@@ -15,7 +15,7 @@
 | [#141](https://github.com/after-flow/after-flow/pull/141) | #49 #54 #57 #65 | 実Adapterとレビュー済み設定から永続サービスを組み立てる起動関数 |
 | [#142](https://github.com/after-flow/after-flow/pull/142) | #55 #56 #57 | Harnessによる調査中断の記録、未完了の調査をcancelledとして扱う |
 
-前提は案件のAI計画停止を保存する[#132](https://github.com/after-flow/after-flow/pull/132)と、AIが停止・本人意思を検証する[#133](https://github.com/after-flow/after-flow/pull/133)。PRはこの順のstackで、mainへのマージはまだ行っていない。Webの画面・ルート・MSW fixtureは変更していない。
+前提は案件のAI計画停止を保存する[#132](https://github.com/after-flow/after-flow/pull/132)と、AIが停止・本人意思を検証する[#133](https://github.com/after-flow/after-flow/pull/133)。PRはこの順の依存関係を持つ。マージ状況は各PRを参照。Webの画面・ルート・MSW fixtureは変更していない。
 
 ## 残る接続と実装
 
