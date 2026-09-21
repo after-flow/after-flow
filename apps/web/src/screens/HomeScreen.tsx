@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApprovals, useCaseOverview, useInsights, useTasks, useUpdateInsightStatus } from '@/lib/api/queries'
-import type { FlowStage, Insight, Task } from '@aftercare/public-contracts'
+import type { Insight, Task } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { isCarriedOver, isDisplayableInsight } from '@/lib/insights'
 import { INSIGHT_KIND_META } from '@/lib/labels'
-import { AGENT_RUN_WORD, APPROVAL_KIND_WORD, FLOW_STAGE_WORD } from '@/kit/words'
+import { AGENT_RUN_WORD, APPROVAL_KIND_WORD } from '@/kit/words'
 import { Badge, Button, Empty, ErrorState, LinkButton, Loading, Notice, Page, Panel } from '@/kit/kit'
 import { toast } from '@/kit/toast'
 import { CompleteTaskDialog } from './parts/CompleteTaskDialog'
@@ -28,7 +28,7 @@ import {
  *
  * 利用場面：朝、スマホかPCで開く。知りたいのは「今日は何をすればいいか」だけ。
  * そのため、画面の最上部に「まずはこれ」を1件だけ大きく出す。
- * 2件目以降は下に小さく並べ、全体の進みは最後に置く。
+ * 2件目以降は下に小さく並べる。全体の進みは「手続きの流れ」で見る。
  */
 export function HomeScreen() {
   const { caseId, base } = useCaseBase()
@@ -236,7 +236,6 @@ export function HomeScreen() {
         </div>
       </div>
 
-      <FlowOverview stages={overview.data.flowStages} />
     </Page>
   )
 }
@@ -405,59 +404,5 @@ function AllClear() {
         <p className="text-[0.94rem] text-rd-text-2">新しい書類が見つかったら「書類を追加」から追加してください。</p>
       </div>
     </section>
-  )
-}
-
-/**
- * 全体の流れ。細部は出さず「いまどのあたりか」だけ分かればよい。
- *
- * 色だけでは初めて見た人に意味が伝わらないので、各段階に「済み／進めている／これから」を
- * 記号と言葉で添える。色は補助にとどめる。
- */
-const STAGE_STATE = {
-  COMPLETED: { word: '済み', icon: 'check', bar: 'bg-rd-success', fg: 'text-rd-success-text' },
-  IN_PROGRESS: { word: '進行中', icon: 'progress', bar: 'bg-rd-primary', fg: 'text-rd-primary-text' },
-  NOT_STARTED: { word: 'これから', icon: 'circle', bar: 'bg-rd-border', fg: 'text-rd-text-3' },
-} as const
-
-function FlowOverview({ stages }: { stages: FlowStage[] }) {
-  const done = stages.filter((s) => s.state === 'COMPLETED').length
-  return (
-    <Panel
-      title="全体の流れ"
-      action={<span className="text-[0.86rem] text-rd-text-2">10段階のうち {done} 段階が済み</span>}
-    >
-      <p className="mb-3 text-[0.86rem] text-rd-text-2">
-        相続の手続きは、おおむね左から右の順に進みます。
-      </p>
-      {/*
-        段階名の長さが違っても状態の行がそろうよう、各段階を「線／名前（2行分の高さ）／状態」の
-        3行に固定する。状態の言葉は折り返さない長さにそろえる。
-      */}
-      <ol className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-5 xl:grid-cols-10 xl:gap-x-3">
-        {stages.map((s, i) => {
-          const st = STAGE_STATE[s.state]
-          const current = s.state === 'IN_PROGRESS'
-          return (
-            <li
-              key={s.id}
-              className="grid min-w-0 grid-rows-[auto_2.9em_auto] gap-1.5"
-              title={current && s.totalTasks > 0 ? `${s.label}（${s.totalTasks}件中${s.completedTasks}件が済み）` : s.label}
-            >
-              <span aria-hidden className={`h-1.5 rounded-full ${st.bar}`} />
-              <span
-                className={`line-clamp-2 text-[0.86rem] leading-[1.45] ${current ? 'font-bold text-rd-text' : 'text-rd-text-2'}`}
-              >
-                {i + 1}. {FLOW_STAGE_WORD[s.id] ?? s.label.replace(/（.*?）/, '')}
-              </span>
-              <span className={`flex items-center gap-1 text-[0.8rem] font-bold whitespace-nowrap ${st.fg}`}>
-                <Icon name={st.icon} size={13} strokeWidth={2.4} />
-                {st.word}
-              </span>
-            </li>
-          )
-        })}
-      </ol>
-    </Panel>
   )
 }

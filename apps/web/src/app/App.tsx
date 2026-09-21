@@ -15,6 +15,7 @@ import { TasksScreen } from '@/screens/TasksScreen'
 import { TaskScreen } from '@/screens/TaskScreen'
 import { ApprovalsScreen } from '@/screens/ApprovalsScreen'
 import { ApprovalScreen } from '@/screens/ApprovalScreen'
+import { FlowScreen } from '@/screens/FlowScreen'
 import { DocumentScreen, DocumentsScreen } from '@/screens/DocumentsScreen'
 import { PropertyScreen } from '@/screens/PropertyScreen'
 import { FamilyScreen } from '@/screens/FamilyScreen'
@@ -97,6 +98,7 @@ export function App() {
                 <Route index element={<HomeScreen />} />
                 <Route path="tasks" element={<TasksScreen />} />
                 <Route path="tasks/:taskId" element={<TaskScreen />} />
+                <Route path="flow" element={<FlowScreen />} />
                 <Route path="approvals" element={<ApprovalsScreen />} />
                 <Route path="approvals/:approvalId" element={<ApprovalScreen />} />
                 <Route path="insights" element={<Navigate to="../approvals?tab=insights" replace />} />

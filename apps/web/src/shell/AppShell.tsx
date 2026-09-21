@@ -35,6 +35,7 @@ const NAV: { title?: string; items: NavItem[] }[] = [
       { to: '', label: 'ホーム', icon: 'home', end: true },
       { to: 'tasks', label: 'やること', icon: 'checklist', badge: 'tasks' },
       { to: 'approvals', label: 'AIからの確認', icon: 'seal', badge: 'reviews' },
+      { to: 'flow', label: '手続きの流れ', icon: 'path' },
     ],
   },
   {
