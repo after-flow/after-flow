@@ -19,6 +19,18 @@ CMD ["pnpm", "dev"]
 FROM development AS web-build
 ENV VITE_USE_MOCK=false
 ENV VITE_API_BASE_URL=/api/v1
+# Firebase Authentication（本番）。Vite は静的ビルド時にしか環境変数を埋め込まない
+# ため、実行時の環境変数注入では反映できない。compose.production.yaml の
+# build.args から渡す。未設定のままビルドすると、起動時に main.tsx の
+# fail-closed 判定が画面を止める（VITE_FIREBASE_API_KEY が空のまま）。
+ARG VITE_FIREBASE_API_KEY=
+ARG VITE_FIREBASE_PROJECT_ID=
+ARG VITE_FIREBASE_AUTH_DOMAIN=
+ARG VITE_FIREBASE_AUTH_EMULATOR_URL=
+ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY
+ENV VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID
+ENV VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN
+ENV VITE_FIREBASE_AUTH_EMULATOR_URL=$VITE_FIREBASE_AUTH_EMULATOR_URL
 RUN pnpm --filter @aftercare/web... build
 
 FROM development AS backend-build

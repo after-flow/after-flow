@@ -94,6 +94,7 @@ describe('composition: 内部readiness endpointの組み立て', () => {
       AUTH_MODE: 'static-jwks',
       AUTH_ISSUER: 'https://issuer.example.test/',
       AUTH_AUDIENCE: 'aud',
+      AUTH_TENANT_ID: 'after-flow-demo',
       AUTH_STATIC_JWKS: JSON.stringify({ keys: [] }),
     })
     const auth = checksOf(body).auth
@@ -101,14 +102,49 @@ describe('composition: 内部readiness endpointの組み立て', () => {
     assert.equal(auth?.reason, 'STATIC_JWKS_NOT_PRODUCTION_GRADE')
   })
 
+  it('AUTH_MODE=firebase-emulator は起動できてもreadinessでは本番相当ではないとして失敗する', async () => {
+    const { body } = await readiness({
+      ...baseEnv,
+      AUTH_MODE: 'firebase-emulator',
+      AUTH_ISSUER: 'https://securetoken.google.com/demo-after-flow',
+      AUTH_AUDIENCE: 'demo-after-flow',
+      AUTH_TENANT_ID: 'after-flow-demo',
+      FIREBASE_AUTH_EMULATOR_HOST: 'firebase-auth-emulator:9099',
+    })
+    const auth = checksOf(body).auth
+    assert.equal(auth?.status, 'fail')
+    assert.equal(auth?.reason, 'EMULATOR_NOT_PRODUCTION_GRADE')
+  })
+
   it('jwks modeで必須設定が揃えばauthはokになる（JWKSへの実疎通はしない）', async () => {
     const { body } = await readiness({
       ...baseEnv,
       AUTH_ISSUER: 'https://issuer.example.test/',
       AUTH_AUDIENCE: 'aud',
+      AUTH_TENANT_ID: 'after-flow-demo',
       AUTH_JWKS_URI: 'https://issuer.example.test/jwks',
     })
     assert.equal(checksOf(body).auth?.status, 'ok')
+  })
+
+  it('認証が設定されていれば、失効・停止確認は未対応としてsession_revocationがfailし続ける', async () => {
+    const { body } = await readiness({
+      ...baseEnv,
+      AUTH_ISSUER: 'https://issuer.example.test/',
+      AUTH_AUDIENCE: 'aud',
+      AUTH_TENANT_ID: 'after-flow-demo',
+      AUTH_JWKS_URI: 'https://issuer.example.test/jwks',
+    })
+    const check = checksOf(body).session_revocation
+    assert.equal(check?.status, 'fail')
+    assert.equal(check?.reason, 'SESSION_REVOCATION_NOT_ENFORCED')
+  })
+
+  it('認証が未設定ならsession_revocationはNOT_CONFIGURED', async () => {
+    const { body } = await readiness(baseEnv)
+    const check = checksOf(body).session_revocation
+    assert.equal(check?.status, 'fail')
+    assert.equal(check?.reason, 'NOT_CONFIGURED')
   })
 
   it('同意カタログが仮文面(placeholder)のままならfailする', async () => {

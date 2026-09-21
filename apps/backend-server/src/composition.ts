@@ -29,6 +29,7 @@ import {
 } from './application/operations/readiness-service.js'
 import type { ReadinessCheck } from './application/operations/readiness-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
+import { RegistrationService } from './application/identity/registration-service.js'
 import { readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
 import { ScopedHttpAgentJobClient } from './infrastructure/agent/scoped-http-agent-client.js'
 import { createAiConnectivityReadinessCheck } from './infrastructure/agent/readiness-check.js'
@@ -110,7 +111,12 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   )
 
   const proposalService = new ProposalService(access, database.read, database.uow, [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers])
+  // tenant は配備単位で固定する（authConfig.tenantId と同じ値。`AUTH_TENANT_ID`）。
+  // ここでは readAuthConfig() を呼ばない。呼ぶと AUTH_ISSUER 等が未設定の環境で
+  // 起動そのものが失敗し、「認証未設定は 401 全拒否」という既存の起動方針が壊れる。
+  const registrationService = new RegistrationService(env.AUTH_TENANT_ID ?? '', database.read, database.uow)
   const routes = createPublicV1Routes({
+    registrationService,
     ...createBusinessServices(access, database.read, database.uow),
     caseService: new CaseService(access, database.read, database.uow),
     consentService,
@@ -183,13 +189,14 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     })
   }
 
+  const authConfig = readAuthConfig(env)
   return createApp({
     routes,
     consentGate,
     apiDocs,
     ...(internalApp ? { internalApp } : {}),
     ...(readinessApp ? { readinessApp } : {}),
-    authentication: authentication(createTokenVerifier(readAuthConfig(env)), access),
+    authentication: authentication(createTokenVerifier(authConfig), access, authConfig.tenantId),
   })
 }
 
@@ -277,10 +284,26 @@ function readinessChecks(
       } catch {
         return { ok: false, reason: 'NOT_CONFIGURED' }
       }
-      // static-jwksは試験・ローカル専用（readAuthConfigもNODE_ENV=productionでは拒否する）。
+      // static-jwks・firebase-emulatorは試験・ローカル専用
+      // （readAuthConfigもNODE_ENV=productionでは拒否する）。
       // readinessはNODE_ENVに関係なく、本番相当の設定でなければ ready を返さない。
       if (config.mode === 'static-jwks') return { ok: false, reason: 'STATIC_JWKS_NOT_PRODUCTION_GRADE' }
+      if (config.mode === 'firebase-emulator') return { ok: false, reason: 'EMULATOR_NOT_PRODUCTION_GRADE' }
       return { ok: true }
+    }),
+  )
+
+  checks.push(
+    // ADR 0001 §5: 失効・停止確認（Admin SDK の revoke 確認等）は未対応。
+    // 認証が設定されている限り、実装済みになるまで恒常的に not_ready を返し、
+    // 本番公開前に対応が必要な既知の欠落として見える状態を保つ。
+    syncCheck('session_revocation', () => {
+      try {
+        readAuthConfig(env)
+      } catch {
+        return { ok: false, reason: 'NOT_CONFIGURED' }
+      }
+      return { ok: false, reason: 'SESSION_REVOCATION_NOT_ENFORCED' }
     }),
   )
 

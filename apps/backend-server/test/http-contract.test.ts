@@ -2,9 +2,39 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { createApp } from '../src/app.js'
 import { DEFAULT_MAX_BODY_BYTES } from '../src/presentation/http/route.js'
-import { fixtureRoutes, stubAuthentication } from './helpers/fixture-routes.js'
+import { fixtureRoutes, stubAuthentication, stubIdentityOnlyAuthentication } from './helpers/fixture-routes.js'
 
 const app = createApp({ routes: fixtureRoutes, authentication: stubAuthentication })
+
+describe('auth: identity と user の認可段階', () => {
+  it("auth:'identity' は identity があれば user が無くても到達できる", async () => {
+    const identityOnlyApp = createApp({ routes: fixtureRoutes, authentication: stubIdentityOnlyAuthentication })
+    const response = await identityOnlyApp.request('http://localhost/api/v1/fixtures/identity')
+    assert.equal(response.status, 200)
+  })
+
+  it("auth:'identity' は identity も無ければ 401", async () => {
+    const noAuthApp = createApp({ routes: fixtureRoutes })
+    const response = await noAuthApp.request('http://localhost/api/v1/fixtures/identity')
+    assert.equal(response.status, 401)
+  })
+
+  it("auth:'user' は identity はあるが user が無ければ 403 NOT_REGISTERED", async () => {
+    const identityOnlyApp = createApp({ routes: fixtureRoutes, authentication: stubIdentityOnlyAuthentication })
+    const response = await identityOnlyApp.request('http://localhost/api/v1/cases/case-1/fixtures')
+    const body = (await response.json()) as Record<string, any>
+    assert.equal(response.status, 403)
+    assert.equal(body.error.code, 'FORBIDDEN')
+    assert.equal(body.error.details?.reason, 'NOT_REGISTERED')
+    assert.deepEqual(body.error.details?.availableOperations, ['getMe', 'registerMe'])
+  })
+
+  it("auth:'user' は identity も無ければ 401", async () => {
+    const noAuthApp = createApp({ routes: fixtureRoutes })
+    const response = await noAuthApp.request('http://localhost/api/v1/cases/case-1/fixtures')
+    assert.equal(response.status, 401)
+  })
+})
 
 async function call(path: string, init: RequestInit = {}) {
   const response = await app.request(`http://localhost/api/v1${path}`, init)

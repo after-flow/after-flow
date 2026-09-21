@@ -18,6 +18,12 @@ services:
       VITE_API_BASE_URL: /api/v1
       VITE_API_PROXY: http://backend-server:8080
       VITE_WATCH_POLLING: "true"
+      # Firebase Authentication（ローカルは Auth Emulator）。ブラウザーは
+      # 127.0.0.1:9099 へ直接到達する（web コンテナ経由ではない）。
+      VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-demo-api-key}
+      VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-demo-after-flow}
+      VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN-}
+      VITE_FIREBASE_AUTH_EMULATOR_URL: ${VITE_FIREBASE_AUTH_EMULATOR_URL:-http://127.0.0.1:9099}
     volumes:
       - ./apps/web/src:/workspace/apps/web/src:ro
       - ./apps/web/public:/workspace/apps/web/public:ro
@@ -59,14 +65,20 @@ services:
       BACKEND_EXECUTION_SIGNING_KEY: ${BACKEND_EXECUTION_SIGNING_KEY:-after-flow-local-execution-signing-key-2026}
       AI_CONNECTED_OPERATIONS: ${AI_CONNECTED_OPERATIONS-}
       READINESS_ACCESS_TOKEN: ${READINESS_ACCESS_TOKEN-}
-      # 利用者認証。未設定なら保護対象APIは401で fail closed する。
-      # ローカルでは `make dev-auth` が static-jwks（公開鍵のみ）を .env に追記する。
-      AUTH_MODE: ${AUTH_MODE-}
-      AUTH_ISSUER: ${AUTH_ISSUER-}
-      AUTH_AUDIENCE: ${AUTH_AUDIENCE-}
+      # 利用者認証。既定は Firebase Auth Emulator（`make up` だけで動く）。
+      # `.env` に AUTH_MODE=static-jwks 等を書くとこの既定を上書きする
+      # （`docs/runbooks/local-swagger.md` の「代替」手順）。未設定の項目が
+      # 残ると保護対象APIは401で fail closed する。
+      AUTH_MODE: ${AUTH_MODE:-firebase-emulator}
+      AUTH_ISSUER: ${AUTH_ISSUER:-https://securetoken.google.com/demo-after-flow}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-demo-after-flow}
+      AUTH_TENANT_ID: ${AUTH_TENANT_ID:-after-flow-demo}
       AUTH_JWKS_URI: ${AUTH_JWKS_URI-}
       AUTH_STATIC_JWKS: ${AUTH_STATIC_JWKS-}
-      AUTH_TENANT_CLAIM: ${AUTH_TENANT_CLAIM-}
+      # firebase-emulator モードだけ AUTH_REQUIRE_EMAIL_VERIFIED=false を許す
+      # （jwks で false は起動を拒否する）。
+      AUTH_REQUIRE_EMAIL_VERIFIED: ${AUTH_REQUIRE_EMAIL_VERIFIED:-false}
+      FIREBASE_AUTH_EMULATOR_HOST: ${FIREBASE_AUTH_EMULATOR_HOST:-firebase-auth-emulator:9099}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     volumes:
@@ -219,6 +231,34 @@ services:
       start_period: 5s
       retries: 10
     networks: [data, emulator-host]
+
+  # ローカル専用の Firebase Auth Emulator。署名なし（alg:"none"）の ID token を
+  # 発行するため、127.0.0.1 バインド前提（docs/runbooks/local-swagger.md）。
+  # backend-server と同じ frontend ネットワークに置くのは `make dev-token`
+  # （backend-server コンテナから呼ぶ）が到達するため。ai-server は参加しない。
+  # backend-server.depends_on には加えない（data profile 同士の起動順は
+  # `make up` の --wait が担保する。firestore-emulator と同じ扱い）。
+  firebase-auth-emulator:
+    build:
+      context: docker/firebase-auth-emulator
+    image: after-flow-firebase-auth-emulator:local
+    profiles: [data]
+    init: true
+    environment:
+      FIREBASE_AUTH_PROJECT: ${FIREBASE_AUTH_PROJECT:-demo-after-flow}
+    command: >-
+      firebase emulators:start --only auth
+      --project ${FIREBASE_AUTH_PROJECT:-demo-after-flow}
+      --config /emulator/firebase.json
+    ports:
+      - "127.0.0.1:${AUTH_EMULATOR_PORT:-9099}:9099"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9099/').then(async r=>{const j=await r.json();if(!r.ok||j?.authEmulator?.ready!==true)throw new Error('not ready')}).then(()=>process.exit(0)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 20
+    networks: [frontend, emulator-host]
 
 networks:
   frontend:

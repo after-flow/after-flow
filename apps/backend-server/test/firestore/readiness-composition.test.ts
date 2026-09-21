@@ -15,8 +15,8 @@ const AI_TOKEN = 'ai-execution-service-token-emulator-0123456789'
  * 個々の検査の分岐（未設定・placeholder・AI未接続など）は
  * test/composition-readiness.test.ts（Emulator不要・高速）で確認する。
  */
-describeFirestore('composition: readinessの正常系（Emulator込み）', () => {
-  it('Firestore/Storage/認証設定/同意カタログ/期限ルールが揃えばreadyになる', async () => {
+describeFirestore('composition: readinessの各checkの判定（Emulator込み）', () => {
+  it('Firestore/Storage/認証設定/同意カタログ/期限ルールが揃えば、失効確認未対応以外はokになる', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'after-flow-readiness-composition-'))
     const consentPath = path.join(dir, 'consent.json')
     writeFileSync(
@@ -38,6 +38,7 @@ describeFirestore('composition: readinessの正常系（Emulator込み）', () =
       DOCUMENT_STORAGE_ROOT: mkdtempSync(path.join(tmpdir(), 'after-flow-readiness-storage-')),
       AUTH_ISSUER: 'https://issuer.example.test/',
       AUTH_AUDIENCE: 'after-flow-api',
+      AUTH_TENANT_ID: 'after-flow-demo',
       AUTH_JWKS_URI: 'https://issuer.example.test/jwks',
       CONSENT_CATALOG_PATH: consentPath,
       DEADLINE_RULES_PATH: rulesPath,
@@ -45,11 +46,23 @@ describeFirestore('composition: readinessの正常系（Emulator込み）', () =
 
     const response = await app.request('/internal/v1/health/ready', { headers: { Authorization: `Bearer ${TOKEN}` } })
     const body = (await response.json()) as any
-    assert.equal(response.status, 200, JSON.stringify(body))
-    assert.equal(body.data.status, 'ready')
+    assert.equal(response.status, 503, JSON.stringify(body))
+    // ADR 0001 §5の失効・停止確認は未実装のため、認証を設定した時点で
+    // session_revocation が恒常的にfailし、他が揃っていてもnot_readyのまま
+    // （docs/runbooks/readiness.md）。not_ready（503）はエラー封筒で返るため、
+    // ready（200）時の body.data とは違い body.error.details を見る
+    // （`readiness.ts` の throw errors.unavailable）。他の検査はすべてokであることを確認する。
+    assert.equal(body.error.details.status, 'not_ready')
     assert.deepEqual(
-      Object.fromEntries(body.data.checks.map((c: any) => [c.name, c.status])),
-      { firestore: 'ok', storage: 'ok', auth: 'ok', consent_catalog: 'ok', deadline_rules: 'ok' },
+      Object.fromEntries(body.error.details.checks.map((c: any) => [c.name, c.status])),
+      {
+        firestore: 'ok',
+        storage: 'ok',
+        auth: 'ok',
+        session_revocation: 'fail',
+        consent_catalog: 'ok',
+        deadline_rules: 'ok',
+      },
     )
   })
 
@@ -92,6 +105,7 @@ describeFirestore('composition: readinessの正常系（Emulator込み）', () =
         DOCUMENT_STORAGE_ROOT: mkdtempSync(path.join(tmpdir(), 'after-flow-readiness-storage-ai-')),
         AUTH_ISSUER: 'https://issuer.example.test/',
         AUTH_AUDIENCE: 'after-flow-api',
+        AUTH_TENANT_ID: 'after-flow-demo',
         AUTH_JWKS_URI: 'https://issuer.example.test/jwks',
         CONSENT_CATALOG_PATH: consentPath,
         DEADLINE_RULES_PATH: rulesPath,
@@ -104,10 +118,14 @@ describeFirestore('composition: readinessの正常系（Emulator込み）', () =
 
       const readiness = await app.request('/internal/v1/health/ready', { headers: { Authorization: `Bearer ${TOKEN}` } })
       const readinessBody = (await readiness.json()) as any
-      assert.equal(readiness.status, 200, JSON.stringify(readinessBody))
-      assert.equal(readinessBody.data.status, 'ready')
+      // 認証設定がある限り session_revocation が恒常的にfailするため（上のテスト参照）、
+      // ここでも overall は not_ready（503、エラー封筒）のまま。この test の主眼は
+      // 「readinessが自身のtokenで到達でき、AI実行APIのtokenとは独立している」ことなので、
+      // ai_connectivity 検査が ok であることだけを見る。
+      assert.equal(readiness.status, 503, JSON.stringify(readinessBody))
+      assert.equal(readinessBody.error.details.status, 'not_ready')
       assert.equal(
-        Object.fromEntries(readinessBody.data.checks.map((c: any) => [c.name, c.status])).ai_connectivity,
+        Object.fromEntries(readinessBody.error.details.checks.map((c: any) => [c.name, c.status])).ai_connectivity,
         'ok',
       )
 
