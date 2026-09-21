@@ -78,6 +78,12 @@ test('artifact verification rejects hash tampering, stale context, operation mis
   assert.throws(() => buildCoreContext({ ...source, content: named, contentHash: contentHash(named) }, 'case_planning'), { code: 'INVALID_CONTEXT' })
 })
 
+test('task guidance rejects a Backend reviewStatus that disagrees with the local Definition', () => {
+  const source = guidanceArtifact('kyoukaikenpo-burial-benefit')
+  const content = { ...source.content, procedure: { id: 'kyoukaikenpo-burial-benefit', version: 1, reviewStatus: 'draft' } }
+  assert.throws(() => buildCoreContext({ ...source, content, contentHash: contentHash(content) }, 'task_guidance'), { code: 'PROCEDURE_MISMATCH' })
+})
+
 test('Backend state and descriptive facts keep distinct provenance within the same entity', () => {
   const source = artifact()
   const content = { ...source.content,
@@ -140,6 +146,15 @@ test('optional context may be absent while required context missing blocks with 
   assert.ok(!selection.missing.some(text => text.includes('架空')))
 })
 
+test('profile UNKNOWN remains visible as unknown provenance and does not satisfy required context', () => {
+  const context = buildCoreContext(guidanceArtifact('health-insurance-loss', {
+    profile: { id: 'case-1', version: 1, healthInsurance: 'UNKNOWN' },
+  }), 'task_guidance')
+  const fact = context.modelInput.facts.find(item => item.group === 'profile' && item.field === 'healthInsurance')
+  assert.equal(fact?.state, 'unknown')
+  assert.deepEqual(context.procedure?.missingRequired.map(item => `${item.group}.${item.field}`), ['profile.healthInsurance'])
+})
+
 test('kyoukaikenpo guidance carries no case values and uses the matching reviewed scope or the Definition brief', () => {
   const source = guidanceArtifact('kyoukaikenpo-burial-benefit', {
     contracts: [{ id: 'contract-1', version: 1, name: 'PRIVATE-CONTRACT', kind: 'HEALTH_INSURANCE', provider: '全国健康保険協会', policyState: 'ACTIVE' }],
@@ -186,6 +201,13 @@ test('estate-division is limited to heirs, relationships, assets, liabilities an
   assert.equal(fact('decision-1', 'method')?.state, 'confirmed')
   assert.equal(fact('asset-1', 'institution'), undefined)
   assert.ok(!JSON.stringify(context.modelInput).includes('PRIVATE'))
+  const minimized = minimizedModelInput(context, 'task_guidance')
+  const personRef = minimized.data.find(item => item.group === 'persons')?.entityRef
+  assert.equal(minimized.data.find(item => item.group === 'relationships' && item.field === 'fromPersonId')?.value, personRef)
+  assert.equal(minimized.data.find(item => item.group === 'decisions' && item.field === 'personId')?.value, personRef)
+  assert.equal(JSON.stringify(minimized).includes('"person-1"'), false)
+  assert.equal(JSON.stringify(minimized).includes('"asset-1"'), false)
+  assert.ok(minimized.data.every(item => item.entityRef.length > 0))
 })
 
 test('bank-accounts passes the institution but never the account name, and the brief carries no case values', () => {

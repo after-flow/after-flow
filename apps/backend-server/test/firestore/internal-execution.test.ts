@@ -376,6 +376,30 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(response.body.error.details.reason, 'PROCEDURE_NOT_REVIEWED')
   })
 
+  it('申請者要件を扱う案内では、除外済みPersonを落とし実行ユーザー本人だけを投影する', async t => {
+    const h = await setup(t)
+    const self = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '実行ユーザー本人', relationship: '子', isHeir: true }))
+    assert.equal(self.status, 201, JSON.stringify(self.body))
+    const selfPersonId = self.body.data.id as string
+    await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/caseMembers/${h.userId}`).update({ personId: selfPersonId })
+    const activeOther = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '別の家族', relationship: '親', isHeir: true }))
+    assert.equal(activeOther.status, 201, JSON.stringify(activeOther.body))
+    const excluded = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '除外する家族', relationship: '兄弟', isHeir: true }))
+    assert.equal(excluded.status, 201, JSON.stringify(excluded.body))
+    assert.equal((await call(h.app, `/cases/${h.caseId}/persons/${excluded.body.data.id}/exclude`,
+      jsonRequest('POST', { expectedVersion: 1 }))).status, 200)
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', {
+      title: '埋葬料を確認する', category: '手動', stage: 'immediate', procedureId: 'kyoukaikenpo-burial-benefit',
+    }))
+    assert.equal(task.status, 201, JSON.stringify(task.body))
+    const exec = await h.accept('task_guidance', task.body.data.id, 'TASK')
+    const context = await h.context(exec)
+    const persons = context.content.persons as Record<string, unknown>[]
+    assert.deepEqual(persons.map(person => person.id), [selfPersonId])
+    assert.equal(JSON.stringify(persons).includes(activeOther.body.data.id), false)
+    assert.equal(JSON.stringify(persons).includes(excluded.body.data.id), false)
+  })
+
   it('task_guidanceの中断結果はRunと案内を同じTransactionで終端し、再送で二重反映しない', async t => {
     const h = await setup(t)
     const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))

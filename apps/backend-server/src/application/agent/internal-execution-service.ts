@@ -83,7 +83,7 @@ export class InternalExecutionService {
   constructor(private readonly read: SnapshotReader, private readonly uow: UnitOfWork,
     private readonly consent: ConsentService, private readonly intake: AgentResultIntake,
     private readonly proposals?: ProposalService,
-    private readonly options: InternalExecutionServiceOptions = { rejectDraftDefinitions: false }) {}
+    private readonly options: InternalExecutionServiceOptions = { rejectDraftDefinitions: true }) {}
 
   async cancellation(tenantId: string, caseId: string, runId: string, cancelId: string) {
     const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, runId))
@@ -226,6 +226,9 @@ export class InternalExecutionService {
           if (definition.reviewStatus !== 'reviewed' && this.options.rejectDraftDefinitions) {
             throw errors.preconditionFailed({ details: { reason: 'PROCEDURE_NOT_REVIEWED' } })
           }
+          const initiatingMember = run.initiatedByUserId
+            ? await reader.get<CaseMember>(claims.tenantId, { collection: collections.caseMembers, caseId: claims.caseId, id: run.initiatedByUserId })
+            : null
           const allow = guidanceAllowlist(definition)
           const entities: Partial<Record<EntityContextGroup, readonly Record<string, unknown>[]>> = {}
           for (const group of allow.keys()) {
@@ -235,7 +238,14 @@ export class InternalExecutionService {
             if (!collection) continue
             const page = await reader.list<EntityBase>(claims.tenantId, collection, claims.caseId, { limit: 100, ...(where ? { where } : {}) })
             if (page.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED', collection: collection.name } })
-            entities[group] = page.items as unknown as Record<string, unknown>[]
+            let items = page.items as unknown as Record<string, unknown>[]
+            if (group === 'persons' || group === 'relationships') items = items.filter(item => item.excludedAt === null || item.excludedAt === undefined)
+            if (group === 'persons' && definition.guidance.personScope === 'initiating-member') {
+              items = initiatingMember?.active && initiatingMember.personId
+                ? items.filter(item => item.id === initiatingMember.personId)
+                : []
+            }
+            entities[group] = items
           }
           const projection = projectGuidanceContext(definition, { case: entity as unknown as Record<string, unknown>, profile: (entity.profile ?? null) as Record<string, unknown> | null, entities })
           Object.assign(content, projection.content)
