@@ -24,12 +24,13 @@ export const meSpecs = {
     method: 'get',
     path: '/me',
     summary: '自分の登録状態を確認する',
-    description: '未登録・停止済みでも 200 で状態を返す。書き込みは行わない。',
+    description:
+      '未登録でも 200 で状態（registered:false）を返す。書き込みは行わない。停止済みの利用者は認証段階で 403（details.reason=MEMBERSHIP_INACTIVE）、メール未確認は 403（EMAIL_NOT_VERIFIED）になり、ここには到達しない。',
     tags: ['me'],
     auth: 'identity',
     consent: 'exempt',
     success: { status: 200, description: '登録状態', schema: meEnvelope },
-    failures: ['UNAUTHENTICATED'],
+    failures: ['UNAUTHENTICATED', 'FORBIDDEN'],
   },
   registerMe: {
     operationId: 'registerMe',

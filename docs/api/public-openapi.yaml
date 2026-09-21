@@ -129,7 +129,7 @@ paths:
     get:
       operationId: getMe
       summary: 自分の登録状態を確認する
-      description: 未登録・停止済みでも 200 で状態を返す。書き込みは行わない。
+      description: 未登録でも 200 で状態（registered:false）を返す。書き込みは行わない。停止済みの利用者は認証段階で 403（details.reason=MEMBERSHIP_INACTIVE）、メール未確認は 403（EMAIL_NOT_VERIFIED）になり、ここには到達しない。
       tags:
         - me
       security:
@@ -193,6 +193,12 @@ paths:
                 additionalProperties: false
         "401":
           description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN"
           content:
             application/json:
               schema:

@@ -15,7 +15,7 @@ const AI_TOKEN = 'ai-execution-service-token-emulator-0123456789'
  * 個々の検査の分岐（未設定・placeholder・AI未接続など）は
  * test/composition-readiness.test.ts（Emulator不要・高速）で確認する。
  */
-describeFirestore('composition: readinessの正常系（Emulator込み）', () => {
+describeFirestore('composition: readinessの各checkの判定（Emulator込み）', () => {
   it('Firestore/Storage/認証設定/同意カタログ/期限ルールが揃えば、失効確認未対応以外はokになる', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'after-flow-readiness-composition-'))
     const consentPath = path.join(dir, 'consent.json')

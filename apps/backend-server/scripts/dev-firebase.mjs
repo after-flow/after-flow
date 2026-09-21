@@ -19,7 +19,6 @@ import { parseArgs } from 'node:util'
 if (process.env.NODE_ENV === 'production') fail('dev-firebase は本番環境では使えません。')
 
 const HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'firebase-auth-emulator:9099'
-const PROJECT = process.env.FIREBASE_AUTH_PROJECT || 'demo-after-flow'
 const API_KEY = process.env.VITE_FIREBASE_API_KEY || 'demo-api-key'
 const BASE = `http://${HOST}/identitytoolkit.googleapis.com/v1`
 
