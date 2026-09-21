@@ -19,6 +19,8 @@
 
 P-03は1 Runで1件の正式提案を処理する。承認で案件が変わるため、残りは要確認として、回答/再試行から同じRunの新attemptで再計画する。承認待ち中にTemplate/根拠の有効性が変わった場合も成功にせず要確認を返す。実行途中の任意位置からのCHECKPOINT再開は提供しない。
 
+起動時の共通配線は[startConfiguredAiService](COMPOSITION.md)へ実装済み。実Adapter・業務設定を渡した際に3操作のHandlerと永続Workerを組み立てる。
+
 ## 現在の起動状態と残る依存
 
 既定の`main.ts`はHonoを起動するが、実Orch/Provider等を組み込んだRuntimeは設定していない。healthは生存確認だけで、実行受付は503。実モデルによるサービス提供やMVP全体の完成を示さない。成功固定やFakeへ切り替える本番経路は用意していない。

@@ -22,9 +22,9 @@ function bindBudget(prepared: Pick<GuidanceAgentDependencies, 'models'> & { budg
   if (prepared.budget.inferenceChargedByProviderAdapter || Array.isArray(prepared.models.core) || Array.isArray(prepared.models.research)) {
     assertAuthorizedModelSet(prepared.models.core, { charge: session.guard, role: 'core', operation: session.receipt.operation })
     assertAuthorizedModelSet(prepared.models.research, { charge: session.guard, role: 'research', operation: session.receipt.operation })
-    return { ...prepared.budget, inferenceChargedByProviderAdapter: true, charge: session.guard }
+    return { ...prepared.budget, onLimit: session.exhaust, inferenceChargedByProviderAdapter: true, charge: session.guard }
   }
-  return { ...prepared.budget, charge: session.guard }
+  return { ...prepared.budget, onLimit: session.exhaust, charge: session.guard }
 }
 export function createGuidanceHandler(config: HandlerConfig<ProcedureGuidanceDependencies>): WorkflowHandler {
   return { workflowName: 'procedure-guidance-v1', async execute(session) {

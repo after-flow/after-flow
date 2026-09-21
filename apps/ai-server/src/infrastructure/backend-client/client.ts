@@ -21,6 +21,20 @@ export interface BackendClientConfig {
   insecureHttpAllowedHosts?: readonly string[]
 }
 
+export function validateBackendClientConfig(config: BackendClientConfig) {
+    const url = new URL(config.baseUrl)
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) {
+      throw new Error('Backend URL must be an HTTP(S) origin')
+    }
+    if (url.protocol === 'http:' && (config.allowInsecureHttp !== true || !config.insecureHttpAllowedHosts?.includes(url.hostname))) {
+      throw new Error('Backend requires HTTPS unless HTTP and the exact hostname are explicitly allowed')
+    }
+    if (!config.serviceToken.trim() || /[\r\n]/.test(config.serviceToken)) throw new Error('Backend service credential is required')
+    const timeoutMs = config.timeoutMs ?? INTERNAL_LIMITS.timeoutMs
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > INTERNAL_LIMITS.timeoutMs) throw new Error('Invalid Backend timeout')
+    return { baseUrl: url.origin, timeoutMs }
+}
+
 /** One capability-bound client per execution attempt. Never place it in model context. */
 export class BackendClient {
   private readonly baseUrl: string
@@ -30,18 +44,10 @@ export class BackendClient {
   private readonly config: Readonly<BackendClientConfig>
 
   constructor(config: BackendClientConfig, dispatch: RunDispatch) {
-    const url = new URL(config.baseUrl)
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) {
-      throw new Error('Backend URL must be an HTTP(S) origin')
-    }
-    if (url.protocol === 'http:' && (config.allowInsecureHttp !== true || !config.insecureHttpAllowedHosts?.includes(url.hostname))) {
-      throw new Error('Backend requires HTTPS unless HTTP and the exact hostname are explicitly allowed')
-    }
-    if (!config.serviceToken.trim() || /[\r\n]/.test(config.serviceToken)) throw new Error('Backend service credential is required')
+    const validated = validateBackendClientConfig(config)
     this.config = Object.freeze({ ...config })
-    this.baseUrl = url.origin
-    this.timeoutMs = config.timeoutMs ?? INTERNAL_LIMITS.timeoutMs
-    if (!Number.isInteger(this.timeoutMs) || this.timeoutMs <= 0 || this.timeoutMs > INTERNAL_LIMITS.timeoutMs) throw new Error('Invalid Backend timeout')
+    this.baseUrl = validated.baseUrl
+    this.timeoutMs = validated.timeoutMs
     this.dispatch = dispatchSchema.parse(dispatch)
     this.authorization = this.dispatch.executionAuthorization
   }
