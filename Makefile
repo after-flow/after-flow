@@ -2,7 +2,7 @@
 COMPOSE ?= docker compose
 PNPM ?= pnpm
 
-.PHONY: help up up-data data-check down build logs ps restart check install dev test test-firestore production-check dev-auth dev-token dev-verify-email dev-seed
+.PHONY: help up up-data data-check down build logs ps restart check install dev test test-firestore production-check dev-auth dev-token dev-verify-email dev-seed dev-seed-demo
 
 # ローカル開発用の認証・seed。USER は shell の変数と衝突するので DEV_ を付ける。
 DEV_USER ?= demo-user
@@ -22,6 +22,7 @@ up: ## Dockerでアプリ3サービス・Backend Outbox worker・業務/AI Runti
 	DOCUMENT_STORAGE_EMULATOR_ENDPOINT=http://storage-emulator:4443 \
 	STORAGE_PROJECT_ID=$${STORAGE_PROJECT_ID:-after-flow-local} \
 	$(COMPOSE) --profile data up --build --detach --wait --wait-timeout 120
+	$(MAKE) dev-seed-demo
 
 up-data: up ## 互換エイリアス（make upと同じ）
 
@@ -85,3 +86,14 @@ dev-verify-email: ## Auth Emulator上のアカウントのメール確認を済�
 dev-seed: ## 開発用tenant memberをFirestore Emulatorへ作成（例: make dev-seed DEV_USER=demo-user）
 	$(COMPOSE) --profile data exec -T backend-server pnpm --filter @aftercare/backend-server exec tsx \
 	  /workspace/apps/backend-server/scripts/dev-seed.ts --user "$(DEV_USER)" --tenant "$(DEV_TENANT)"
+
+# make up から自動実行される。固定のログイン情報（DEV_EMAIL/DEV_PASSWORD）を
+# Auth EmulatorとFirestore Emulatorの両方に用意し、Web UIですぐログインできる状態にする。
+# Auth Emulatorはコンテナ再作成で消えるため、make up 済みで毎回作り直す前提（冪等）。
+dev-seed-demo: ## 固定デモアカウント（既定demo@example.com）をAuth Emulatorへ作成しtenant memberとして登録
+	@UID=$$($(COMPOSE) --profile data exec -T backend-server node apps/backend-server/scripts/dev-firebase.mjs uid \
+	  --email "$(DEV_EMAIL)" --password "$(DEV_PASSWORD)") && \
+	$(COMPOSE) --profile data exec -T backend-server node apps/backend-server/scripts/dev-firebase.mjs verify-email \
+	  --email "$(DEV_EMAIL)" && \
+	$(COMPOSE) --profile data exec -T backend-server pnpm --filter @aftercare/backend-server exec tsx \
+	  /workspace/apps/backend-server/scripts/dev-seed.ts --user "$$UID" --tenant "$(DEV_TENANT)"

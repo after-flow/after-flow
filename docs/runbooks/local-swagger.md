@@ -23,14 +23,25 @@ fail-closed 前提が崩れる点に注意する）。署名を検証しない�
 ## 2. 起動して利用者を登録する
 
 Backend は認証済みでも tenant membership（Firestore の `tenants/{AUTH_TENANT_ID}/members/{uid}`）が
-無ければ、`GET/POST /me` 以外は 403 `NOT_REGISTERED` になる。登録は次のどちらか。
+無ければ、`GET/POST /me` 以外は 403 `NOT_REGISTERED` になる。
+
+`make up` は最後に `dev-seed-demo` を自動実行し、固定のログイン情報
+`demo@example.com` / `after-flow-dev-password`（`DEV_EMAIL` / `DEV_PASSWORD` で変更可）を
+Auth Emulator に作成（emailVerified済み）した上で、そのuidを tenant `after-flow-demo`
+（`DEV_TENANT`）へ member登録する。Frontend（`VITE_USE_MOCK=false`）はこのメール・パスワードで
+そのままログインできる。Auth Emulator はコンテナ再作成で消えるため、`make up` のたびに作り直す
+（冪等）。
+
+別のメール・パスワードで用意したい場合や、tenantだけ登録し直したい場合は個別に呼べる。
 
 ```sh
+make dev-seed-demo DEV_EMAIL=another@example.com DEV_PASSWORD=another-password
 make dev-seed                          # tenant after-flow-demo に demo-user を登録（uidを直接指定する場合）
 make dev-seed DEV_USER=<uid>           # make dev-token で取得したuidを登録する場合
 ```
 
-または、取得したトークンで Swagger UI から `POST /me` を呼ぶ（Frontend の登録フローと同じ経路）。
+Swagger UI だけで使う場合や、Frontend を介さず個別のトークンを取得したい場合は、取得したトークンで
+`POST /me` を呼ぶ（Frontend の登録フローと同じ経路）。
 
 ## 3. トークンを取得して Swagger UI で Authorize する
 
