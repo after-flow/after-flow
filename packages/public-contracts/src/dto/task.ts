@@ -79,6 +79,8 @@ export interface TaskEvidenceResource {
   label: string
   kind: 'RECEIPT' | 'NOTICE' | 'PAYMENT' | 'REGISTRATION' | 'OTHER'
   note: string | null
+  /** 添付した書類（窓口でもらった控えの写真など）。添付していなければ null */
+  documentId: string | null
   recordedAt: ISODateTime
 }
 
