@@ -19,6 +19,47 @@ node apps/backend-server/dist/worker-main.js
 プロセス監視基盤により異常終了時に再起動する。Cloud RunならCPUの常時割当を持つ独立worker、
 またはSchedulerから `--once` ジョブを定期起動する構成が必要。HTTP応答後の実行継続には依存しない。
 
+## Docker開発環境（#122）
+
+`make up` は `backend-worker` containerを業務Firestore Emulatorと同じ `data` profileで起動する。
+HTTP用 `backend-server` と同じimageだが別container・別processで、hostへportを公開しない。
+`restart: unless-stopped` を設定しているため、異常終了やDocker再起動後も自動で再開する。
+
+渡す設定は役割に必要な最小限に限る。`OUTBOX_TENANT_IDS`（既定 `after-flow-demo`）、
+`OUTBOX_INTERVAL_MS`、`OUTBOX_VISIBILITY_MS`、業務Firestore、Backend→AIの `AI_SERVER_URL` /
+`AI_SERVICE_TOKEN` / `AI_SERVICE_AUDIENCE` / `AI_SERVICE_TIMEOUT_MS`、Run capability用の
+`BACKEND_EXECUTION_SIGNING_KEY` / `BACKEND_SERVICE_AUDIENCE`。原本Storage、AI→Backendの
+`BACKEND_INTERNAL_SERVICE_TOKEN`、`READINESS_ACCESS_TOKEN`、OrcaRouterキー、AI Runtime設定は渡さない。
+参加するnetworkは `data`（業務Firestore）と `services`（AI Server）だけで、`frontend`・`ai-runtime`・
+`ai-egress`・`emulator-host` には参加しない。`scripts/smoke-compose.mjs` と `make data-check` がこれを検査する。
+
+```sh
+make up                                              # workerも起動する
+make logs SERVICE=backend-worker                     # tickログを追う
+docker compose --profile data restart backend-worker # 再起動。PENDINGと期限切れIN_FLIGHTから再開する
+docker compose --profile data stop backend-worker    # 停止。Outboxは保存済みのまま残る
+docker compose --profile data start backend-worker
+make down                                            # 全停止
+```
+
+`.env` の `OUTBOX_TENANT_IDS` で担当tenantを変えられる。複数tenantはカンマ区切り。
+
+### 配送が有効になる条件
+
+workerが起動していても、Backend HTTPが `AI_CONNECTED_OPERATIONS` を受け付けなければAI向けOutboxは作られない。
+ローカルE2Eで有効にするのは `task_guidance` だけで、`.env` に `AI_CONNECTED_OPERATIONS=task_guidance` と
+`ORCAROUTER_API_KEY` を設定して `make up` し直す。既定は空のままにし、APIキーやworkerが無い環境で接続済みと表示しない。
+`case_planning`・`chat_reply`・`document_analysis` はこの段階では有効にしない。
+
+AI Serverが未起動、readiness 503、timeout、5xxの場合、workerはイベントを成功扱いせずRETRYABLEとして残す。
+外部AI同意が無いイベントはBLOCKEDとして残し、消さない。Job本文・Context・service token・署名鍵はログへ出さない。
+
+### 滞留の確認
+
+`make logs SERVICE=backend-worker` の `outbox worker tick` 行で `pending`、`failed`、`oldestAgeMs`、
+`retrying`、`blocked` を見る。15分超の滞留またはFAILEDがあれば `outbox backlog alert` が出る。
+tickが2周期以上出ない場合はcontainerの状態（`make ps`）とFirestore Emulatorの疎通（`make data-check`）を確認する。
+
 ## 配送・回復
 
 - 既定間隔5秒、可視性タイムアウト120秒、1tenantあたり1回20件。HTTP timeoutは可視性タイムアウト未満にする。

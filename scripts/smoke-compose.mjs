@@ -95,4 +95,50 @@ assert.ok(Object.values(aiRuntimeNetworks).every((network) =>
   Object.values(businessNetworks).every((business) => network.NetworkID !== business.NetworkID)),
   'AI runtime and business Firestore must not share a network')
 
-console.log('Web, backend proxy, internal AI connectivity, and AI network isolation verified.')
+// Backend Outbox worker (#122): a separate long-running process, never an HTTP after-effect.
+const workerId = docker('compose', '--profile', 'data', 'ps', '--quiet', 'backend-worker')
+assert.ok(workerId, 'backend-worker container must be running')
+const workerContainer = JSON.parse(docker('inspect', workerId))[0]
+assert.equal(workerContainer.State.Running, true, 'backend-worker must be running')
+assert.equal(workerContainer.HostConfig.RestartPolicy.Name, 'unless-stopped',
+  'backend-worker must restart after an unexpected process or Docker restart')
+assert.ok(Object.values(workerContainer.NetworkSettings.Ports ?? {}).every((bindings) => bindings === null || bindings.length === 0),
+  'backend-worker must not publish any host ports')
+assert.notEqual(workerId, docker('compose', 'ps', '--quiet', 'backend-server'), 'worker and HTTP server must be separate containers')
+
+// Only the business-data and Backend<->AI networks. Never frontend, AI runtime, AI egress or host-published emulator bridges.
+const workerNetworkNames = Object.keys(workerContainer.NetworkSettings.Networks)
+assert.ok(workerNetworkNames.length > 0 && workerNetworkNames.every((name) => /(?:^|_)(?:data|services)$/.test(name)),
+  `backend-worker joined unexpected networks: ${workerNetworkNames.join(', ')}`)
+assert.ok(workerNetworkNames.some((name) => name.endsWith('_data')) && workerNetworkNames.some((name) => name.endsWith('_services')),
+  'backend-worker needs business Firestore and AI Server connectivity')
+
+// Minimal role-based settings. Storage, AI->Backend, readiness and AI runtime settings stay out of this process.
+const workerEnv = Object.fromEntries(workerContainer.Config.Env.map((entry) => {
+  const index = entry.indexOf('=')
+  return [entry.slice(0, index), entry.slice(index + 1)]
+}))
+for (const key of ['OUTBOX_TENANT_IDS', 'FIRESTORE_PROJECT_ID', 'FIRESTORE_EMULATOR_HOST', 'AI_SERVER_URL', 'AI_SERVICE_TOKEN', 'BACKEND_EXECUTION_SIGNING_KEY']) {
+  assert.ok(workerEnv[key], `backend-worker is missing ${key}`)
+}
+const forbiddenWorkerEnv = Object.keys(workerEnv).filter((key) =>
+  /^(DOCUMENT_STORAGE_|STORAGE_|GOOGLE_APPLICATION_CREDENTIALS|BACKEND_INTERNAL_SERVICE_TOKEN|READINESS_ACCESS_TOKEN|ORCAROUTER_|AI_RUNTIME_|VITE_)/.test(key))
+assert.deepEqual(forbiddenWorkerEnv, [], `backend-worker received settings outside its role: ${forbiddenWorkerEnv.join(', ')}`)
+
+// The loop must log a body-free tick for the configured tenant, and never leak credentials.
+const workerSecrets = [workerEnv.AI_SERVICE_TOKEN, workerEnv.BACKEND_EXECUTION_SIGNING_KEY].filter(Boolean)
+let tick = null
+for (let attempt = 0; attempt < 30 && !tick; attempt += 1) {
+  const logs = docker('compose', '--profile', 'data', 'logs', '--no-color', '--no-log-prefix', 'backend-worker')
+  for (const secret of workerSecrets) assert.ok(!logs.includes(secret), 'backend-worker logs must not contain service credentials')
+  tick = logs.split('\n').map((line) => {
+    try { return JSON.parse(line) } catch { return null }
+  }).find((entry) => entry?.message === 'outbox worker tick')
+  if (!tick) await new Promise((resolve) => setTimeout(resolve, 2_000))
+}
+assert.ok(tick, 'backend-worker must log an outbox worker tick')
+assert.equal(tick.tenantId, workerEnv.OUTBOX_TENANT_IDS.split(',')[0].trim())
+for (const field of ['delivered', 'retrying', 'blocked', 'rejected', 'pending']) assert.equal(typeof tick[field], 'number', `tick.${field}`)
+for (const field of ['payload', 'body', 'context', 'events']) assert.equal(tick[field], undefined, `tick must not carry ${field}`)
+
+console.log('Web, backend proxy, internal AI connectivity, AI network isolation, and backend-worker process verified.')

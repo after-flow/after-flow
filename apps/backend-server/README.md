@@ -90,7 +90,7 @@ pnpm --filter @aftercare/backend-server worker
 pnpm --filter @aftercare/backend-server worker:once
 ```
 
-対象tenantは `OUTBOX_TENANT_IDS` で明示します。暗黙の全tenant走査は行いません。現時点では、通常の `make up` と本番デプロイにWorkerの常駐processはまだ組み込まれていません。
+対象tenantは `OUTBOX_TENANT_IDS` で明示します。暗黙の全tenant走査は行いません。`make up` は `backend-worker` container として常駐起動します（[Outbox Runbook](../../docs/runbooks/outbox-worker.md)）。本番デプロイへの組み込みはまだです。
 
 ## データとセキュリティの境界
 
