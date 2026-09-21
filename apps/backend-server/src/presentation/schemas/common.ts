@@ -18,6 +18,7 @@ export const isoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD の形式で指定してください')
   .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), '存在しない日付です')
+  .meta({ format: 'date', example: '2026-04-01' })
 
 export const isoDateTimeSchema = z.iso.datetime({ offset: true })
 
