@@ -76,7 +76,7 @@ test('worker executes a stored Mastra workflow once and exposes only verified sn
   const context = { caseVersion: 1, contextSnapshotId: 'context-one', fencingToken: 1, artifactVersion: 1,
     contentHash: contentHash(contextContent), content: contextContent, expiresAt: new Date(Date.now() + 60000).toISOString() }
   const client = { control: async () => ({ instruction: stopped ? 'STOP' as const : 'CONTINUE' as const, reason: null, caseVersion: 1 }),
-    result: async () => { throw new Error('Unexpected result in storage fixture') },
+    result: async () => { assert.equal(missingSnapshot, true); return { applied: true, reason: null } },
     propose: async () => { throw new Error('Unexpected proposal in storage fixture') },
     wait: async () => { throw new Error('Unexpected wait in storage fixture') },
     context: async () => context, heartbeat: async () => ({ accepted: true as const }), event: async () => ({ applied: true, reason: null }) }
@@ -118,5 +118,45 @@ test('worker executes a stored Mastra workflow once and exposes only verified sn
     await runtime.accept(dispatch3, 'dispatch'); await runtime.runOnce(abort.signal)
     assert.equal((await store.get(dispatch3.jobId))?.state, 'FAILED')
     assert.equal((await runtime.snapshot({ ...query, runId: dispatch3.runId, jobId: dispatch3.jobId, executionAttempt: dispatch3.executionAttempt })).state, 'MISSING')
+  } finally { await db.terminate() }
+})
+
+test('budget interruption persists progress and retries only result delivery after owner expiry', options, async () => {
+  const db = createRuntimeFirestore(); let now = Date.now()
+  const store = new FirestoreExecutions(db, limits, () => now)
+  const content = { operation: 'task_guidance', resume: null }
+  const context = { caseVersion: 1, contextSnapshotId: 'budget-context', fencingToken: 1, artifactVersion: 1,
+    contentHash: contentHash(content), content, expiresAt: new Date(now + 60000).toISOString() }
+  let executions = 0, reports = 0
+  const client = { control: async () => ({ instruction: 'CONTINUE' as const, reason: null, caseVersion: 1 }), context: async () => context,
+    heartbeat: async () => ({ accepted: true as const }), event: async () => ({ applied: true, reason: null }),
+    result: async (input: import('@aftercare/internal-contracts').InternalResult) => {
+      reports++; assert.equal(input.kind, 'execution_interrupted')
+      if (input.kind !== 'execution_interrupted') throw new Error('unexpected kind')
+      assert.equal(input.failureReason, 'BUDGET_EXCEEDED'); assert.deepEqual(input.output.completed, ['取得済みの資料を確認'])
+      if (reports === 1) throw new Error('synthetic transport failure')
+      return { applied: true, reason: null }
+    }, propose: async () => { throw new Error('not allowed') }, wait: async () => { throw new Error('not allowed') } }
+  const deps = { store, snapshots: new FirestoreWorkflowsStorage(db), vault: new DispatchVault(randomBytes(32).toString('base64')), client: () => client,
+    sectionTimeoutMs: 30000, handlers: { task_guidance: { workflowName: 'interrupted-fixture', execute: async (session: import('../../src/infrastructure/execution/runtime.js').ExecutionSession): Promise<'COMPLETED'> => {
+      executions++
+      await session.checkpoint(1, { summary: '', completed: ['取得済みの資料を確認'], questions: ['追加情報'], remaining: ['案内文の生成'] })
+      try { await session.guard({ tools: 1000 }) } catch { throw new Error('Workflow wrapped the budget error') }
+      throw new Error('must not reach')
+    } } } }
+  try {
+    const seconds = Math.floor(now / 1000)
+    const dispatch: RunDispatch = { runId: randomUUID(), jobId: randomUUID(), executionAttempt: randomUUID(), operation: 'task_guidance', issuedAt: seconds, expiresAt: seconds + 60, executionAuthorization: 'fixture' }
+    const runtime = new DurableExecutionRuntime(deps), signal = new AbortController().signal
+    await runtime.accept(dispatch, 'dispatch'); await runtime.runOnce(signal)
+    const saved = (await store.get(dispatch.jobId))!
+    assert.equal(saved.state, 'REPORTING'); assert.ok(saved.pendingResult); assert.equal(executions, 1)
+    assert.equal(await runtime.runOnce(signal), false)
+    now += 10001
+    // Reclaimed by a new runtime, with exact result ID/body and without model/tool replay.
+    await new DurableExecutionRuntime(deps).runOnce(signal)
+    assert.equal(executions, 1); assert.equal(reports, 2)
+    assert.equal((await store.get(dispatch.jobId))!.state, 'FAILED')
+    assert.equal((await store.get(dispatch.jobId))!.encryptedDispatch, 'erased')
   } finally { await db.terminate() }
 })

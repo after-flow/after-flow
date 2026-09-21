@@ -1,6 +1,7 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { contentHash, buildPlanningContext } from '../../../orchestration/context/builder.js'
+import type { RunSummary } from '@aftercare/internal-contracts'
 import { contextProofSchema, internalId } from '@aftercare/internal-contracts'
 import { createCasePlanningWorkflow, planningOutputSchema } from './case-planning.js'
 import { proposalActions, proposalInputSchema, proposalSubmittedSchema } from './proposal.js'
@@ -11,6 +12,7 @@ export const PLANNING_EXECUTION = 'planning-execution-v1'
 /** The proposal workflow is flattened into this root, so its durable wait belongs to the Worker receipt. */
 export function createPlanningExecutionWorkflow(deps: Parameters<typeof createCasePlanningWorkflow>[0] & ProposalWorkflowDependencies & {
   backend: ProposalWorkflowDependencies['backend'] & Pick<BackendClient, 'result'>
+  checkpoint?: (caseVersion: number, output: RunSummary) => Promise<void>
 }) {
   const planning = createCasePlanningWorkflow(deps)
   const approval = proposalActions(deps)
@@ -21,6 +23,8 @@ export function createPlanningExecutionWorkflow(deps: Parameters<typeof createCa
   const verifiedSchema = selectedSchema.extend({ outcome: z.enum(['APPLIED', 'REJECTED', 'CHANGED', 'NOT_APPLIED', 'NO_PROPOSAL']) })
   const select = createStep({ id: 'select-current-proposal', inputSchema: planningOutputSchema, outputSchema: selectedSchema,
     execute: async ({ inputData }) => {
+      await deps.checkpoint?.(inputData.context.caseVersion, { summary: '計画候補を作成しました。', completed: [],
+        questions: inputData.questions, remaining: inputData.proposals.map(item => item.draft.title) })
       await deps.guard()
       const first = inputData.proposals[0]
       return { plan: inputData, proposal: first ? { actionId: first.actionId, draft: first.draft, context: inputData.context } : null }
