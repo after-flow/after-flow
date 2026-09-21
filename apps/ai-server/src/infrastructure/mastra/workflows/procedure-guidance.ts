@@ -3,10 +3,10 @@ import { createStep, createWorkflow } from '@mastra/core/workflows'
 import type { ModelWithRetries } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
-import { artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
+import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
-import { guidanceDraftSchema, guidanceResult } from '../../../orchestration/playbooks/guidance-output.js'
+import { guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { finalizeResearchSynthesis, researchEvidenceSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { createGuidanceAgents } from '../agents/guidance-agents.js'
@@ -99,11 +99,12 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const research = researchEvidenceSchema.parse({ briefs: [selection.brief], outcomes: [{ briefId: selection.brief.briefId, findings }] })
       const response = await coreAgent.generate(JSON.stringify({
         goal: `対象手続きの案内を次の区分で作成してください。
-- where: 提出先を1件。根拠のsourceIdを付ける。
-- bring: 主な必要書類と条件付き追加書類を、書類ごとの配列にする。stepsへまとめず、必ず1件以上を入れる。
-- steps: 申請手順、申請期限、注意点を項目ごとの配列にする。
-- missing: 公式資料で確認できない事項だけを入れる。
-where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcompleteにする。それ以外はpartialまたはneeds_inputにする。`,
+- where: 提出先を1件（${GUIDANCE_LIMITS.where}文字以内）。根拠のsourceIdを付ける。
+- bring: 主な必要書類と条件付き追加書類を、書類ごとの配列にする（各${GUIDANCE_LIMITS.bringItem}文字以内）。stepsへまとめず、必ず1件以上を入れる。
+- steps: 申請手順、申請期限、注意点を項目ごとの配列にする（各${GUIDANCE_LIMITS.stepItem}文字以内）。
+- missing: 公式資料で確認できない事項だけを入れる（各${GUIDANCE_LIMITS.missingItem}文字以内）。
+where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcompleteにする。それ以外はpartialまたはneeds_inputにする。
+これは制度の一般的な案内です。この案件に当てはまるかの確認はハーネスが別に行います。`,
         // allowlistの項目だけを送る。Case全体は鮮度・scope検証のためハーネスに残す（#166）。
         context: minimizedModelInput(context, 'task_guidance'),
         verifiedResearch: research,
@@ -126,7 +127,9 @@ where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcomp
       assertContextFresh(before, latest)
       if (inputData.sources.some(source => Date.now() - Date.parse(source.fetchedAt) > deps.maxSourceAgeMs)) throw new Error('Guidance sources expired before reporting')
       const target = contextTaskTitle(latest.modelInput.facts)
-      const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target })
+      // 適用条件は最新のContextで判定する。モデルの自己申告では確認済みにしない（#162）。
+      const unresolved = unresolvedApplicability(scope.applicabilityChecks ?? [], latest.modelInput.facts)
+      const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target, unresolved })
       await checkControl()
       const outcome = await deps.backend.result(result, { requestId: inputData.resultId, signal: deps.signal })
       return { resultId: inputData.resultId, ...outcome }

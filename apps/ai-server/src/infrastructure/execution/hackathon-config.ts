@@ -69,6 +69,13 @@ export function readHackathonComposition(
       { id: 'documents', text: '主な必要書類と条件による追加書類を確認してください。' },
       { id: 'deadline', text: '申請期限と起算日を確認してください。' },
     ],
+    // 協会けんぽの公式ページ（reviewReference）から作成した、案件への適用で確かめる事項。
+    // Backendにこれらを確認済みとして記録する項目がまだ無いため、現在は常に未確認として残る。
+    applicabilityChecks: [
+      { id: 'enrollment', question: '亡くなった方が協会けんぽに加入していたか、加入していた支部はどこかを確認してください。' },
+      { id: 'deceased-status', question: '亡くなった方が被保険者本人か被扶養者かを確認してください（被扶養者の場合は家族埋葬料）。' },
+      { id: 'applicant', question: '申請する方が亡くなった方に生計を維持されていたか（埋葬料）、実際に埋葬を行った方か（埋葬費）を確認してください。' },
+    ],
   }
   return {
     serviceToken: input.AI_SERVICE_TOKEN,
