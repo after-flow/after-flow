@@ -48,13 +48,14 @@ import { createPublicV1Routes } from './presentation/routes/public/v1/index.js'
  */
 export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv> {
   const database = createDatabase(env)
+  const apiDocs = apiDocsEnabled(env)
 
   if (!database) {
     logger.warn('business database is not configured', {
       effect: 'business APIs reject every request with FEATURE_NOT_CONNECTED',
       required: ['FIRESTORE_PROJECT_ID'],
     })
-    return createApp({ routes: createPublicV1Routes(null) })
+    return createApp({ routes: createPublicV1Routes(null), apiDocs })
   }
 
   const access = new AccessService(database.read)
@@ -145,15 +146,25 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       effect: 'routes that require a user reject every request with 401',
       required: ['AUTH_ISSUER', 'AUTH_AUDIENCE', 'AUTH_JWKS_URI'],
     })
-    return createApp({ routes, consentGate, ...(internalApp ? { internalApp } : {}) })
+    return createApp({ routes, consentGate, apiDocs, ...(internalApp ? { internalApp } : {}) })
   }
 
   return createApp({
     routes,
     consentGate,
+    apiDocs,
     ...(internalApp ? { internalApp } : {}),
     authentication: authentication(createTokenVerifier(readAuthConfig(env)), access),
   })
+}
+
+/** 本番では明示指定が無い限りAPIテスト画面を公開しない。 */
+export function apiDocsEnabled(env: NodeJS.ProcessEnv): boolean {
+  const configured = env.API_DOCS_ENABLED?.trim().toLowerCase()
+  if (!configured) return env.NODE_ENV !== 'production'
+  if (configured === 'true') return true
+  if (configured === 'false') return false
+  throw new Error('API_DOCS_ENABLED must be true or false')
 }
 
 /**

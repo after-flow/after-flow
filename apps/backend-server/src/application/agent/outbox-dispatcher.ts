@@ -34,7 +34,7 @@ export interface DispatchResult {
  * 個人データを含まず、処理を止めるために届ける必要があるもの。
  * 同意の撤回そのものを同意不足で止めると、AI 側は撤回を知れない。
  */
-const CONTROL_EVENT_TYPES = new Set(['consent.revoked'])
+const CONTROL_EVENT_TYPES = new Set(['consent.revoked', 'agent.cancel'])
 
 /** 再試行の間隔。回数に応じて伸ばし、上限で頭打ちにする。 */
 export function backoffMs(attempt: number): number {

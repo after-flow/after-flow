@@ -22,6 +22,8 @@ export interface CaseEntity extends EntityBase {
   relationshipToDeceased: string
   /** 手続き先の市区町村。番地は保持しない。 */
   municipality: string | null
+  /** Human-controlled pause of AI planning; absent only on legacy records. */
+  aiPlanningRestriction?: { reason: string } | null
   status: CaseStatus
   /**
    * Case 全体の版。

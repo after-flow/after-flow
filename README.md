@@ -20,29 +20,50 @@ make up
 
 - Web: **http://127.0.0.1:5173**（モックのログインは任意のメールアドレス・パスワード）
 - Backend生存確認: http://127.0.0.1:8080/api/v1/health
+- 公開APIテスト（Swagger UI）: **http://127.0.0.1:8080/api-docs**
 - AI生存確認: コンテナ内 `http://ai-server:8081/internal/v1/health`。ホストへのポート公開はありません。
 
 `localhost` がIPv6上の別プロセスを指す場合もあるため、上記の `127.0.0.1` を使用してください。
 WebとBackendはループバックアドレスにのみ公開します。WebとAIはDockerネットワークも分けています。
 
 ```sh
-make ps                 # 3サービスの状態
+make ps                 # 全5サービスの状態
 make logs               # ログ（Ctrl+Cで表示だけ終了）
 make logs SERVICE=web   # Webのみ
 make check              # Docker内で型・Lint・テスト・OpenAPI・本番ビルドを検証
 make down               # このプロジェクトを停止
 ```
 
+`make up`はアプリ3サービスに加えて、FirestoreとCloud Storageもdata profileで起動します。
+
+```sh
+make data-check          # 両Emulatorの読み書きとAIからの分離を再確認
+```
+
+- Firestore Emulator: `127.0.0.1:8085`（project: `after-flow-local`）
+- Cloud Storage Emulator: **http://127.0.0.1:4443**（bucket: `after-flow-documents`）
+
+`make up`はBackendにだけEmulator設定を渡します。AI Serverはデータ用Dockerネットワークに参加せず、Firestore・原本Storageの環境変数も受け取りません。Emulatorのデータは開発用の一時データで、`make down`後の保持は保証しません。従来の`make up-data`も互換エイリアスとして同じ構成を起動します。
+
 既存プロセスとポートが重複する場合は、次のように変更できます。
 
 ```sh
 WEB_PORT=5174 BACKEND_PORT=8082 make up
+FIRESTORE_EMULATOR_PORT=8086 STORAGE_EMULATOR_PORT=4444 make up
 ```
 
 `.env` の作成は任意です。必要ならルートの `.env.example` を `.env` にコピーして編集してください。
 環境変数の変更後は `make up` を実行してください。Web、Backend、AIのソースはマウントされ、編集時に自動再読込されます。
 依存パッケージ、TypeScript設定、その他のイメージ内ファイルを変更した場合も `make up` で再ビルドします。
 `compose.yaml` はローカル開発用です。本番用の独立イメージ・Compose検証・Cloud Runへの配布手順は [CI/CD運用](docs/ci-cd.md) を参照してください。
+
+### ブラウザから公開APIを試す
+
+Backend起動後に http://127.0.0.1:8080/api-docs を開くと、生成済みの公開OpenAPIと同じroute定義を使うSwagger UIが表示されます。操作を開いて **Try it out** → **Execute** で、同じBackendへ要求を送れます。UI資産はローカル配信され、内部APIは表示されません。
+
+認証が必要な操作は画面右上の **Authorize** にBearer tokenを入力してください。認証Providerが未設定の環境では、保護されたAPIは設計どおり401になります。Firestoreと原本Storageを使う業務APIの検証には`make up`と、有効なtenant membershipを持つ認証設定が別途必要です。生存確認は認証なしで試せます。
+
+開発時はAPIドキュメントが既定で有効です。無効化する場合は `API_DOCS_ENABLED=false` を設定します。本番（`NODE_ENV=production`）では既定で無効です。`API_DOCS_ENABLED=true` を明示した場合でも、表示対象は公開APIだけです。
 
 ## ローカルで起動
 
@@ -234,6 +255,14 @@ Docker起動後、同じ疎通チェックをローカルでも実行できま�
 ```sh
 make up
 node scripts/smoke-compose.mjs
+make down
+```
+
+データ用Emulatorを含む確認:
+
+```sh
+make up
+make data-check
 make down
 ```
 

@@ -11,6 +11,7 @@ import {
   caseResourceSchema,
   createCaseBodySchema,
   updateCaseBodySchema,
+  updatePlanningRestrictionBodySchema,
 } from '../../../schemas/case.js'
 import { listQuerySchema, successEnvelope } from '../../../schemas/common.js'
 
@@ -61,6 +62,16 @@ export const caseSpecs = {
     request: { params: caseIdParamsSchema },
     success: { status: 200, description: '案件', schema: caseEnvelope },
     failures: ['VALIDATION_FAILED', 'UNAUTHENTICATED', 'NOT_FOUND'],
+  },
+  setPlanningRestriction: {
+    operationId: 'setPlanningRestriction', method: 'patch', path: '/cases/:caseId/ai-planning-restriction',
+    summary: 'AIによる手続き提案を停止・解除する',
+    description: 'OWNERのみ。理由付きのrestrictionで案件全体のAI提案を停止し、nullで解除する。案件版が進み、既存の計画・承認は再評価が必要になる。個別手続きの禁止や本人意思の確定ではない。',
+    tags: ['cases'], auth: 'user',
+    request: { params: caseIdParamsSchema, body: updatePlanningRestrictionBodySchema },
+    success: { status: 200, description: '更新後の案件', schema: caseEnvelope },
+    failures: ['VALIDATION_FAILED', 'UNAUTHENTICATED', 'FORBIDDEN', 'NOT_FOUND', 'CONFLICT', 'PRECONDITION_REQUIRED', 'PRECONDITION_FAILED', 'IDEMPOTENCY_KEY_REUSED'],
+    expectedVersion: 'required', idempotency: 'required',
   },
   updateCase: {
     operationId: 'updateCase',
@@ -118,6 +129,11 @@ export function createCaseRoutes(service: CaseService): RegisteredRoute[] {
 
     defineRoute(caseSpecs.getCase, async (c, input) =>
       ok(c, await service.get(requireUser(c), input.params.caseId)),
+    ),
+
+    defineRoute(caseSpecs.setPlanningRestriction, async (c, input) =>
+      ok(c, await service.setPlanningRestriction(requireUser(c), input.params.caseId,
+        input.body.expectedVersion, input.body.restriction, commandMeta(c, input.idempotencyKey, input.body))),
     ),
 
     defineRoute(caseSpecs.updateCase, async (c, input) => {

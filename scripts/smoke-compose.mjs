@@ -54,8 +54,11 @@ const webId = docker('compose', 'ps', '--quiet', 'web')
 assert.ok(webId, 'Web container must be running')
 const webNetworks = JSON.parse(docker('inspect', '--format', '{{json .NetworkSettings.Networks}}', webId))
 const aiNetworkIds = Object.values(aiNetwork.Networks).map((network) => network.NetworkID)
+const aiNetworkNames = Object.keys(aiNetwork.Networks)
 const webNetworkIds = Object.values(webNetworks).map((network) => network.NetworkID)
 assert.ok(aiNetworkIds.length > 0 && webNetworkIds.length > 0, 'Both services must be networked')
 assert.ok(webNetworkIds.every((id) => !aiNetworkIds.includes(id)), 'Web and AI must not share a network')
+assert.ok(aiNetworkNames.every((name) => !/(?:^|_)(?:data|emulator-host)$/.test(name)),
+  'AI must not join either local business-data network')
 
 console.log('Web, backend proxy, internal AI connectivity, and AI network isolation verified.')

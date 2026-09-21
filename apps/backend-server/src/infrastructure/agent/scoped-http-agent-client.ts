@@ -1,4 +1,4 @@
-import { dispatchAckSchema, dispatchSchema, INTERNAL_LIMITS, internalId, snapshotStatusSchema } from '@aftercare/internal-contracts'
+import { dispatchAckSchema, dispatchSchema, cancelExecutionSchema, cancelExecutionAckSchema, INTERNAL_LIMITS, internalId, snapshotStatusSchema } from '@aftercare/internal-contracts'
 import type { ExecutionSnapshots } from '../../application/ports/execution-snapshots.js'
 import type { InternalExecutionService } from '../../application/agent/internal-execution-service.js'
 import type { AgentDeliveryOutcome, AgentJob, AgentJobClient } from '../../application/ports/agent-client.js'
@@ -19,6 +19,7 @@ export class ScopedHttpAgentJobClient implements AgentJobClient, ExecutionSnapsh
       return { status: 'RETRYABLE', reason: 'CONTROL_DELIVERY_NOT_CONNECTED' }
     }
     try {
+      if (job.type === 'agent.cancel') return await this.cancel(job)
       if (await this.service.deliverySettled(job.tenantId, job.caseId, job.payload.runId as string, job.eventId)) return { status: 'ACCEPTED' }
       const claims = await this.service.dispatchClaims(job.tenantId, job.caseId, job.payload.runId as string, job.eventId)
       const issuedAt = Math.floor(Date.now() / 1000)
@@ -45,6 +46,25 @@ export class ScopedHttpAgentJobClient implements AgentJobClient, ExecutionSnapsh
       if (cause instanceof AppError) return { status: 'RETRYABLE', reason: cause.code }
       return { status: 'RETRYABLE', reason: 'INTERNAL_TRANSPORT_ERROR' }
     }
+  }
+
+  private async cancel(job: AgentJob): Promise<AgentDeliveryOutcome> {
+    const identity = await this.service.cancellation(job.tenantId, job.caseId!, job.payload.runId as string, job.eventId)
+    const issuedAt = Math.floor(Date.now() / 1000)
+    const body = cancelExecutionSchema.parse({ ...identity, issuedAt, expiresAt: issuedAt + INTERNAL_LIMITS.requestSeconds })
+    const response = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}/internal/v1/runs/${identity.runId}/cancel`, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(this.config.timeoutMs),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.config.serviceToken}`,
+        'X-Audience': this.config.audience, 'X-Request-Id': job.eventId, 'Idempotency-Key': job.eventId }, body: JSON.stringify(body),
+    })
+    if (response.status === 200) {
+      const ack = cancelExecutionAckSchema.safeParse(await readAck(response))
+      if (ack.success && ack.data.cancelId === identity.cancelId && ack.data.runId === identity.runId &&
+        ack.data.jobId === identity.jobId && ack.data.executionAttempt === identity.executionAttempt) return { status: 'ACCEPTED' }
+      return { status: 'RETRYABLE', reason: 'INVALID_CANCEL_ACK' }
+    }
+    await response.body?.cancel()
+    return response.status === 429 || response.status >= 500 ? { status: 'RETRYABLE', reason: `status ${response.status}` } : { status: 'REJECTED', reason: `status ${response.status}` }
   }
 
   async status(input: Parameters<ExecutionSnapshots['status']>[0]) {

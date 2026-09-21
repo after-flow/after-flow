@@ -298,6 +298,7 @@ aftercare/
 | POST / GET | `C/tasks/:taskId/evidence` | 証拠登録/取得 | 必須 |
 | GET | `C/deadlines` | 根拠と確認状態を含む期限一覧 | 必須 |
 | POST | `C/deadlines/:deadlineId/extensions` | 延長の根拠と履歴登録 | 後 |
+| PATCH | `C/ai-planning-restriction` | OWNERによる案件全体のAI提案停止・解除。expectedVersionとIdempotency-Key必須 | 必須 |
 | GET / POST | `C/decisions` | 本人意思の一覧/下書き作成 | 必須 |
 | POST | `C/decisions/:decisionId/confirm` | 権限を持つ本人による意思確定 | 必須 |
 | GET | `C/proposals`, `C/proposals/:proposalId` | AI変更案と根拠 | 必須 |
@@ -863,3 +864,15 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 - [Firebase — Usage and Limits](https://firebase.google.com/docs/firestore/quotas): 文書サイズ等の制約。
 
 この文書のAPI名、フォルダー名、業務状態、上限値、MVP範囲は本プロダクトへの設計提案である。一次資料に記載された製品機能と、自アプリで実装する責務を区別して扱う。
+
+
+### AI手続き計画の一時停止
+
+`PATCH /api/v1/cases/:caseId/ai-planning-restriction` は、OWNERが
+`{ expectedVersion, restriction: { reason } }` で案件全体のAI提案を停止し、
+`restriction: null` で解除する。Case詳細の `aiPlanningRestriction` で現在値を返す。
+これは個別手続きの法的な禁止や本人Decisionの代行ではなく、案件のAI提案を止める操作である。
+保存・解除・理由の変更でCaseの版を進め、古いContext・未反映のAI提案を再利用させない。
+Backendは最新ContextのAI提出にも制限を適用し、人によるTask作成は従来の権限で継続できる。
+理由の本文を監査ログへ複製せず、制限の有無と変更した利用者を監査する。
+UIの操作導線と個別手続き単位の制限は今後の対応とする。
