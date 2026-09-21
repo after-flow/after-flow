@@ -69,6 +69,10 @@ export function readHackathonComposition(
       { id: 'documents', text: '主な必要書類と条件による追加書類を確認してください。' },
       { id: 'deadline', text: '申請期限と起算日を確認してください。' },
     ],
+    caseApplicabilityQuestions: [
+      '亡くなった方が加入していた健康保険を確認してください。',
+      '申請者と亡くなった方の関係、および実際に埋葬費用を負担した方を確認してください。',
+    ],
   }
   return {
     serviceToken: input.AI_SERVICE_TOKEN,

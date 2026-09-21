@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { RequestContext } from '@mastra/core/request-context'
 import { noopObserve } from '@mastra/core/tools'
+import { internalResultSchema, TASK_GUIDANCE_LIMITS } from '@aftercare/internal-contracts'
 import type { InternalResult } from '@aftercare/internal-contracts'
 import { buildCoreContext, contentHash, minimizedModelInput, modelInputAllowlist } from '../src/orchestration/context/builder.js'
 import { createResearchTools } from '../src/infrastructure/mastra/tools/research.js'
@@ -9,6 +10,7 @@ import { createProcedureGuidanceWorkflow } from '../src/infrastructure/mastra/wo
 import type { ProcedureGuidanceDependencies } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
 import { scriptedModel } from './helpers/scripted-model.js'
 import { assertCompleteResearch, researchEvidenceSchema } from '../src/orchestration/research/contracts.js'
+import { guidanceDraftSchema } from '../src/orchestration/playbooks/guidance-output.js'
 
 const candidate = { id: 'source-1', catalogId: 'catalog-1', title: '架空機関の資料', issuer: '架空機関', url: 'https://official.example/procedure' }
 const scope = { id: 'brief-1', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き',
@@ -21,10 +23,8 @@ const draft = { status: 'complete', where: claim('架空機関の窓口'), bring
 const synthesizedFindings = { status: 'complete', answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する', sourceIds: ['source-1'] }], missing: [], conflicts: [] }
 const findings = { ...synthesizedFindings, answers: synthesizedFindings.answers.map(answer => ({ ...answer, applicability: '架空市の架空機関が扱う架空手続き' })) }
 
-function setup(researchFindings: unknown = synthesizedFindings) {
-  const core = scriptedModel([
-    { text: JSON.stringify(draft) },
-  ])
+function setup(researchFindings: unknown = synthesizedFindings, coreDrafts: readonly unknown[] = [draft]) {
+  const core = scriptedModel(coreDrafts.map(value => ({ text: JSON.stringify(value) })))
   const research = scriptedModel([
     { text: JSON.stringify(researchFindings) },
   ])
@@ -71,6 +71,60 @@ test('P-01 uses both real Mastra agents and tools, rechecks context, and reports
   assert.deepEqual(research.calls[0]!.toolChoice, { type: 'none' })
   assert.ok(!JSON.stringify(research.calls).includes('PRIVATE-NAME'))
   assert.ok(controls.includes('search') && controls.includes('read-source'))
+})
+
+test('#162 model draft and transport share task-guidance length limits', () => {
+  const atLimit = { ...draft, bring: [claim('書'.repeat(TASK_GUIDANCE_LIMITS.bringItemChars))] }
+  const overLimit = { ...draft, bring: [claim('書'.repeat(TASK_GUIDANCE_LIMITS.bringItemChars + 1))] }
+  assert.equal(guidanceDraftSchema.safeParse(atLimit).success, true)
+  assert.equal(guidanceDraftSchema.safeParse(overLimit).success, false)
+  assert.equal(internalResultSchema.safeParse({
+    caseVersion: 1, contextSnapshotId: 'snapshot-1', fencingToken: 1, artifactVersion: 1,
+    contentHash: 'a'.repeat(43), resultId: 'result-1', basis: [], kind: 'task_guidance', status: 'COMPLETED',
+    target: '架空手続き', where: '架空窓口', bring: atLimit.bring.map(item => item.text), steps: ['確認する'], missing: [], sources: [],
+  }).success, true)
+  assert.equal(internalResultSchema.safeParse({
+    caseVersion: 1, contextSnapshotId: 'snapshot-1', fencingToken: 1, artifactVersion: 1,
+    contentHash: 'a'.repeat(43), resultId: 'result-1', basis: [], kind: 'task_guidance', status: 'COMPLETED',
+    target: '架空手続き', where: '架空窓口', bring: overLimit.bring.map(item => item.text), steps: ['確認する'], missing: [], sources: [],
+  }).success, false)
+})
+
+test('#162 invalid Core output is regenerated once without repeating research', async () => {
+  const invalid = { ...draft, bring: [claim('長'.repeat(TASK_GUIDANCE_LIMITS.bringItemChars + 1))] }
+  const { deps, reported, core, research } = setup(synthesizedFindings, [invalid, draft])
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  const result = await run.start({ inputData: { resultId: 'result-1' } })
+  assert.equal(result.status, 'success', JSON.stringify(result))
+  assert.equal(core.calls.length, 2)
+  assert.equal(research.calls.length, 1)
+  assert.deepEqual(reported[0]?.kind === 'task_guidance' ? reported[0].bring : [], ['架空書類A'])
+  assert.match(JSON.stringify(core.calls[1]), /repair/)
+})
+
+test('#162 a second invalid Core output fails without silent truncation or reporting', async () => {
+  const longText = '長'.repeat(TASK_GUIDANCE_LIMITS.bringItemChars + 1)
+  const invalid = { ...draft, bring: [claim(longText)] }
+  const { deps, reported, core, research } = setup(synthesizedFindings, [invalid, invalid])
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
+  assert.equal(core.calls.length, 2)
+  assert.equal(research.calls.length, 1)
+  assert.equal(reported.length, 0)
+})
+
+test('#162 general research stays PARTIAL until Case applicability is confirmed', async () => {
+  const { deps, reported } = setup()
+  deps.scope = { ...scope, caseApplicabilityQuestions: [
+    '加入していた健康保険を確認してください。',
+    '申請者と亡くなった方の関係を確認してください。',
+  ] }
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
+  assert.equal(reported[0]?.kind, 'task_guidance')
+  if (reported[0]?.kind !== 'task_guidance') assert.fail()
+  assert.equal(reported[0].status, 'PARTIAL')
+  assert.deepEqual(reported[0].missing, deps.scope.caseApplicabilityQuestions)
 })
 
 test('no reviewed source returns a bounded partial result without invoking either model', async () => {
