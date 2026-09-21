@@ -52,6 +52,17 @@ export interface CoreContext {
   }
 }
 
+/** Shared output contract of deterministic case-assessment; also exposed as a Skill reference. */
+export const coreModelInputSchema = z.object({
+  facts: z.array(z.object({
+    group: z.enum(['case', 'task', 'tasks', 'message', 'persons', 'relationships', 'assets', 'liabilities', 'contracts', 'benefits', 'deadlines', 'decisions']),
+    entityId: internalId, entityVersion: z.number().int().positive(), field: z.string().min(1), value: z.unknown(),
+    state: z.enum(['confirmed', 'user_reported', 'extracted_candidate', 'unknown']),
+  }).strict()),
+  documents: z.array(z.object({ id: internalId, version: z.number().int().positive(), kind: z.string().max(100), contentAvailable: z.literal(false) }).strict()).max(100),
+  limitations: z.array(z.string()), planningHistory: planningHistorySchema.optional(),
+}).strict()
+
 export class ContextError extends Error {
   constructor(readonly code: 'INVALID_CONTEXT' | 'EXPIRED_CONTEXT' | 'CONTEXT_TOO_LARGE' | 'CONTEXT_CHANGED' | 'PLANNING_HISTORY_UNAVAILABLE' | 'PLANNING_RESTRICTION_UNAVAILABLE') {
     super(code)
@@ -128,7 +139,7 @@ export function buildCoreContext(input: unknown, operation: CoreContext['operati
       ],
     }
     if (Buffer.byteLength(JSON.stringify(modelInput)) > maxBytes) throw new ContextError('CONTEXT_TOO_LARGE')
-    return { operation, proof: contextProofSchema.parse(artifact), expiresAt: artifact.expiresAt, modelInput,
+    return { operation, proof: contextProofSchema.parse(artifact), expiresAt: artifact.expiresAt, modelInput: coreModelInputSchema.parse(modelInput),
       ...(operation === 'case_planning' && content.planningRestriction !== undefined ? { planningRestriction: content.planningRestriction } : {}),
     }
   } catch (error) {
