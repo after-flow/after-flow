@@ -127,6 +127,36 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(run.body.data.status, 'SUCCEEDED')
   })
 
+  it('planning results expose questions; user answers replan the same Run without confirming facts', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const output = { summary: '確認が必要です', completed: [], questions: ['対象の地域はどこですか', '資料はありますか'], remaining: ['地域の確認'] }
+    const result = { ...proof(context), resultId: 'questions-result', kind: 'case_planning', status: 'NEEDS_ATTENTION', output }
+    assert.equal((await h.request(exec, 'result', result)).status, 200)
+    const path = `/cases/${h.caseId}/agent-runs/${exec.run.id}`
+    const saved = (await call(h.app, path)).body.data
+    assert.deepEqual(saved.outcome.questions, output.questions)
+    const answer = { expectedVersion: saved.version, resultId: result.resultId, answers: [{ questionIndex: 0, answer: 'PRIVATE-USER-ANSWER' }] }
+    assert.equal((await call(h.app, `${path}/answers`, jsonRequest('POST', { ...answer, resultId: 'another-result' }))).status, 409)
+    assert.equal((await call(h.app, `${path}/answers`, jsonRequest('POST', { ...answer, answers: [{ questionIndex: 19, answer: 'invalid' }] }))).status, 400)
+    const request = jsonRequest('POST', answer)
+    const replied = await call(h.app, `${path}/answers`, request)
+    assert.equal(replied.status, 202, JSON.stringify(replied.body))
+    assert.equal(replied.body.data.attempt, 2)
+    assert.equal((await call(h.app, `${path}/answers`, request)).body.data.attempt, 2)
+    assert.equal((await h.request(exec, 'result', result)).status, 409)
+    const next = (await readRepository().get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: exec.run.id }))!
+    const claims = await h.service.dispatchClaims(h.tenantId, h.caseId, next.id, next.currentJobId!)
+    const refreshed = await h.request({ claims, dispatch: { executionAuthorization: await h.authorization.issue(claims) } }, 'context')
+    assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body))
+    assert.equal(refreshed.body.data.content.resume.kind, 'RETRY')
+    assert.equal(refreshed.body.data.content.resume.previousAttemptId, exec.run.currentAttemptId)
+    assert.deepEqual(refreshed.body.data.content.unresolvedQuestions, [output.questions[1]])
+    assert.equal(refreshed.body.data.content.clarificationHistory[0].state, 'user_reported')
+    assert.equal(refreshed.body.data.content.case.municipality, null)
+    assert.deepEqual(refreshed.body.data.content.decisions, [])
+    assert.equal((await call(h.app, `/cases/${h.caseId}/messages`)).body.data.length, 1)
+  })
+
   it('wrong audience・期限切れ・未来の要求・異なるjob/attempt・不足scopeを拒否する', async t => {
     const h = await setup(t), exec = await h.accept()
     const wrongAudience = await new SignedExecutionAuthorization(signingKey, 'wrong-audience').issue(exec.claims)

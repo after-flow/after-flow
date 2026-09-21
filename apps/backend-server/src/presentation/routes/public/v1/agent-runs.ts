@@ -8,6 +8,7 @@ import type { RegisteredRoute, RouteSpec } from '../../../http/route.js'
 import { defineRoute } from '../../../http/route.js'
 import {
   acceptAgentRunBodySchema,
+  answerPlanningQuestionsSchema,
   agentRunActionBodySchema,
   agentRunIdParamsSchema,
   agentRunResourceSchema,
@@ -90,6 +91,14 @@ export const agentRunSpecs = {
     expectedVersion: 'required',
     idempotency: 'required',
   },
+  answerPlanningQuestions: {
+    operationId: 'answerPlanningQuestions', method: 'post', path: '/cases/:caseId/agent-runs/:runId/answers',
+    summary: '計画の確認質問へ回答して再計画する', description: '回答は申告として保存し、本人Decisionや正式事実を確定しない。同じRunの新attemptで再計画し、共有予算を引き継ぐ。',
+    tags: ['agent-runs'], auth: 'user', request: { params: agentRunIdParamsSchema, body: answerPlanningQuestionsSchema },
+    success: { status: 202, description: '再計画の受付', schema: runEnvelope },
+    failures: ['VALIDATION_FAILED', 'UNAUTHENTICATED', 'FORBIDDEN', 'NOT_FOUND', 'CONFLICT', 'CONSENT_REQUIRED', 'PRECONDITION_REQUIRED', 'PRECONDITION_FAILED', 'IDEMPOTENCY_KEY_REUSED'],
+    expectedVersion: 'required', idempotency: 'required',
+  },
   retryAgentRun: {
     operationId: 'retryAgentRun',
     method: 'post',
@@ -160,6 +169,10 @@ export function createAgentRunRoutes(service: AgentRunService): RegisteredRoute[
         ),
       ),
     ),
+
+    defineRoute(agentRunSpecs.answerPlanningQuestions, async (c, input) => accepted(c,
+      await service.answerQuestions(requireUser(c), input.params.caseId, input.params.runId, input.body,
+        commandMeta(c, input.idempotencyKey, input.body)))),
 
     defineRoute(agentRunSpecs.retryAgentRun, async (c, input) =>
       accepted(

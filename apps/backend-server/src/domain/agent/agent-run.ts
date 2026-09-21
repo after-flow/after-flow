@@ -1,3 +1,4 @@
+import type { AgentRunOutcomeResource } from '@aftercare/public-contracts'
 import type { EntityBase } from '../shared/entity.js'
 
 /**
@@ -36,6 +37,8 @@ export type AgentOperation =
   | 'chat_reply'
 
 export interface AgentRunEntity extends EntityBase {
+  outcome?: AgentRunOutcomeResource | null
+  clarificationHistory?: { resultId: string; questionIndex: number; question: string; answer: string; caseVersion: number; state: 'user_reported' }[]
   operation: AgentOperation
   status: AgentRunStatus
   /** 実行の対象。保存済みの Run から scope を導出し、要求本文を信用しない。 */

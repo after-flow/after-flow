@@ -1,4 +1,4 @@
-import { planningHistorySchema, planningRestrictionSchema } from '@aftercare/internal-contracts'
+import { planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema } from '@aftercare/internal-contracts'
 import type { ProposalVersionEntity } from '../../domain/proposal/proposal-version.js'
 import type { ApprovalEntity } from '../../domain/proposal/approval.js'
 import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent, WaitRequestInput } from '@aftercare/internal-contracts'
@@ -189,6 +189,9 @@ export class InternalExecutionService {
             status: a.status, applicationStatus: a.applicationStatus, decisionNote: a.decisionNote, applicationFailureReason: a.applicationFailureReason })),
         })
         if (!planningHistory.success) throw errors.preconditionFailed({ details: { reason: 'PLANNING_HISTORY_UNAVAILABLE' } })
+        content.clarificationHistory = clarificationHistorySchema.parse(run.clarificationHistory ?? [])
+        content.unresolvedQuestions = (run.outcome?.questions ?? []).filter((_question, index) =>
+          !(run.clarificationHistory ?? []).some(answer => answer.resultId === run.outcome?.resultId && answer.questionIndex === index))
         content.planningHistory = planningHistory.data
         content.planningRestriction = planningRestrictionSchema.parse(entity.aiPlanningRestriction ?? null)
       }
@@ -329,7 +332,8 @@ export class InternalExecutionService {
       const envelope = { runId: run.id, attemptId: run.currentAttemptId }
       if (input.kind === 'task_guidance') return this.intake.applyGuidanceResult(tx, call.claims.caseId, { ...input, ...envelope })
       if (input.kind === 'chat_reply') return this.intake.applyChatReply(tx, call.claims.caseId, { ...input, ...envelope })
-      tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString() })
+      tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString(),
+        outcome: input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
       tx.audit({ caseId: call.claims.caseId, type: 'agent_run.result',
         target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { resultId: input.resultId, status: input.status } })
       return { applied: true, reason: null }

@@ -52,7 +52,12 @@ export function createPlanningExecutionWorkflow(deps: Parameters<typeof createCa
       const restricted = buildPlanningContext(latest).planningRestriction !== null
       const status = !restricted && inputData.outcome === 'APPLIED' && currentReview(inputData.plan) && !remaining && !inputData.plan.questions.length ? 'SUCCEEDED' as const : 'NEEDS_ATTENTION' as const
       const proof = contextProofSchema.parse(latest)
-      const response = await deps.backend.result({ ...proof, resultId, kind: 'case_planning', status, basis: [] }, { requestId: resultId, signal: deps.signal })
+      const response = await deps.backend.result({ ...proof, resultId, kind: 'case_planning', status, output: {
+        summary: status === 'SUCCEEDED' ? '承認された手続きの反映を確認しました。' : '計画には追加の確認が必要です。',
+        completed: inputData.outcome === 'APPLIED' && inputData.proposal ? [`${inputData.proposal.draft.title}の正式反映を確認`] : [],
+        questions: inputData.plan.questions,
+        remaining: inputData.plan.proposals.slice(inputData.proposal ? 1 : 0).map(item => item.draft.title),
+      }, basis: [] }, { requestId: resultId, signal: deps.signal })
       return { ...response, status, remaining }
     } })
   return createWorkflow({ id: PLANNING_EXECUTION, inputSchema, outputSchema: report.outputSchema })
