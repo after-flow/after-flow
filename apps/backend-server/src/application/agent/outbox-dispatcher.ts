@@ -120,6 +120,7 @@ export class OutboxDispatcher {
         } else if (outcome.status === 'RETRYABLE') {
           await this.retryOrGiveUp(document.ref.path, claimed, outcome.reason, result)
         } else {
+          await this.giveUp.onGiveUp?.(claimed, outcome.reason)
           if (await this.settle(document.ref.path, claimed, { status: 'FAILED', lastError: outcome.reason })) result.rejected.push(claimed.id)
         }
       } catch {

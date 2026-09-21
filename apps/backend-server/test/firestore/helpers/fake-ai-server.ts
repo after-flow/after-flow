@@ -21,7 +21,7 @@ export interface FakeAiServer {
   dispatches: RunDispatch[]
   snapshots: Map<string, ExecutionSnapshotStatus>
   /** 次の応答を指定する。未指定なら 202。 */
-  respondWith(status: number): void
+  respondWith(status: number, body?: unknown): void
   /** 応答を返さずに接続を切る。送信したか分からない状態を作る。 */
   dropNext(): void
   /** 受理後の応答を保留し、送信後・記録前の停止を再現する。 */
@@ -37,6 +37,7 @@ export async function startFakeAiServer(
   const dispatches: RunDispatch[] = []
   const snapshots = new Map<string, ExecutionSnapshotStatus>()
   let nextStatus: number | null = null
+  let nextBody: unknown = undefined
   let dropNextRequest = false
   let held: { signal(id: string): void; wait: Promise<void>; status: number } | null = null
 
@@ -107,8 +108,14 @@ export async function startFakeAiServer(
 
       if (nextStatus !== null) {
         const status = nextStatus
+        const responseBody = nextBody
         nextStatus = null
-        response.writeHead(status).end()
+        nextBody = undefined
+        if (responseBody !== undefined) {
+          response.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(responseBody))
+        } else {
+          response.writeHead(status).end()
+        }
         return
       }
 
@@ -132,8 +139,9 @@ export async function startFakeAiServer(
     dispatches,
     snapshots,
     countOf: (eventId) => received.filter((entry) => entry.eventId === eventId).length,
-    respondWith: (status) => {
+    respondWith: (status, body) => {
       nextStatus = status
+      nextBody = body
     },
     dropNext: () => {
       dropNextRequest = true
