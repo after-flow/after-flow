@@ -13,7 +13,7 @@ import { DurableExecutionRuntime } from './runtime.js'
 import type { ExecutionSession } from './runtime.js'
 import { startExecutionHost } from './host.js'
 import { createChatHandler, createGuidanceHandler, createPlanningHandler } from './handlers.js'
-import { createAuthorizedModels } from '../mastra/authorized-models.js'
+import { createAuthorizedModels, createAuthorizedOrcaModels } from '../mastra/authorized-models.js'
 import type { ProviderMetric } from '../mastra/authorized-models.js'
 import { inferenceReservation, providerPolicySchema } from '../../orchestration/models/policy.js'
 import type { OrchRouter, ProviderGrant, ProviderPolicy } from '../../orchestration/models/policy.js'
@@ -23,10 +23,11 @@ import { reviewedResearchScopeSchema, buildPlanningContext, buildResearchBrief }
 import { reviewedTaskTemplateSchema } from '../../orchestration/playbooks/planning-output.js'
 import type { ReviewedTaskTemplate } from '../../orchestration/playbooks/planning-output.js'
 import { createResearchTools } from '../mastra/tools/research.js'
+import { createOrcaModel } from '../orcarouter/models.js'
 import type { AgentBudget } from '../mastra/budget-processors.js'
 
 /** Trusted deployment configuration. None of these functions or policy IDs come from HTTP/model output. */
-export interface AiServiceComposition {
+interface AiServiceBase {
   backend: BackendClientConfig
   serviceToken: string
   audience?: string
@@ -34,9 +35,6 @@ export interface AiServiceComposition {
   budget: Budget
   sectionTimeoutMs: number
   policies: readonly ProviderPolicy[]
-  models: Parameters<typeof createAuthorizedModels>[0]['models']
-  /** Must be the verified hackathon adapter. No fallback router is installed here. */
-  orch: OrchRouter
   /** Obtain fresh per-Run provider authorization from Backend before every actual transfer. */
   grant(session: ExecutionSession): Promise<ProviderGrant>
   recordMetric(metric: ProviderMetric, identity: Pick<ExecutionSession['receipt'], 'runId' | 'jobId' | 'executionAttempt'>): Promise<void>
@@ -48,13 +46,22 @@ export interface AiServiceComposition {
   sourceTimeoutMs: number
 }
 
+export type AiServiceComposition = AiServiceBase & (
+  | { orca: { apiKey: string; timeoutMs?: number }; models?: never; orch?: never }
+  | { orca?: never; models: Parameters<typeof createAuthorizedModels>[0]['models']; orch: OrchRouter }
+)
+
 /** Real storage/client/handlers/worker wiring. Missing external integrations are errors, never fixture fallbacks. */
 export async function startConfiguredAiService(config: AiServiceComposition, listen: { port: number; hostname?: string; shutdownMs?: number }) {
-  if (!config.serviceToken.trim() || typeof config.orch?.route !== 'function' || typeof config.grant !== 'function' || typeof config.recordMetric !== 'function') throw new Error('Authenticated Orch/provider composition is required')
+  if (!config.serviceToken.trim() || (!config.orca && typeof config.orch?.route !== 'function') || typeof config.grant !== 'function' || typeof config.recordMetric !== 'function') throw new Error('Authenticated model/provider composition is required')
   const policies = z.array(providerPolicySchema).min(2).max(20).parse(config.policies)
   if (new Set(policies.map(p => p.id)).size !== policies.length || new Set(policies.map(p => p.sdkProvider)).size < 2 || new Set(policies.map(p => p.currency)).size !== 1) throw new Error('Distinct providers in one budget currency are required')
+  const models = config.orca
+    ? new Map(policies.map(policy => [policy.id, createOrcaModel({ ...config.orca!, modelId: policy.modelId })]))
+    : config.models
+  if (config.orca && ['core', 'research'].some(role => policies.filter(p => p.roles.includes(role as 'core' | 'research')).length > 2)) throw new Error('OrcaRouter allows at most two explicit policies per role')
   for (const policy of policies) {
-    const model = config.models.get(policy.id)
+    const model = models.get(policy.id)
     if (!model || model.specificationVersion !== 'v2' || model.provider !== policy.sdkProvider || model.modelId !== policy.modelId) throw new Error('Reviewed SDK model binding is missing')
     inferenceReservation(policy)
   }
@@ -82,13 +89,14 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
       if (scope.sourceCatalogIds.some(id => !catalogIds.has(id))) throw new Error('Research scope references an unconfigured catalog')
       const authorize = async (role: 'core' | 'research') => {
         const dataClass = role === 'core' ? 'minimized_case' as const : 'public_research' as const
-        return createAuthorizedModels({ request: { requestId: randomUUID(), operation: session.receipt.operation, role, dataClass,
+        const options = { request: { requestId: randomUUID(), operation: session.receipt.operation, role, dataClass,
           policyIds: policies.filter(p => p.roles.includes(role) && p.dataClasses.includes(dataClass)).map(p => p.id) },
-        policies, models: config.models, router: config.orch, signal: session.signal,
+        policies, models, signal: session.signal,
         grant: async () => { await session.guard(); return config.grant(session) }, charge: session.guard,
-        record: metric => config.recordMetric(metric, { runId: session.receipt.runId, jobId: session.receipt.jobId, executionAttempt: session.receipt.executionAttempt }) })
+        record: (metric: ProviderMetric) => config.recordMetric(metric, { runId: session.receipt.runId, jobId: session.receipt.jobId, executionAttempt: session.receipt.executionAttempt }) }
+        return config.orca ? createAuthorizedOrcaModels(options) : createAuthorizedModels({ ...options, router: config.orch })
       }
-      // Route calls are controlled external actions. Provider attempts reserve their own exact policy bound.
+      // Each physical gateway/provider attempt reserves its exact policy bound before sending data.
       const core = await authorize('core'), researchModel = await authorize('research')
       const reservation = (role: 'core' | 'research') => {
         const values = policies.filter(p => p.roles.includes(role)).map(inferenceReservation)

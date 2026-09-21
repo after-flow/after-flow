@@ -1,7 +1,7 @@
 /**
  * モックAPI用のインメモリデータ。
  * Backend の Public API が用意できるまでの開発用で、本番コードからは参照しない。
- * 期限計算は本来 Go の Rule Engine が行うため、ここでは「Rule Engine の代役」として
+ * 期限計算は本来 Backend の Rule Engine が行うため、ここでは「Rule Engine の代役」として
  * 同じ形のレスポンスを組み立てるだけにとどめる。
  */
 import type {
@@ -22,6 +22,7 @@ import type {
   Person,
   Task,
 } from '@aftercare/public-contracts'
+import { syncRuleTasks } from './rules'
 
 const DAY = 86_400_000
 
@@ -125,6 +126,8 @@ export const db: Store = {
       knownAt: DEATH,
       ownerName: '山田 花子',
       relationshipToDeceased: '配偶者',
+      // 質問にはまだ答えていない状態から始める（健康保険の種類だけ分かっている。81歳なので後期高齢者医療）
+      profile: { healthInsurance: 'LATE_ELDERLY' },
       status: 'ACTIVE',
       createdAt: new Date().toISOString(),
     },
@@ -227,7 +230,7 @@ export const db: Store = {
         days: 7,
         basisLabel: '死亡を知った日 ＋ 7日',
         critical: true,
-      }),
+    }),
       requiredDocuments: [
         { id: 'rd_1', label: '死亡診断書', collected: true, source: 'AI', documentId: 'doc_1' },
         { id: 'rd_2', label: '届出人の印鑑', collected: false, source: 'AI' },
@@ -245,7 +248,9 @@ export const db: Store = {
         // 自治体未登録の状態から始め、調査を依頼できることを示す
         research: { status: 'NOT_REQUESTED' },
       },
-      assigneeName: '山田 花子',
+      assigneeId: 'person_1',
+      // 準備ができたまま数日たっている（「止まっている手続き」の見本）
+      updatedAt: new Date(Date.now() - 4 * DAY).toISOString(),
     }),
     task({
       id: 'task_2',
@@ -491,6 +496,50 @@ export const db: Store = {
 
   approvals: [
     {
+      id: 'apr_0',
+      caseId: CASE_ID,
+      kind: 'TASK_PROPOSAL',
+      status: 'PENDING',
+      title: '故人の情報を登録する',
+      summary: '死亡診断書から、お名前・死亡日・死亡場所を読み取りました。',
+      createdAt: new Date(Date.now() - 44 * 3600_000).toISOString(),
+      sourceDocumentId: 'doc_1',
+      sourceDocumentName: '死亡診断書.pdf',
+      agentRunId: 'run_1',
+      assetDisposal: false,
+      possibleDuplicate: {
+        documentName: '死亡診断書（写し）.pdf',
+        takenInAt: new Date(Date.now() - 68 * 3600_000).toISOString(),
+      },
+      diff: [
+        {
+          field: '故人のお名前',
+          before: '山田 太郎',
+          after: '山田 太郎',
+          editable: true,
+          confidence: 'HIGH',
+          sourceBox: { x: 0.2, y: 0.17, w: 0.42, h: 0.045 },
+        },
+        {
+          field: '死亡日',
+          before: null,
+          after: DEATH,
+          editable: true,
+          confidence: 'HIGH',
+          sourceBox: { x: 0.2, y: 0.29, w: 0.5, h: 0.045 },
+        },
+        {
+          field: '死亡場所',
+          before: null,
+          after: '○○市立病院',
+          editable: true,
+          // 読み取れなかったものを、読み取れたものと同じ顔で出さない
+          confidence: 'LOW',
+          sourceBox: { x: 0.2, y: 0.41, w: 0.44, h: 0.045 },
+        },
+      ],
+    },
+    {
       id: 'apr_1',
       caseId: CASE_ID,
       kind: 'ASSET_PROPOSAL',
@@ -503,9 +552,23 @@ export const db: Store = {
       agentRunId: 'run_2',
       assetDisposal: false,
       diff: [
-        { field: '名称', before: null, after: '○○銀行 △△支店 普通預金', editable: true },
-        { field: '種別', before: null, after: '預金' },
-        { field: '金融機関', before: null, after: '○○銀行', editable: true },
+        {
+          field: '名称',
+          before: null,
+          after: '○○銀行 △△支店 普通預金',
+          editable: true,
+          confidence: 'HIGH',
+          sourceBox: { x: 0.22, y: 0.22, w: 0.52, h: 0.05 },
+        },
+        { field: '種別', before: null, after: '預金', confidence: 'HIGH' },
+        {
+          field: '金融機関',
+          before: null,
+          after: '○○銀行',
+          editable: true,
+          confidence: 'HIGH',
+          sourceBox: { x: 0.22, y: 0.36, w: 0.34, h: 0.05 },
+        },
       ],
     },
     {
@@ -655,6 +718,7 @@ export const db: Store = {
 function task(
   t: Omit<Task, 'caseId' | 'updatedAt' | 'assetDisposal' | 'evidences'> & {
     assetDisposal?: boolean
+    updatedAt?: string
   },
 ): Task {
   return {
@@ -667,144 +731,21 @@ function task(
 }
 
 /**
- * ケース作成時点で確定する法定手続きを生成する。
- *
- * ご逝去日が分かれば、死亡届7日・世帯主変更14日・相続方法の判断3か月などの期限は
- * 書類を待たずに確定する。本来これは Go の Rule Engine が Case 作成時に行う処理で、
- * ここではその挙動を再現している。
+ * 規則（rules.ts）から作った手続きと、規則の対応。
+ * 初期データの手続きもここに登録し、規則で洗い出すときに二重に作らないようにする。
  */
-export function createStatutoryTasks(caseId: string, deathDate: string): Task[] {
-  const defs: {
-    key: string
-    title: string
-    summary: string
-    submitTo?: string
-    stage: Task['stage']
-    category: string
-    days: number
-    basis: string
-    critical?: boolean
-    extendable?: boolean
-    required?: string[]
-  }[] = [
-    {
-      key: 'death_notice',
-      title: '死亡届を提出する',
-      summary:
-        '死亡診断書と一緒に、市区町村の窓口へ提出します。火葬許可証の交付もあわせて受け取ります。',
-      submitTo: '市区町村役場の戸籍・住民登録の窓口',
-      stage: 'funeral',
-      category: '役所手続き',
-      days: 7,
-      basis: '死亡を知った日 ＋ 7日',
-      critical: true,
-      required: ['死亡診断書（原本）', '届出人の印鑑', '本人確認書類'],
-    },
-    {
-      key: 'household',
-      title: '世帯主変更届を出す',
-      summary: '世帯主が亡くなり、残る世帯員が2人以上いる場合に必要です。',
-      submitTo: '市区町村役場の市民窓口',
-      stage: 'government',
-      category: '役所手続き',
-      days: 14,
-      basis: '死亡日 ＋ 14日',
-      critical: true,
-      required: ['届出人の本人確認書類', '印鑑'],
-    },
-    {
-      key: 'insurance',
-      title: '健康保険の資格喪失届を出す',
-      summary: '保険証の返却もあわせて行います。加入していた保険の種類によって窓口が異なります。',
-      submitTo: '市区町村役場の保険年金窓口（勤務先の健康保険の場合は勤務先）',
-      stage: 'government',
-      category: '年金・保険',
-      days: 14,
-      basis: '死亡日 ＋ 14日',
-      required: ['故人の保険証'],
-    },
-    {
-      key: 'pension',
-      title: '年金の受給停止の手続きをする',
-      summary: '年金を受け取っていた場合、受給を止める手続きが必要です。',
-      submitTo: '年金事務所または年金相談センター',
-      stage: 'government',
-      category: '年金・保険',
-      days: 14,
-      basis: '死亡日 ＋ 14日',
-      required: ['年金証書', '死亡の事実がわかる書類'],
-    },
-    {
-      key: 'decision',
-      title: '相続の方法を決める（承認・放棄の判断）',
-      summary:
-        '単純承認・限定承認・相続放棄のいずれかを、相続人ごとに判断します。判断は法的な内容を含むため、迷われる場合は弁護士へご相談ください。',
-      stage: 'decision',
-      category: '相続',
-      days: 90,
-      basis: '自分が相続人になったと知った時 ＋ 3か月',
-      critical: true,
-      extendable: true,
-    },
-    {
-      key: 'final_tax',
-      title: '準確定申告を行う',
-      summary: '故人のその年の所得について、相続人が代わりに申告します。',
-      submitTo: '故人の住所地を管轄する税務署',
-      stage: 'tax',
-      category: '税務',
-      days: 120,
-      basis: '相続開始を知った日の翌日 ＋ 4か月',
-      critical: true,
-    },
-    {
-      key: 'inheritance_tax',
-      title: '相続税の申告・納税を行う',
-      summary:
-        '相続税がかかるかどうかは財産の総額によります。かからない場合は申告が不要なこともあります。',
-      submitTo: '故人の住所地を管轄する税務署',
-      stage: 'tax',
-      category: '税務',
-      days: 300,
-      basis: '相続開始を知った日の翌日 ＋ 10か月',
-      critical: true,
-    },
-  ]
+export const ruleKeys = new Map<string, string>([
+  ['task_1', 'death_notice'],
+  ['task_2', 'household'],
+  ['task_3', 'health_insurance'],
+  ['task_4', 'heirs'],
+  ['task_5', 'decision'],
+  ['task_6', 'bank_accounts'],
+  ['task_7', 'final_tax'],
+  ['task_8', 'utilities'],
+])
 
-  return defs.map((d) => {
-    const id = nextId('task')
-    return {
-      id,
-      caseId,
-      title: d.title,
-      summary: d.summary,
-      submitTo: d.submitTo,
-      status: 'NOT_STARTED',
-      stage: d.stage,
-      category: d.category,
-      source: 'RULE_ENGINE',
-      assetDisposal: false,
-      evidences: [],
-      updatedAt: new Date().toISOString(),
-      deadline: makeDeadline({
-        id: nextId('dl'),
-        taskId: id,
-        taskTitle: d.title,
-        label: d.title,
-        startDate: deathDate,
-        days: d.days,
-        basisLabel: d.basis,
-        critical: d.critical,
-        extendable: d.extendable,
-      }),
-      requiredDocuments: d.required?.map((label) => ({
-        id: nextId('rd'),
-        label,
-        collected: false,
-        source: 'RULE_ENGINE' as const,
-      })),
-    }
-  })
-}
+// 初期データのケースにも、規則どおりの手続きと期限をそろえる
+db.tasks = syncRuleTasks(db.cases[0], db.tasks, ruleKeys, nextId)
 
 export { CASE_ID, DEATH, DAY }

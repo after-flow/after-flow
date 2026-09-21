@@ -18,21 +18,17 @@ make worker-once                                        # Job形式で使い捨�
 ```
 
 既定の対象tenantは`OUTBOX_TENANT_IDS=after-flow-local`（`make up`が設定）。実データのtenantで確認する場合は
-`OUTBOX_TENANT_IDS=<tenant1>,<tenant2> make up`のように上書きする。AI配送設定(`AI_SERVER_URL`等)を渡さない間は
-Backend本体と同じ既定どおり配送は行われず、イベントはPENDINGのまま残る。`outbox-worker`は`ai-server`と同じ
-`services`ネットワークに参加するがAI Server自体へは環境変数を渡さず、`ai-server`はdata networkへ参加しない
-（`scripts/verify-boundaries.mjs`が検証）。
+`OUTBOX_TENANT_IDS=<tenant1>,<tenant2> make up`のように上書きする。`outbox-worker`は`ai-server`と同じ
+`services`ネットワークに参加するが、AI Server自体には業務Firestore・原本Storageの設定は渡さず、`ai-server`は
+data networkへ参加しない（`scripts/verify-boundaries.mjs`が検証）。
 
-`outbox-worker`にだけ`AI_SERVER_URL`/`AI_SERVICE_TOKEN`等と`BACKEND_EXECUTION_SIGNING_KEY`を設定しても、
-ローカルcomposeでは実際のAI配送は成立しない。`compose.yaml`の`backend-server`と`ai-server`には対応する
-env（`BACKEND_EXECUTION_SIGNING_KEY` / `BACKEND_INTERNAL_SERVICE_TOKEN` / `AI_SERVICE_TOKEN`等）を渡しておらず、
-AIからBackendへのcallback（内部execution app）は`composition.ts`がmountせず404になる。さらに`ai-server`自体の
-execution runtimeは未実装で（`apps/ai-server/src/main.ts`が`runtime`/`worker`を組み立てずに起動する）、
-たとえ認証情報を揃えても`internal/v1/runs/:runId/dispatch`は常に`503 AI_EXECUTION_NOT_CONNECTED`を返す。
-つまり本Issue(#122)のローカル接続範囲で確認できるのは「`outbox-worker`が独立コンテナとしてOutboxを配送しようと
-試みる（HTTP呼び出しがRETRYABLEで終わりPENDINGのまま残る）」ことと、AI接続なしで成立するローカルhandler
-（`case.created`→初期Task、`case.reference_dates_changed`→期限再評価）の配送までであり、AIへのRun配送そのもの
-の実接続確認は対象外（AI側runtime実装後の別Issue）。
+`outbox-worker`・`backend-server`・`ai-server`は同じ開発既定のAI連携資格情報（`AI_SERVER_URL` / `AI_SERVICE_TOKEN` /
+`AI_SERVICE_AUDIENCE` / `BACKEND_EXECUTION_SIGNING_KEY` / `BACKEND_SERVICE_AUDIENCE` / `BACKEND_INTERNAL_SERVICE_TOKEN`）を
+`compose.yaml`から受け取るため（#149でai-serverの常時稼働構成が接続済み）、`make up`だけでHTTP配送経路自体は成立する。
+ただし実際にモデルが応答するかは`ai-server`側の`ORCAROUTER_API_KEY`設定に依存する。未設定のままでは`ai-server`が
+実行不可を返し、Outboxのイベントは`RETRYABLE`のままPENDINGへ戻り続ける。本Issue(#122)のローカル接続範囲で
+確認するのは「`outbox-worker`が独立コンテナとしてOutboxをAIへ配送する経路そのもの」であり、
+`ORCAROUTER_API_KEY`設定後のモデル応答内容の正しさは対象外。
 
 ## Node直接実行
 

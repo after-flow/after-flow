@@ -10,3 +10,11 @@ import type { Insight } from '@aftercare/public-contracts'
 export function isDisplayableInsight(insight: Insight): boolean {
   return insight.evidence.length > 0
 }
+
+/**
+ * 前回からの持ち越しにあたる気づきか（止まっている手続き・前提の変化）。
+ * 放っておくと手続きが進まなくなるものなので、ホームと手続きの画面で目立たせる。
+ */
+export function isCarriedOver(insight: Insight): boolean {
+  return insight.kind === 'STALLED_TASK' || insight.kind === 'INCONSISTENCY'
+}

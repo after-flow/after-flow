@@ -1,40 +1,112 @@
 # after-flow
 
-死亡後手続きの整理を支援するアプリケーションのTypeScriptモノレポです。
-設計の正本は [アーキテクチャ仕様](docs/architecture.md) です。
+死亡後・相続手続きを、タスク管理とAI支援で前に進めるためのTypeScriptモノレポです。Frontend、Backend、AI Agentを独立したサービスとして分離し、業務状態の正本はBackendだけが管理します。
 
-## 現在の実装範囲
+設計上の正本は [docs/architecture.md](docs/architecture.md) です。このREADMEは、リポジトリ全体の入口とローカル開発の案内を目的としています。
 
-既存のReact + Viteフロントエンドを機能別に移し、画面、URL、モックAPI、ログイン状態の保存方式を維持しています。
-BackendとAIは独立したHonoプロセスとして起動します。Backendには業務API、認証・認可の境界、Firestore Adapterを実装しています。
-本番の認証Provider・クラウド接続は環境設定が必要で、Mastra・Orch Routerは未接続です。
-通常の開発起動では、これまでどおりMSWの架空データで全画面を操作できます。
+## システム構成
 
-## Dockerで起動
+```mermaid
+flowchart LR
+  U[User] --> W[Web<br/>React / Vite]
+  W -->|Public API| B[Backend<br/>Hono]
+  B --> BF[(Business Firestore)]
+  B --> BS[(Original Document Storage)]
+  B --> O[(Outbox)]
+  O --> BW[Backend Worker]
+  BW -->|署名付き Internal HTTP| A[AI Server<br/>Hono]
+  A -->|必要最小限の取得・提案の返却| B
+  A --> AF[(AI Runtime Firestore)]
 
-Docker EngineとCompose v2、makeがあれば起動できます。ホストへのNode.js／pnpmのインストールは不要です。
+  classDef forbidden fill:#fff1f0,stroke:#cf1322,color:#820014;
+  X1[WebからAIへ直接通信しない]:::forbidden
+  X2[AIに業務DB・原本Storageの権限を渡さない]:::forbidden
+```
 
-```sh
+### 各ルートの責務
+
+| ルート | 責務 | 詳細 |
+| --- | --- | --- |
+| `apps/web` | ユーザー向け画面、入力、API状態の表示 | [Frontend README](apps/web/README.md) |
+| `apps/backend-server` | Public API、認証・認可、業務ルール、正式な業務状態、文書管理、AI実行制御 | [Backend README](apps/backend-server/README.md) |
+| `apps/ai-server` | Backendから依頼されたAI処理、途中経過、根拠付き提案の生成 | [AI Agent README](apps/ai-server/README.md) |
+| `packages/public-contracts` | FrontendとBackendが共有する公開API契約 | [Frontend/API対応表](docs/api/frontend-backend-mapping.md) |
+| `packages/internal-contracts` | BackendとAI Serverが共有する内部実行契約 | [Backend内部実行API](docs/api/internal-execution.md) |
+| `infra` | Emulator、ルール、同意文書、環境構築 | [インフラ構成](infra) |
+
+Webは他ワークスペースから `public-contracts` だけを参照し、ブラウザ上の業務通信は必ずBackend Public APIを経由します。BackendとAI Serverは互いのソースコードやRepository実装をimportせず、内部HTTP契約だけで連携します。
+
+## 主な処理フロー
+
+### 通常の業務操作
+
+1. WebがBackend Public APIへリクエストします。
+2. Backendが認証・認可と業務ルールを検証します。
+3. BackendがBusiness Firestoreへ正式な状態を保存します。
+4. WebはBackendから返された状態を表示します。
+
+### AIを使う非同期処理
+
+1. Backendが `AgentRun` とOutboxイベントを同一の業務境界で作成します。
+2. Backend WorkerがOutboxをleaseし、AI Serverへ署名付きの内部リクエストを送ります。
+3. AI ServerはBackendのInternal APIから許可された情報だけを取得し、途中経過や提案を返します。
+4. Backendが提案を検証し、正式な業務状態への反映可否を決定します。
+
+AIは提案者であり、業務状態の書き込み主体ではありません。
+
+### 書類の取り扱い
+
+原本ファイルはBackend管理のStorageへ保存されます。書類検査の状態もBackendが管理し、検査に合格した書類だけをAI処理の対象にできます。AI Serverには原本Storageの認証情報を渡しません。
+
+## 現在の実装状況
+
+| 領域 | 現在の状態 |
+| --- | --- |
+| Frontend | 主要画面とMSWによるモック動作を実装済み。刷新済みUIを実Public APIへ接続する作業が今後の中心です。 |
+| Backend | Public/Internal API、業務ドメイン、Firestore/Storage Adapter、認証・認可境界、AgentRun/Outboxの基盤を実装済みです。 |
+| AI Agent | 実行Runtime、Workflow、Backend Client、評価などの基盤モジュールとテストがあります。ただし、標準起動時の本番向けProvider・Orchestrator・Runtime構成は未接続です。 |
+| Authentication | Firebase Authenticationを採用済みです。Frontend/Backendの実接続、失効確認、招待などは未完了です。 |
+| 非同期Worker | Worker実装はありますが、通常の `make up` や本番デプロイではまだ常駐起動されません。 |
+| 書類検査 | 検査状態とAI投入制御はありますが、マイナンバー等を実際に検出・マスキングする検査Adapterは未選定・未実装です。 |
+
+`/health` や `/internal/v1/health` の成功は、外部AI ProviderやOrchestratorまで準備できていることを意味しません。
+
+## Dockerでまとめて起動する
+
+必要なものはDocker、Docker Compose、GNU Makeです。ホスト側のNode.jsやpnpmは不要です。
+
+```bash
 make up
 ```
 
-- Web: **http://127.0.0.1:5173**（モックのログインは任意のメールアドレス・パスワード）
-- Backend生存確認: http://127.0.0.1:8080/api/v1/health
-- 公開APIテスト（Swagger UI）: **http://127.0.0.1:8080/api-docs**
-- AI生存確認: コンテナ内 `http://ai-server:8081/internal/v1/health`。ホストへのポート公開はありません。
+次の7サービスが起動します。
 
-`localhost` がIPv6上の別プロセスを指す場合もあるため、上記の `127.0.0.1` を使用してください。
-WebとBackendはループバックアドレスにのみ公開します。WebとAIはDockerネットワークも分けています。
+| サービス | URL / 接続先 |
+| --- | --- |
+| Web | http://127.0.0.1:5173 |
+| Backend API | http://127.0.0.1:8080 |
+| Swagger UI | http://127.0.0.1:8080/api-docs |
+| Firestore Emulator | `127.0.0.1:8085` |
+| Storage Emulator | http://127.0.0.1:4443 |
+| AI Server | Docker内部ネットワークのみ。ホストには公開しません。 |
+| AI Runtime Emulator | Docker内部ネットワークのみ。AIの実行receipt/snapshot専用、業務Firestoreとは別。 |
+| Outbox worker | 常駐ワーカー。ホストには公開しません。 |
 
-```sh
-make ps                 # 全6サービスの状態
-make logs               # ログ(Ctrl+Cで表示だけ終了)
-make logs SERVICE=web   # Webのみ
-make check              # Docker内で型・Lint・テスト・OpenAPI・本番ビルドを検証
-make down               # このプロジェクトを停止
+起動後の確認:
+
+```bash
+make ps
+make data-check
+node scripts/smoke-compose.mjs
 ```
 
-`make up`はアプリ3サービスに加えて、Outbox/Reconciler worker（`outbox-worker`）とFirestore・Cloud Storageもdata profileで起動します。
+停止:
+
+```bash
+make down
+```
+
+`make data-check` は、Emulatorの読み書きに加えて、AI ServerからBusiness Firestoreと原本文書Storageへ直接アクセスできない構成を確認します。
 
 ### Outbox worker（`outbox-worker`）
 
@@ -47,263 +119,94 @@ docker compose --profile data restart outbox-worker   # 手動再起動して回
 ```
 
 既定の対象tenantは開発用の`after-flow-local`です（`OUTBOX_TENANT_IDS`で上書き可）。
-AI Serverへの配送は`AI_SERVER_URL`等を未設定のままでは接続されず、イベントはPENDINGのまま残ります（Backend本体と同じ既定動作）。
-`outbox-worker`はAI Serverへ到達するため`ai-server`と同じ`services`ネットワークに参加しますが、AI Server
-（`ai-server`コンテナ）自体には業務Firestore/原本Storageの設定もAI連携用の認証情報も渡しません。逆にAI_*等を
-`outbox-worker`にだけ設定しても、ローカルcomposeでは`ai-server`側の受け口が揃わずAI配送は成立しません
+`outbox-worker`はbackend-serverと同じ開発既定のAI連携資格情報（`AI_SERVICE_TOKEN`等）を受け取るため、ai-serverへのHTTP配送自体は`make up`だけで成立します。
+実際にモデルが応答するかはai-server側の`ORCAROUTER_API_KEY`設定に依存します（未設定ならai-serverが実行不可を返します）。
+`outbox-worker`はAI Serverへ到達するため`ai-server`と同じ`services`ネットワークに参加しますが、`ai-server`コンテナ自体には業務Firestore・原本Storageの設定は渡しません
 （詳細は[運用手順](docs/runbooks/outbox-worker.md)）。
 
-```sh
-make data-check          # 両Emulatorの読み書きとAIからの分離を再確認
-```
+## Node.jsで開発する
 
-- Firestore Emulator: `127.0.0.1:8085`（project: `after-flow-local`）
-- Cloud Storage Emulator: **http://127.0.0.1:4443**（bucket: `after-flow-documents`）
+使用するNode.jsとpnpmのversionは `.node-version` と `package.json` を参照してください。
 
-`make up`はBackendにだけEmulator設定を渡します。AI Serverはデータ用Dockerネットワークに参加せず、Firestore・原本Storageの環境変数も受け取りません。Emulatorのデータは開発用の一時データで、`make down`後の保持は保証しません。従来の`make up-data`も互換エイリアスとして同じ構成を起動します。
-
-既存プロセスとポートが重複する場合は、次のように変更できます。
-
-```sh
-WEB_PORT=5174 BACKEND_PORT=8082 make up
-FIRESTORE_EMULATOR_PORT=8086 STORAGE_EMULATOR_PORT=4444 make up
-```
-
-`.env` の作成は任意です。必要ならルートの `.env.example` を `.env` にコピーして編集してください。
-環境変数の変更後は `make up` を実行してください。Web、Backend、AIのソースはマウントされ、編集時に自動再読込されます。
-依存パッケージ、TypeScript設定、その他のイメージ内ファイルを変更した場合も `make up` で再ビルドします。
-`compose.yaml` はローカル開発用です。本番用の独立イメージ・Compose検証・Cloud Runへの配布手順は [CI/CD運用](docs/ci-cd.md) を参照してください。
-
-### ブラウザから公開APIを試す
-
-Backend起動後に http://127.0.0.1:8080/api-docs を開くと、生成済みの公開OpenAPIと同じroute定義を使うSwagger UIが表示されます。操作を開いて **Try it out** → **Execute** で、同じBackendへ要求を送れます。UI資産はローカル配信され、内部APIは表示されません。
-
-認証が必要な操作は画面右上の **Authorize** にBearer tokenを入力してください。認証Providerが未設定の環境では、保護されたAPIは設計どおり401になります。Firestoreと原本Storageを使う業務APIの検証には`make up`と、有効なtenant membershipを持つ認証設定が別途必要です。生存確認は認証なしで試せます。
-
-開発時はAPIドキュメントが既定で有効です。無効化する場合は `API_DOCS_ENABLED=false` を設定します。本番（`NODE_ENV=production`）では既定で無効です。`API_DOCS_ENABLED=true` を明示した場合でも、表示対象は公開APIだけです。
-
-## ローカルで起動
-
-Node.js **22.23.2**（`.node-version`）とpnpm **10.28.1**を使用します。
-依存は `pnpm-lock.yaml` で固定し、npmのlockfileは使用しません。
-
-```sh
+```bash
 pnpm install --frozen-lockfile
-pnpm dev                # 3プロセスを並列起動
-pnpm dev:web            # フロントエンドのみ
+pnpm dev
 ```
 
-### Backend開発用Codex Skill
+個別サービスの起動方法や環境変数は、それぞれのREADMEを参照してください。
 
-新しくBackend開発へ参加する場合は、リポジトリ同梱のSkillをCodexのSkillsディレクトリへリンクできます。
+## API契約
 
-```sh
+Public APIのルート定義が、実行時バリデーションとOpenAPIの単一の情報源です。APIを変更した場合は仕様を再生成し、差分をコミットします。
+
+```bash
+pnpm openapi:generate
+pnpm openapi:check
+```
+
+- OpenAPI: [docs/api/public-openapi.yaml](docs/api/public-openapi.yaml)
+- Frontend/API対応表: [docs/api/frontend-backend-mapping.md](docs/api/frontend-backend-mapping.md)
+- AI内部API: [docs/api/internal-execution.md](docs/api/internal-execution.md)
+- 提案payload: [docs/api/proposal-payloads.md](docs/api/proposal-payloads.md)
+
+## リポジトリ構成
+
+```text
+after-flow/
+├── apps/
+│   ├── web/                 # Frontend
+│   ├── backend-server/      # 業務APIと正式状態の管理
+│   └── ai-server/           # AI実行サービス
+├── packages/
+│   ├── public-contracts/    # 公開API契約
+│   └── internal-contracts/  # Backend・AI間の内部契約
+├── docs/                    # アーキテクチャ、API、ADR、Runbook
+├── infra/                   # Emulator、デプロイ、環境定義
+├── skills/                  # 開発参加者向けCodex Skill
+├── compose.yaml
+├── Makefile
+└── pnpm-workspace.yaml
+```
+
+## 検証コマンド
+
+変更内容に応じて、以下を実行します。
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm test:firestore
+pnpm openapi:check
+pnpm build
+```
+
+Dockerだけで検証する場合:
+
+```bash
+make check
+```
+
+Firestoreの永続化処理を変更した場合は、`pnpm test:firestore` によるEmulator検証が必須です。
+
+## ドキュメント
+
+- [アーキテクチャ](docs/architecture.md)
+- [AIエージェント構成](docs/agent-architecture.md)
+- [FrontendからBackendへの引き継ぎ](docs/backend-handoff-2026-09-21.md)
+- [CI/CD運用](docs/ci-cd.md)
+- [APIドキュメント](docs/api)
+- [ADR](docs/adr)
+- [Runbook](docs/runbooks)
+
+## Backend開発用Skill
+
+新しくBackend開発へ参加する人向けに、設計境界、実装手順、検証方法をまとめたCodex Skillを同梱しています。
+
+```bash
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
 ln -s "$PWD/skills/after-flow-backend-development" \
   "${CODEX_HOME:-$HOME/.codex}/skills/after-flow-backend-development"
 ```
 
-Codexでは `$after-flow-backend-development` を指定すると、Backendの責務境界、現在の実装状況、次のIssue、必要な検証手順を読み込めます。Issueの状態は変化するため、Skillは実装前にGitHubの現在状態を確認します。
-
-サービス単位でも操作できます。
-
-```sh
-pnpm --filter @aftercare/backend-server... build
-pnpm --filter @aftercare/backend-server start
-pnpm --filter @aftercare/ai-server build
-pnpm --filter @aftercare/ai-server start
-```
-
-## 配置
-
-```text
-apps/
-  web/
-    src/
-      app/                   既存ルーティング・QueryClient
-      features/              auth, cases, documents, tasks, approvals,
-                             estate, family, chat, insights
-      components/            共通UI・レイアウト・表示部品
-      lib/api/               公開APIクライアント・Query
-      mocks/                 既存MSWデータ・ハンドラー
-    public/                  favicon・開発用Service Worker
-  backend-server/
-    src/main.ts              公開サーバーの起動
-    src/app.ts               Hono設定・共通middleware
-    src/shared/              AppErrorとコード／status対応表
-    src/domain/shared/       Entity共通形・監査・Outbox・コレクション定義
-    src/application/ports/   永続化・認証のポート
-    src/application/authorization/ tenant・Case membershipの認可
-    src/infrastructure/identity/ トークン検証Adapterと設定
-    src/infrastructure/firestore/ Firestore実装・パス検証・カーソル
-    src/presentation/http/   requestId・検証・共通エラー処理・route定義
-    src/presentation/schemas/ 共通入力スキーマと公開契約との一致検証
-    src/presentation/openapi/ route定義からのOpenAPI生成
-    src/domain/case/           Case Entityと版の規則
-    src/domain/consent/        同意文書の定義と判定
-    src/domain/document/       書類Entity・実体による形式判定・検査状態
-    src/domain/task/           Task・状態遷移表・期限のRule Engine
-    src/domain/agent/          AgentRunの状態とCase lease
-    src/domain/message/        チャットの発言
-    src/domain/proposal/       提案・承認の版とhash
-    src/domain/decision/       相続方法についての本人の意思
-    src/application/consent/   同意の記録・撤回・利用可否Policy
-    src/application/document/  書類の登録・取得・除外・回収
-    src/application/task/      手続きのCommandと期限の算定
-    src/application/agent/     AI実行の受付・Outbox配送・書き込み権
-    src/application/chat/      発言の受付・案内の保存・結果の受領
-    src/application/proposal/  提案から確定までの共通経路
-    src/application/decision/  本人の意思の記録と確定
-    src/infrastructure/storage/ 原本の保存（開発・CI用のローカル実装）
-    src/application/case/      Case のCommand・Query
-    src/presentation/routes/public/v1/   公開API
-    src/presentation/routes/internal/v1/ AIからの結果受領
-    test/                    契約テスト（node:test）
-    test/firestore/          Emulatorに対する統合テスト
-  ai-server/
-    src/main.ts              内部サーバーの起動
-    src/app.ts               Hono設定（公開ルートなし）
-    src/presentation/routes/internal/v1/health.ts
-packages/
-  public-contracts/src/dto/  既存フロントの公開リソース型
-scripts/
-  verify-boundaries.mjs     workspace依存・import境界・AIへのデータ設定分離の検証
-  with-firestore-emulator.mjs Firestore Emulatorを起動してコマンドを実行
-skills/
-  after-flow-backend-development/ Backend開発・Issue選定・オンボーディング用Codex Skill
-docs/
-  architecture.md           提供された仕様書を内容変更せず移動
-  adr/                      未確定事項と決定の記録
-  api/public-openapi.yaml   route定義から生成する公開API仕様
-infra/
-  firestore/                Security Rules・index・Emulatorの説明
-  consent/                  同意文書カタログの雛形
-  rules/                    期限ルールと初期手続きの定義の雛形
-Dockerfile                  固定Node/pnpmと依存インストール
-compose.yaml                Web / Backend / AI / Outbox workerの独立コンテナ
-Makefile                    起動・停止・検証
-```
-
-仕様書にあるDomain／Application、internal-contracts、Playbook、Rule、各Infrastructureなどは、機能実装時に追加します。
-将来対象の空フォルダーや成功を返すダミー実装は生成していません。
-
-## API・モックの扱い
-
-Webからの業務通信は `/api/v1` の公開APIのみです。公開リソース型は `@aftercare/public-contracts` から型として参照し、既存の形を維持しています。
-
-現在の公開APIは生存確認、同意、案件（作成・一覧・詳細・訂正）、書類（登録・一覧・詳細・原本取得・除外）、手続きと期限、AI実行の受付と参照、提案・承認・本人の意思、チャットと手順案内です。案件の一覧は自分が参加しているものだけを返します。
-業務データベースが未設定の状態では、業務APIは `FEATURE_NOT_CONNECTED` を理由付きで返します。空配列や固定の成功では返しません。
-
-チャットの発言は202で受け付けます。回答は後から履歴の取得で確認します。回答の実行を受け付けられない場合も発言は残し、理由を返します。
-手順案内には出典と確認日、調べきれなかった項目を必ず添えます。案内や回答は説明であり、それだけで手続きを完了したり正式な事実を登録したりしません。
-
-承認は、その人が見た提案の版と内容のhashに結び付きます。内容を訂正すると新しい版になり、対象を失った承認は期限切れになります。承認の受付と業務状態への反映は別に返します。受け付けただけで反映済みとは表示させません。
-相続方法は、下書き・本人以外による報告・本人による確定を区別します。確定できるのは本人と紐付いた利用者だけです。放棄前ロックは確定だけを根拠に外します。
-
-AI実行は202で受け付けます。受け付けただけで完了ではなく、結果は別途取得します。待機・失敗・取消を区別して返し、待機を失敗として表示させません。
-接続されていない業務操作と、外部AI同意が無い要求は理由を添えて拒否します。配送はOutboxから行い、配送の直前にも同意を確認します。AI Serverが未設定の間、イベントは未配送のまま残ります。
-
-手続きの状態はコマンドで変更します。statusの直接指定は受け付けません。準備完了、本人による提出報告、完了は別の状態です。
-期限は業務レビュー済みのルールからだけ算定します。未レビューのルールでは日付を返さず、要確認として返します。仕様書や旧モックの日数をそのまま本番の法定期限として扱いません。
-
-書類はPDF・JPEG・PNG、1ファイル10 MiBまでです。Content-Typeの申告だけでなく先頭バイトで実体を検査します。
-検知・マスキングの方式は未確定です（[ADR 0002](docs/adr/0002-document-inspection.md)）。検査器が未接続の間、検査状態は「未検査」のままで、合格としては扱いません。未検査・拒否・失敗の書類はAIへ配信しません。
-書類の除外は通常の一覧から外す操作で、個人データの完全消去とは別です。監査や根拠からの参照は壊しません。
-
-必須同意（利用規約・個人情報の取扱い）が揃うまで業務APIは `CONSENT_REQUIRED` を返します。同意を取得するためのAPIは塞ぎません。
-任意の外部AI同意が無くても、手動での案件・書類・手続きの管理は利用できます。同意文書の文面と提供先は業務側の承認後に確定するため、未設定時は仮文面と分かるカタログを使い、本番では拒否します。
-
-公開APIは認証済みユーザーとCase membershipに限定します。採用する認証Providerは未確定で、実接続の着手条件は [ADR 0001](docs/adr/0001-authentication-provider.md) に記録しています。
-認証の設定が無いまま起動した場合、認証が必要なAPIはすべて401を返します。検証を省略して通す既定値はありません。
-
-Backendの公開APIは共通の封筒で応答します。成功は `{ data, meta }`、失敗は `{ error, meta }` で、どちらも `meta.requestId` を含みます。
-`error.code` は入力不正・未認証・権限不足・not found・競合・同意不足・機能未接続・一時障害を区別し、`error.retryable` が同じ要求の再送可否を示します。
-一覧の続きは `meta.nextCursor` で表します。件数だけを見て1ページ目を全件として扱わないでください。
-既存MSWの旧形式との対応付けと、Web側クライアントの変換は #3 の対応表で扱います。現時点でWebは変更していません。
-内部APIの契約ができた時点で `packages/internal-contracts` を追加し、Webから参照させません。
-
-| 変数 | 開発時 | 本番ビルド時 |
-| --- | --- | --- |
-| `VITE_USE_MOCK` | 既定で有効、`false` で無効 | `true` を明示した場合だけ有効 |
-| `VITE_API_BASE_URL` | 既定 `/api/v1` | 既定 `/api/v1` |
-| `VITE_API_PROXY` | ローカルでのBackend転送先 | 使用しない |
-| `VITE_WATCH_POLLING` | Dockerでは有効 | 使用しない |
-
-ルートの `.env` はViteも読み込みます。Composeでは転送先を `http://backend-server:8080` に固定しています。
-実APIの開発時は次のように切り替えますが、現時点で使えるのは生存確認APIのみです。
-
-```sh
-VITE_USE_MOCK=false VITE_API_PROXY=http://127.0.0.1:8080 pnpm dev:web
-```
-
-本番ビルドは `apps/web/dist` に出力され、既定ではMSW本体と `mockServiceWorker.js` を含みません。
-デモ用ビルドだけ `VITE_USE_MOCK=true pnpm --filter @aftercare/web build` とします。
-
-## 検証
-
-```sh
-pnpm typecheck
-pnpm lint                # Lintと依存境界の検証
-pnpm test                # CIポリシー・Frontend・Backend・AIのテスト
-pnpm test:firestore      # Firestore Emulatorを起動して統合テスト
-pnpm openapi:check       # 生成済みOpenAPIと実装routeの一致を検証
-pnpm build
-```
-
-`pnpm test:firestore` はFirestore EmulatorをDockerコンテナで起動します。ホストへのJavaの導入は不要です。
-Emulatorが起動していない状態で `pnpm test` を実行すると、Firestoreの統合テストは理由を表示してskipします。成功扱いにはしません。
-
-公開APIのOpenAPIは `docs/api/public-openapi.yaml` に生成します。route定義を変更したら次を実行して差分をcommitしてください。
-
-```sh
-pnpm openapi:generate
-```
-
-依存境界の検証は、WebからBackend／AI／内部契約への参照、サービス間の直接importを拒否します。
-既存UIの説明とBackendへの要件は [Web README](apps/web/README.md) を参照してください。
-
-## CI/CD
-
-[CI](.github/workflows/ci.yml) は全PR（依存ブランチ向けも含む）、`main` push、merge queue、手動実行が対象です。
-
-- **Quality**: 固定lockfile、型、Lint・依存境界、全workspaceのテスト、生成済みOpenAPI、本番ビルドとモック除外を検証。
-- **Firestore integration**: Firestore Emulatorに対してTransaction・冪等性・版競合・カーソルページング・業務APIを検証。
-- **Workflow lint / Dependency audit**: Actions・埋込みshellの検証、high以上の依存脆弱性を検出。週次監査とDependabot更新も実行。
-- **Docker smoke / Production containers**: 開発・本番の3サービス、SPA、API転送、非root起動、AIのポート非公開・ネットワーク分離をHTTPとコンテナ検査で確認。
-- **CI Gate**: 全ジョブ成功を要求する固定名の必須チェック。失敗・キャンセル・skipは通過させません。
-
-`main` のCI成功後、[Release](.github/workflows/release.yml) がテスト済みイメージを再ビルドせずGHCRへ配布します。
-[Deploy Cloud Run](.github/workflows/deploy.yml) は環境・サービス・成功したCI runを指定して手動実行します。OIDC認証、環境承認、候補revisionの疎通確認、traffic切替と失敗時の復元を行います。
-
-**GitHub Environment・GCP/IAMの初期設定が必要です。** 生存確認の成功だけでは、認証・永続化・Mastra/Orchの本番稼働を保証しません。
-設定値、必須チェック、リリース、切り戻し、未検証範囲は [CI/CD運用](docs/ci-cd.md) にまとめています。
-Nodeとpnpmは `.node-version` と `package.json` を参照します。CIには外部クラウドやLLMの資格情報は不要です。既存のLint警告は警告のままです。
-Firestore integrationジョブは、Emulatorに対して永続化の統合テストを実行します。実Firestoreの資格情報は使いません。
-ブラウザーE2Eは各機能の実装時に追加します。
-
-Docker起動後、同じ疎通チェックをローカルでも実行できます。
-
-```sh
-make up
-node scripts/smoke-compose.mjs
-make down
-```
-
-データ用Emulatorを含む確認:
-
-```sh
-make up
-make data-check
-make down
-```
-
-ポートや `COMPOSE_PROJECT_NAME` を変更した場合は、起動とチェックで同じ環境変数を指定してください。
-
-本番イメージの検証（開発用とは別プロジェクト・別イメージタグ）:
-
-```sh
-make production-check
-COMPOSE_FILE=compose.production.yaml docker compose down
-```
-
-導入時の公式資料: [Hono Node.js](https://hono.dev/docs/getting-started/nodejs)、[pnpm workspaces](https://pnpm.io/workspaces)、[Node.js releases](https://nodejs.org/en/about/previous-releases)。
+詳細は [Skill本体](skills/after-flow-backend-development/SKILL.md) を参照してください。

@@ -11,6 +11,7 @@ import type {
   Benefit,
   Case,
   CaseDocument,
+  CaseProfile,
   CaseOverview,
   ChatMessage,
   ConsentKind,
@@ -23,6 +24,7 @@ import type {
   Liability,
   Paginated,
   Person,
+  RequiredDocument,
   Task,
   TaskStatus,
 } from '@aftercare/public-contracts'
@@ -34,6 +36,7 @@ export const qk = {
   overview: (id: string) => ['cases', id, 'overview'] as const,
   documents: (id: string) => ['cases', id, 'documents'] as const,
   document: (id: string) => ['documents', id] as const,
+  documentContent: (id: string) => ['documents', id, 'content'] as const,
   tasks: (id: string) => ['cases', id, 'tasks'] as const,
   task: (id: string) => ['tasks', id] as const,
   deadlines: (id: string) => ['cases', id, 'deadlines'] as const,
@@ -121,13 +124,17 @@ export function useCreateCase() {
   })
 }
 
-/** 市区町村の登録。エージェントが自治体ごとの案内を調べる前提になる。 */
+/** 市区町村・生年月日・故人の状況の登録。市区町村は自治体ごとの案内を調べる前提、状況は手続きの洗い出しの前提になる。 */
 export function useUpdateCase(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (patch: Partial<Pick<Case, 'municipality'>>) =>
+    // dateOfBirth は null で「消す」。undefined だと送られず、前の値が残ってしまう
+    mutationFn: (patch: { municipality?: string; dateOfBirth?: string | null; profile?: CaseProfile }) =>
       api.patch<Case>(`/cases/${caseId}`, patch),
     onSuccess: () => {
+      // 故人の状況が変わると、Rule Engine があてはまる手続きを洗い出し直す
+      void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
+      void qc.invalidateQueries({ queryKey: qk.deadlines(caseId) })
       void qc.invalidateQueries({ queryKey: qk.overview(caseId) })
       void qc.invalidateQueries({ queryKey: qk.case(caseId) })
       void qc.invalidateQueries({ queryKey: qk.cases })
@@ -170,12 +177,32 @@ export function useDocument(documentId: string) {
     queryKey: qk.document(documentId),
     queryFn: () => api.get<CaseDocument>(`/documents/${documentId}`),
     enabled: Boolean(documentId),
+    // 読み取り中に開いた詳細画面が「読み取っています」のまま止まらないよう、終わるまで追いかける
+    refetchInterval: (q) => (q.state.data?.analysisStatus === 'ANALYZING' ? 3_000 : false),
+  })
+}
+
+/**
+ * 書類の原本（PDF・画像）。
+ * 死亡診断書や戸籍などの個人情報そのものなので、画面を離れたらすぐ手放す（gcTime を短く）。
+ * 見つからない・保存されていないなどの失敗は、何度叩いても変わらないため再試行しない。
+ */
+export function useDocumentContent(caseId: string, documentId: string | undefined) {
+  return useQuery({
+    queryKey: qk.documentContent(documentId ?? ''),
+    queryFn: ({ signal }) => api.blob(`/cases/${caseId}/documents/${documentId}/content`, signal),
+    enabled: Boolean(caseId && documentId),
+    staleTime: Infinity,
+    gcTime: 30_000,
+    retry: false,
   })
 }
 
 export function useUploadDocument(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
+    // 失敗の理由（マイナンバー検知など）はアップロード画面が自分で出す
+    meta: { handlesError: true },
     mutationFn: (file: File) => {
       const fd = new FormData()
       fd.append('file', file)
@@ -248,6 +275,8 @@ function useTaskMutation<TInput>(
       void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
       void qc.invalidateQueries({ queryKey: qk.overview(caseId) })
       void qc.invalidateQueries({ queryKey: qk.deadlines(caseId) })
+      // 手続きが動いたら「止まっています」の知らせは片づく
+      void qc.invalidateQueries({ queryKey: qk.insights(caseId) })
     },
   })
 }
@@ -267,6 +296,41 @@ export function useCompleteTask(caseId: string) {
 export function useReopenTask(caseId: string) {
   return useTaskMutation<{ taskId: string }>(caseId, ({ taskId }) =>
     api.post<Task>(`/tasks/${taskId}/reopen`),
+  )
+}
+
+/**
+ * 持ち物の「用意できた」を付け外しする。
+ * 窓口で1つずつ消し込む使い方を想定し、押した瞬間に画面へ反映する（失敗したら元に戻す）。
+ */
+export function useUpdateRequiredDocuments(caseId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, requiredDocuments }: { taskId: string; requiredDocuments: RequiredDocument[] }) =>
+      api.patch<Task>(`/tasks/${taskId}`, { requiredDocuments }),
+    // 続けて押しても、送る順番と画面の状態が入れ違わないよう1つずつ送る
+    scope: { id: `required-documents-${caseId}` },
+    onMutate: async ({ taskId, requiredDocuments }) => {
+      await qc.cancelQueries({ queryKey: qk.task(taskId) })
+      const before = qc.getQueryData<Task>(qk.task(taskId))
+      if (before) qc.setQueryData<Task>(qk.task(taskId), { ...before, requiredDocuments })
+      return { before }
+    },
+    onError: (_e, { taskId }, ctx) => {
+      if (ctx?.before) qc.setQueryData(qk.task(taskId), ctx.before)
+    },
+    onSuccess: (task) => {
+      qc.setQueryData(qk.task(task.id), task)
+      void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
+      void qc.invalidateQueries({ queryKey: qk.insights(caseId) })
+    },
+  })
+}
+
+/** 担当者を決める。家族で手分けするときに使う。null で「未定」に戻す。 */
+export function useAssignTask(caseId: string) {
+  return useTaskMutation<{ taskId: string; assigneeId: string | null }>(caseId, ({ taskId, assigneeId }) =>
+    api.patch<Task>(`/tasks/${taskId}`, { assigneeId }),
   )
 }
 
@@ -345,7 +409,11 @@ export function useCreateAsset(caseId: string) {
 export function useUpdateAsset(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...patch }: Partial<Asset> & { id: string }) =>
+    // amount は null で「消す」（分からなくなった・間違えて入れた場合）
+    mutationFn: ({
+      id,
+      ...patch
+    }: Omit<Partial<Asset>, 'amount' | 'institution'> & { id: string; amount?: number | null; institution?: string | null }) =>
       api.patch<Asset>(`/assets/${id}`, patch),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.assets(caseId) }),
   })
@@ -363,7 +431,10 @@ export function useCreateLiability(caseId: string) {
 export function useUpdateLiability(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...patch }: Partial<Liability> & { id: string }) =>
+    mutationFn: ({
+      id,
+      ...patch
+    }: Omit<Partial<Liability>, 'amount' | 'creditor'> & { id: string; amount?: number | null; creditor?: string | null }) =>
       api.patch<Liability>(`/liabilities/${id}`, patch),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.liabilities(caseId) }),
   })
@@ -381,7 +452,8 @@ export function useCreateContract(caseId: string) {
 export function useUpdateContract(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...patch }: Partial<Contract> & { id: string }) =>
+    // provider は null で「消す」
+    mutationFn: ({ id, ...patch }: Omit<Partial<Contract>, 'provider'> & { id: string; provider?: string | null }) =>
       api.patch<Contract>(`/contracts/${id}`, patch),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.contracts(caseId) }),
   })
@@ -469,7 +541,12 @@ export function useCreatePerson(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: Partial<Person>) => api.post<Person>(`/cases/${caseId}/persons`, input),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.persons(caseId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.persons(caseId) })
+      // 相続人が増えた・減ったなどの前提の変化は、気づきとして届く。担当者の表示も変わりうる
+      void qc.invalidateQueries({ queryKey: qk.insights(caseId) })
+      void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
+    },
   })
 }
 
@@ -478,7 +555,12 @@ export function useUpdatePerson(caseId: string) {
   return useMutation({
     mutationFn: ({ id, ...patch }: Partial<Person> & { id: string }) =>
       api.patch<Person>(`/persons/${id}`, patch),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.persons(caseId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.persons(caseId) })
+      // 相続人が増えた・減ったなどの前提の変化は、気づきとして届く。担当者の表示も変わりうる
+      void qc.invalidateQueries({ queryKey: qk.insights(caseId) })
+      void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
+    },
   })
 }
 
@@ -486,7 +568,12 @@ export function useDeletePerson(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.delete<void>(`/persons/${id}`),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.persons(caseId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.persons(caseId) })
+      // 相続人が増えた・減ったなどの前提の変化は、気づきとして届く。担当者の表示も変わりうる
+      void qc.invalidateQueries({ queryKey: qk.insights(caseId) })
+      void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
+    },
   })
 }
 
@@ -508,6 +595,8 @@ export function useSetInheritanceDecision(caseId: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.overview(caseId) })
       void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
+      // 相続放棄があると、次の順位の方が相続人になる場合がある。その知らせを取りに行く
+      void qc.invalidateQueries({ queryKey: qk.insights(caseId) })
     },
   })
 }
