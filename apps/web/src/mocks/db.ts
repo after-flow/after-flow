@@ -22,26 +22,24 @@ import type {
   Person,
   Task,
 } from '@aftercare/public-contracts'
-import { syncRuleTasks } from './rules'
+import { addDays, addMonthsLegal, syncRuleTasks, todayLocal } from './rules'
 
 const DAY = 86_400_000
 
+// 日付は暦日として扱う。以前は UTC の日付を使っており、日本時間では朝9時まで前日になり、
+// 日数を足した結果も1日早くずれていた。rules.ts の計算にそろえる
 export function todayISO(): string {
-  return toISO(new Date())
-}
-
-function toISO(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  return todayLocal()
 }
 
 function shift(base: string, days: number): string {
-  return toISO(new Date(new Date(`${base}T00:00:00`).getTime() + days * DAY))
+  return addDays(base, days)
 }
 
 function daysFromToday(iso: string): number {
-  const today = new Date(`${todayISO()}T00:00:00`).getTime()
-  const due = new Date(`${iso}T00:00:00`).getTime()
-  return Math.round((due - today) / DAY)
+  const [ty, tm, td] = todayISO().split('-').map(Number)
+  const [y, m, d] = iso.split('-').map(Number)
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(ty, tm - 1, td)) / DAY)
 }
 
 /** Rule Engine 相当：残日数から重大度を決める（3日前＝黄、当日・超過＝赤） */
@@ -52,13 +50,17 @@ export function makeDeadline(
     taskTitle?: string
     label: string
     startDate: string
-    days: number
+    /** 日で決まった期限。月・年で決まった期限は months を使う（90日や365日で近似しない） */
+    days?: number
+    /** 月・年で決まった期限（民法143条どおり暦で数える） */
+    months?: number
     basisLabel: string
     critical?: boolean
     extendable?: boolean
   },
 ): DeadlineSummary {
-  const dueDate = shift(args.startDate, args.days)
+  const dueDate =
+    args.months != null ? addMonthsLegal(args.startDate, args.months) : shift(args.startDate, args.days ?? 0)
   const remaining = daysFromToday(dueDate)
   const severity =
     remaining < 0 ? 'OVERDUE' : remaining === 0 ? 'URGENT' : remaining <= 3 ? 'SOON' : 'NORMAL'
@@ -78,8 +80,8 @@ export function makeDeadline(
 }
 
 export const FLOW_STAGE_LABELS: { id: FlowStage['id']; label: string }[] = [
-  { id: 'immediate', label: '死亡直後の対応' },
-  { id: 'funeral', label: '葬儀・火葬（死亡届7日以内）' },
+  { id: 'immediate', label: '死亡直後の対応（死亡届7日以内）' },
+  { id: 'funeral', label: '葬儀・火葬' },
   { id: 'government', label: '役所・公的手続（目安14日以内）' },
   { id: 'contracts', label: '契約・生活の整理' },
   { id: 'investigation', label: '相続の調査' },
@@ -107,6 +109,11 @@ interface Store {
   evidences: Evidence[]
   insights: Insight[]
   consents: ConsentDocument[]
+}
+
+function jpDate(iso: string) {
+  const [y, m, d] = iso.split('-').map(Number)
+  return `${y}年${m}月${d}日`
 }
 
 let seq = 100
@@ -218,7 +225,7 @@ export const db: Store = {
         '死亡診断書と一緒に、市区町村の窓口へ提出します。火葬許可証の交付もあわせて受け取ります。',
       submitTo: '○○市役所 市民課',
       status: 'READY',
-      stage: 'funeral',
+      stage: 'immediate',
       category: '役所手続き',
       source: 'RULE_ENGINE',
       deadline: makeDeadline({
@@ -233,15 +240,16 @@ export const db: Store = {
     }),
       requiredDocuments: [
         { id: 'rd_1', label: '死亡診断書', collected: true, source: 'AI', documentId: 'doc_1' },
-        { id: 'rd_2', label: '届出人の印鑑', collected: false, source: 'AI' },
+        { id: 'rd_2', label: '届出人の本人確認書類', collected: false, source: 'AI' },
       ],
       guidance: {
         where: '○○市役所 市民課（本庁舎1階）',
-        bring: ['死亡診断書（原本）', '届出人の印鑑', '本人確認書類'],
+        // 2021年9月から戸籍の届出への押印は任意。印鑑は持ち物に含めない
+        bring: ['死亡診断書（原本）', '届出人の本人確認書類'],
         steps: [
-          '市民課の窓口で死亡届の用紙を受け取ります。',
-          '死亡診断書と一緒に窓口へ提出します。',
-          '火葬許可証を受け取ります。',
+          '病院などで受け取った死亡診断書の左側（死亡届）に記入します。',
+          '火葬許可申請書と一緒に、市民課の窓口へ提出します。',
+          '火葬許可証を受け取ります（火葬の当日に火葬場へ出します）。',
         ],
         note: '窓口の受付時間は自治体によって異なります。夜間・休日窓口の有無は事前にご確認ください。',
         researchedBy: 'MANUAL',
@@ -274,7 +282,7 @@ export const db: Store = {
       requiredDocuments: [{ id: 'rd_3', label: '本人確認書類', collected: false, source: 'AI' }],
       guidance: {
         where: '○○市役所 市民課',
-        bring: ['届出人の本人確認書類', '印鑑'],
+        bring: ['届出人の本人確認書類'],
       },
     }),
     task({
@@ -296,7 +304,7 @@ export const db: Store = {
         basisLabel: '死亡日 ＋ 14日',
       }),
       requiredDocuments: [
-        { id: 'rd_4', label: '故人の保険証', collected: false, source: 'AI' },
+        { id: 'rd_4', label: '故人の保険証または資格確認書', collected: false, source: 'AI' },
       ],
     }),
     task({
@@ -337,7 +345,7 @@ export const db: Store = {
         taskTitle: '相続の方法を決める（承認・放棄の判断）',
         label: '相続放棄・限定承認',
         startDate: DEATH,
-        days: 90,
+        months: 3,
         basisLabel: '自分が相続人になったと知った時 ＋ 3か月',
         critical: true,
         extendable: true,
@@ -374,7 +382,7 @@ export const db: Store = {
         taskTitle: '準確定申告を行う',
         label: '準確定申告',
         startDate: DEATH,
-        days: 120,
+        months: 4,
         basisLabel: '相続開始を知った日の翌日 ＋ 4か月',
         critical: true,
       }),
@@ -471,7 +479,7 @@ export const db: Store = {
         id: 'dl_6',
         label: '生命保険金の請求',
         startDate: DEATH,
-        days: 1095,
+        months: 36,
         basisLabel: '保険事故発生時 ＋ 3年（時効）',
       }),
       version: 1,
@@ -487,7 +495,7 @@ export const db: Store = {
         id: 'dl_7',
         label: '遺族年金の請求',
         startDate: DEATH,
-        days: 1825,
+        months: 60,
         basisLabel: '受給権発生時 ＋ 原則5年',
       }),
       version: 1,
@@ -687,7 +695,7 @@ export const db: Store = {
       kind: 'DEADLINE_RISK',
       body: '戸籍の取り寄せは郵送だと2〜3週間かかることがあります。相続方法を決める期限から逆算すると、今月中に請求を始めないと間に合わなくなるおそれがあります。',
       evidence: [
-        { label: '相続方法の判断期限', value: '2026年12月11日' },
+        { label: '相続方法の判断期限', value: jpDate(addMonthsLegal(DEATH, 3)) },
         { label: '戸籍の収集', value: '未着手（必要書類 2件が未取得）', taskId: 'task_4' },
       ],
       detectedAt: new Date(Date.now() - 26 * 3600_000).toISOString(),

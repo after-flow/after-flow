@@ -116,6 +116,18 @@ type Rule = {
 const p = (c: Case): CaseProfile => c.profile ?? {}
 const unknown = (v?: string) => v == null || v === 'UNKNOWN'
 
+/**
+ * 亡くなったときに入っていた健康保険。
+ * 75歳になると、勤め先の健康保険や国民健康保険から後期高齢者医療に移る。
+ * 手続きの名前・窓口・期限がずれないよう、この判定だけを使う
+ */
+function insurance(c: Case): 'NATIONAL' | 'LATE_ELDERLY' | 'EMPLOYEE' | 'UNKNOWN' {
+  if ((ageAtDeath(c) ?? 0) >= 75 || p(c).healthInsurance === 'LATE_ELDERLY') return 'LATE_ELDERLY'
+  if (p(c).healthInsurance === 'NATIONAL') return 'NATIONAL'
+  if (p(c).healthInsurance === 'EMPLOYEE') return 'EMPLOYEE'
+  return 'UNKNOWN'
+}
+
 /** 死亡時の年齢。生年月日が無ければ null */
 export function ageAtDeath(c: Case): number | null {
   if (!c.dateOfBirth) return null // 未登録・消された（null）とき
@@ -129,18 +141,19 @@ export const RULES: Rule[] = [
     key: 'death_notice',
     title: '死亡届を提出する',
     summary:
-      '死亡診断書と一緒に市区町村の窓口へ出します。火葬許可の申請も同時に行い、火葬許可証を受け取ります。葬儀社が代わりに出すことも多いので、済んでいるか確かめてください。国外で亡くなった場合は3か月以内です。',
-    submitTo: '市区町村役場の戸籍の窓口',
-    stage: 'funeral',
+      '死亡届の用紙は、病院などで受け取る死亡診断書（死体検案書）と1枚になっています。左側の死亡届に記入し、市区町村の窓口へ出します。火葬許可の申請も同時に行い、火葬許可証を受け取ります（許可証がないと火葬できません）。葬儀社が代わりに出すことも多いので、済んでいるか確かめてください。国外で亡くなった場合は3か月以内です。',
+    submitTo: '故人の本籍地・亡くなった場所、または届出人の住所地の市区町村役場（戸籍の窓口）',
+    stage: 'immediate',
     category: '役所手続き',
     include: () => 'yes',
     deadline: { from: 'known', unit: 'day', n: 7, includeFirstDay: true, basis: '亡くなったことを知った日から7日以内（その日を含めて数えます）', critical: true },
-    required: ['死亡診断書（原本）', '届出人の印鑑', '本人確認書類'],
+    // 2021年9月から、戸籍の届出への押印は任意になった。印鑑は必要書類に含めない
+    required: ['死亡診断書（原本）', '届出人の本人確認書類'],
   },
   {
     key: 'household',
     title: '世帯主変更届を出す',
-    summary: '故人が世帯主で、同じ世帯に残る方が2人以上いる場合に必要です（残る方が1人なら不要です）。',
+    summary: '故人が世帯主で、同じ世帯に残る方が2人以上いる場合に必要です。残る方が1人のときや、残るのが親1人とその15歳未満の子だけのときなど、次の世帯主が明らかな場合は不要です。',
     submitTo: '市区町村役場の住民票の窓口',
     stage: 'government',
     category: '役所手続き',
@@ -151,26 +164,27 @@ export const RULES: Rule[] = [
   {
     key: 'health_insurance',
     title: (c) =>
-      p(c).healthInsurance === 'NATIONAL'
+      insurance(c) === 'NATIONAL'
         ? '国民健康保険の資格喪失届を出す'
-        : p(c).healthInsurance === 'LATE_ELDERLY' || (ageAtDeath(c) ?? 0) >= 75
+        : insurance(c) === 'LATE_ELDERLY'
           ? '後期高齢者医療の資格喪失届を出す'
-          : p(c).healthInsurance === 'EMPLOYEE'
+          : insurance(c) === 'EMPLOYEE'
             ? '勤務先に連絡し、健康保険証を返す'
             : '健康保険の資格喪失の手続きをする',
     summary: (c) =>
-      p(c).healthInsurance === 'EMPLOYEE'
-        ? '会社の健康保険は、勤務先が手続きをします。勤務先に亡くなったことを伝え、保険証を返してください。'
-        : '保険証を返します。加入していた保険によって窓口が違います（国民健康保険・後期高齢者医療は市区町村、会社の健康保険は勤務先）。',
-    submitTo: (c) => (p(c).healthInsurance === 'EMPLOYEE' ? '勤務先' : '市区町村役場の保険年金の窓口'),
+      insurance(c) === 'EMPLOYEE'
+        ? '会社の健康保険は、勤務先が手続きをします。勤務先に亡くなったことを伝え、保険証（または資格確認書）を返してください。'
+        : '保険証（または資格確認書）を返します。加入していた保険によって窓口が違います（国民健康保険・後期高齢者医療は市区町村、会社の健康保険は勤務先）。',
+    submitTo: (c) => (insurance(c) === 'EMPLOYEE' ? '勤務先' : '市区町村役場の保険年金の窓口'),
     stage: 'government',
     category: '年金・保険',
     include: () => 'yes',
     deadline: (c) =>
-      p(c).healthInsurance === 'EMPLOYEE'
+      insurance(c) === 'EMPLOYEE'
         ? undefined
         : { from: 'death', unit: 'day', n: 14, basis: '亡くなった日の翌日から数えて14日以内', critical: true },
-    required: ['故人の保険証'],
+    // 2024年12月から保険証の新規発行は止まり、資格確認書が送られている人もいる
+    required: ['故人の保険証または資格確認書'],
   },
   {
     key: 'long_term_care',
@@ -231,14 +245,14 @@ export const RULES: Rule[] = [
   {
     key: 'death_lump_sum',
     title: '死亡一時金・寡婦年金を受け取れるか確かめる',
-    summary: `国民年金だけに加入して保険料を納めていた方（自営業の方など）が、年金を受け取らずに亡くなった場合に対象になることがあります。死亡一時金は2年、寡婦年金は5年が請求の期限です。`,
+    summary: `自営業などで国民年金の保険料を納めていた期間（第1号被保険者の期間）がある方が、年金を受け取らずに亡くなった場合に対象になることがあります。死亡一時金は納めた期間が3年以上、寡婦年金は10年以上で、遺族基礎年金を受け取れる場合などは対象外です。請求の期限は死亡一時金が2年、寡婦年金が5年です。`,
     submitTo: '市区町村役場の国民年金の窓口または年金事務所',
     stage: 'transfer',
     category: '年金・保険',
     include: (c) => {
       const pr = p(c)
+      // 年金を受け取っていた方は対象外。会社員でも、以前に第1号被保険者の期間があれば対象になりうるので外さない
       if (pr.pension === 'EMPLOYEES' || pr.pension === 'NATIONAL_ONLY') return 'no'
-      if (pr.occupation === 'EMPLOYEE') return 'no'
       return 'maybe'
     },
     deadline: { from: 'death', unit: 'year', n: 2, basis: '死亡一時金は亡くなった日の翌日から2年（寡婦年金は5年）' },
@@ -246,17 +260,17 @@ export const RULES: Rule[] = [
   {
     key: 'funeral_benefit',
     title: (c) =>
-      p(c).healthInsurance === 'EMPLOYEE'
+      insurance(c) === 'EMPLOYEE'
         ? '埋葬料を請求する'
-        : p(c).healthInsurance === 'NATIONAL' || p(c).healthInsurance === 'LATE_ELDERLY'
-          ? '葬祭費を請求する'
-          : '葬祭費・埋葬料を請求する',
+        : insurance(c) === 'UNKNOWN'
+          ? '葬祭費・埋葬料を請求する'
+          : '葬祭費を請求する',
     summary: (c) =>
-      p(c).healthInsurance === 'EMPLOYEE'
-        ? '会社の健康保険から、埋葬を行った方に埋葬料が支給されます。'
-        : '葬儀を行った方に、加入していた健康保険から葬祭費（国民健康保険・後期高齢者医療）または埋葬料（会社の健康保険）が支給されます。',
+      insurance(c) === 'EMPLOYEE'
+        ? '会社の健康保険から、故人に生計を維持されていて埋葬を行った方に埋葬料が支給されます（該当する方がいなければ、埋葬を行った方に埋葬費）。'
+        : '加入していた健康保険から、葬儀を行った方（喪主）に葬祭費（国民健康保険・後期高齢者医療）、または埋葬料（会社の健康保険）が支給されます。',
     submitTo: (c) =>
-      p(c).healthInsurance === 'EMPLOYEE' ? '勤務先の健康保険組合または協会けんぽ' : '市区町村役場の保険年金の窓口',
+      insurance(c) === 'EMPLOYEE' ? '勤務先の健康保険組合または協会けんぽ' : '市区町村役場の保険年金の窓口',
     stage: 'transfer',
     category: '年金・保険',
     include: () => 'yes',
@@ -266,11 +280,13 @@ export const RULES: Rule[] = [
   {
     key: 'high_cost_medical',
     title: '高額療養費の払い戻しを確かめる',
-    summary: `入院などで医療費の自己負担が高額だった場合、上限を超えた分が払い戻されることがあります。期限は診療を受けた月の翌月1日から2年です。`,
+    summary: `入院などで医療費の自己負担が高額だった場合、上限を超えた分が払い戻されることがあります。期限は診療を受けた月の翌月1日から2年です。払い戻しは故人の財産にあたるため、相続の方法を決めてから受け取ります。`,
     submitTo: '加入していた健康保険の窓口',
     stage: 'transfer',
     category: '年金・保険',
     include: () => 'maybe',
+    // 払い戻しを受け取るのは故人の財産（債権）の取り立てで、相続放棄できなくなるおそれがある
+    assetDisposal: true,
   },
   {
     key: 'will_check',
@@ -285,8 +301,8 @@ export const RULES: Rule[] = [
   {
     key: 'heirs',
     title: '相続人を調べる（戸籍の収集）',
-    summary: '故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続の方法を決める期限（3か月）に間に合うよう、早めに始めます。',
-    submitTo: '本籍地の市区町村（郵送でも請求できます）',
+    summary: '故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続の方法を決める期限（3か月）に間に合うよう、早めに始めます。2024年3月から、配偶者・子・父母などは、最寄りの市区町村の窓口で、本籍地が遠い戸籍もまとめて請求できます（広域交付。兄弟姉妹は使えず、郵送では請求できません）。そろったら法務局で「法定相続情報一覧図」の写しを作ると、ほかの手続きで戸籍の束を何度も出さずに済みます。',
+    submitTo: '本籍地の市区町村（郵送でも請求できます）、または最寄りの市区町村の窓口（広域交付）',
     stage: 'investigation',
     category: '相続',
     include: () => 'yes',
@@ -305,7 +321,7 @@ export const RULES: Rule[] = [
     key: 'decision',
     title: '相続の方法を決める（承認・放棄の判断）',
     summary:
-      '単純承認・限定承認・相続放棄のいずれかを、相続人ごとに決めます。相続放棄・限定承認は家庭裁判所への申し立てが必要です。判断は法的な内容を含むため、迷う場合は弁護士にご相談ください。',
+      '単純承認・限定承認・相続放棄のいずれかを決めます。相続放棄は相続人ごとに、限定承認は相続人全員がそろって、家庭裁判所に申し立てます。期限までに何もしないと、単純承認したものとみなされます。判断は法的な内容を含むため、迷う場合は弁護士にご相談ください。',
     submitTo: '故人の最後の住所地の家庭裁判所（相続放棄・限定承認の場合）',
     stage: 'decision',
     category: '相続',
@@ -326,7 +342,7 @@ export const RULES: Rule[] = [
     key: 'inheritance_tax',
     title: '相続税の申告が必要か確かめる',
     summary:
-      '財産の総額が基礎控除額以下なら、申告は不要です。ただし、配偶者の税額軽減や小規模宅地等の特例を使って税額が0円になる場合は、申告が必要です。判断は税務署または税理士にご確認ください。',
+      '財産の総額が基礎控除額（3,000万円＋600万円×法定相続人の数）以下なら、申告は不要です。ただし、配偶者の税額軽減や小規模宅地等の特例を使って税額が0円になる場合は、申告が必要です。判断は税務署または税理士にご確認ください。',
     submitTo: '故人の住所地を管轄する税務署',
     stage: 'tax',
     category: '税務',
@@ -336,7 +352,7 @@ export const RULES: Rule[] = [
   {
     key: 'division',
     title: '遺産の分け方を話し合う（遺産分割協議）',
-    summary: '相続人全員で遺産の分け方を話し合い、まとまったら遺産分割協議書を作ります。遺言書がある場合は、その内容が基本になります。',
+    summary: '相続人全員で遺産の分け方を話し合い、まとまったら遺産分割協議書を作ります。協議書には相続人全員が署名して実印を押し、印鑑登録証明書を添えるのが一般的です。遺言書がある場合は、その内容が基本になります。相続人に未成年の子とその親がいる場合は、家庭裁判所で特別代理人を選ぶ必要があります。',
     stage: 'division',
     category: '相続',
     include: () => 'yes',
@@ -345,7 +361,7 @@ export const RULES: Rule[] = [
     key: 'bank_accounts',
     title: '預貯金の相続手続きをする',
     summary:
-      '口座のある金融機関に亡くなったことを伝え、相続の手続きをします。遺産分割の前でも、一定額までは引き出せる制度（仮払い）があります。相続の方法を決めたあとに行う手続きです。',
+      '口座のある金融機関に亡くなったことを伝え、相続の手続きをします。遺産分割の前でも、一定額までは引き出せる制度（仮払い）があります。ただし、相続放棄を考えている場合は使わないでください（放棄できなくなるおそれがあります）。相続の方法を決めたあとに行う手続きです。',
     submitTo: '口座のある金融機関',
     stage: 'transfer',
     category: '金融機関',
@@ -394,7 +410,7 @@ export const RULES: Rule[] = [
   {
     key: 'employer',
     title: '勤務先の手続きをする',
-    summary: '勤務先に亡くなったことを伝え、最後の給与・死亡退職金・社員証や保険証の返却などを確かめます。',
+    summary: '勤務先に亡くなったことを伝え、最後の給与・死亡退職金・社員証や保険証の返却などを確かめます。未払いの給与は故人の財産にあたるため、相続放棄を考えている場合は受け取る前に確かめてください。',
     submitTo: '勤務先',
     stage: 'transfer',
     category: 'その他',
@@ -403,16 +419,17 @@ export const RULES: Rule[] = [
   {
     key: 'self_employed',
     title: '個人事業の届出をする',
-    summary: '個人事業をしていた場合、税務署に廃業などの届出をします。事業を引き継ぐ場合は、別の届出が必要なことがあります。',
+    summary: '個人事業をしていた場合、相続人が税務署に「個人事業の開業・廃業等届出書」を出します。消費税を納めていた場合は「個人事業者の死亡届出書」も出します。事業を引き継ぐ場合は、別の届出（青色申告の承認申請など）が必要なことがあります。',
     submitTo: '故人の住所地を管轄する税務署',
     stage: 'tax',
     category: '税務',
     include: (c) => (p(c).occupation === 'SELF_EMPLOYED' ? 'yes' : 'no'),
+    deadline: { from: 'death', unit: 'month', n: 1, basis: '事業をやめた日（亡くなった日）から1か月以内（開業・廃業等届出書）' },
   },
   {
     key: 'life_insurance',
     title: '生命保険・共済に入っていたか確かめる',
-    summary: '保険証券や通帳の引き落としから、保険や共済を探します。保険金の請求には期限（多くは3年の時効）があります。',
+    summary: '保険証券や通帳の引き落としから、保険や共済を探します。受取人が決まっている死亡保険金は受取人のものなので、相続放棄をしても受け取れます（相続税がかかることはあります）。保険金の請求には期限（多くは3年の時効）があります。',
     submitTo: '保険会社・共済',
     stage: 'transfer',
     category: '年金・保険',
@@ -421,7 +438,7 @@ export const RULES: Rule[] = [
   {
     key: 'utilities',
     title: '公共料金・携帯電話・カードなどの契約を整理する',
-    summary: '電気・ガス・水道・携帯電話・インターネット・NHK・クレジットカード・サブスク（定額サービス）・賃貸住宅などの契約を、名義変更か解約します。',
+    summary: '電気・ガス・水道・携帯電話・インターネット・NHK・クレジットカード・サブスク（定額サービス）・賃貸住宅などの契約を、名義変更か解約します。相続放棄を考えている場合、賃貸住宅の解約や、故人の預金から未払い分を払うことは、放棄できなくなるおそれがあるため、先に専門家へ確かめてください。',
     stage: 'contracts',
     category: '契約',
     include: () => 'yes',
@@ -429,7 +446,7 @@ export const RULES: Rule[] = [
   {
     key: 'id_returns',
     title: '運転免許証・パスポートなどを返す',
-    summary: '運転免許証・パスポート・マイナンバーカード・障害者手帳など、持っていたものを返します。期限の決まりが無いものも多いので、落ち着いてからで構いません。',
+    summary: 'パスポートは、失効の手続きのため旅券の窓口へ返します。運転免許証・障害者手帳なども返します。マイナンバーカードは死亡届で使えなくなるため、返さなくてよい自治体もあります。期限の決まりが無いものも多いので、落ち着いてからで構いません。',
     stage: 'closing',
     category: '役所手続き',
     include: () => 'yes',

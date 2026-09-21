@@ -68,7 +68,8 @@ export const PLACEHOLDER_RULE_CATALOG: RuleCatalog = {
       id: 'collect-family-register',
       title: '戸籍謄本を収集する',
       summary: '相続人を確定するために、必要な範囲の戸籍を集めます。',
-      stage: 'government',
+      // 窓口は役所だが、目的は相続人の調査。流れの上では「相続の調査」の段階に置く
+      stage: 'investigation',
       category: '書類収集',
       submitTo: null,
       evidenceRequired: false,
