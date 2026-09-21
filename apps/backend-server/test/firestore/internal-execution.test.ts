@@ -219,6 +219,14 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(replied.status, 202, JSON.stringify(replied.body))
     assert.equal(replied.body.data.attempt, 2)
     assert.equal((await call(h.app, `${path}/answers`, request)).body.data.attempt, 2)
+
+    // 公開可能な履歴（Issue #125）。質問回答による再キューもRETRIEDとして残る。
+    const events = await agentRunEvents(h.tenantId, h.caseId, exec.run.id)
+    const retried = events.filter(e => e.kind === 'RETRIED')
+    assert.equal(retried.length, 1, '質問回答による再キューのイベントが記録されていない')
+    assert.equal(retried[0]!.status, 'QUEUED')
+    assert.equal(retried[0]!.attempt, 2)
+    assert.equal(retried[0]!.detail.outcome, 'QUESTIONS_ANSWERED')
     assert.equal((await h.request(exec, 'result', result)).status, 409)
     const next = (await readRepository().get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: exec.run.id }))!
     const claims = await h.service.dispatchClaims(h.tenantId, h.caseId, next.id, next.currentJobId!)
@@ -629,6 +637,23 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
     }
   })
 
+  it('書き込み権を失ったRUNNINGでAI側が完了済みなら要確認にし、公開履歴へ残す', async t => {
+    const h = await setup(t), exec = await h.accept()
+    await h.context(exec)
+    await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/coordination/writer`).update({ expiresAt: new Date(0).toISOString() })
+    h.ai.snapshots.set(exec.run.id, { runId: exec.run.id, jobId: exec.claims.jobId, executionAttempt: exec.claims.executionAttempt,
+      waitRequestId: null, snapshotId: null, state: 'COMPLETED' })
+    await h.reconciler().reconcile(h.tenantId, h.caseId, exec.run.id)
+    const run = (await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).data() as AgentRunEntity
+    assert.equal(run.status, 'NEEDS_ATTENTION')
+
+    // 公開可能な履歴（Issue #125）。復旧要確認もイベントに残る。
+    const events = await agentRunEvents(h.tenantId, h.caseId, exec.run.id)
+    const attention = events.find(e => e.status === 'NEEDS_ATTENTION' && e.kind === 'RESULT')
+    assert.ok(attention, 'Reconcilerの復旧要確認イベントが記録されていない')
+    assert.equal(attention!.detail.failureReason, 'RECOVERY_ATTENTION')
+  })
+
   it('待機保存後にBackend workerを別プロセスで再起動してもresume intentを回復する', async t => {
     const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
     const submitted = (await h.request(exec, 'proposals', proposal(context))).body.data
@@ -658,7 +683,16 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
     const path = `/cases/${h.caseId}/agent-runs/${exec.run.id}`
     const run = (await call(h.app, path)).body.data
     assert.equal(run.status, 'NEEDS_ATTENTION')
+
+    // 公開可能な履歴（Issue #125）。ReconcilerによるNEEDS_ATTENTIONも記録される。
+    const events = await agentRunEvents(h.tenantId, h.caseId, exec.run.id)
+    const attention = events.find(e => e.status === 'NEEDS_ATTENTION' && e.kind === 'RESULT')
+    assert.ok(attention, 'Reconcilerによる要確認イベントが記録されていない')
+    assert.equal(attention!.detail.failureReason, 'SNAPSHOT_MISSING')
+
     assert.equal((await call(h.app, `${path}/retry`, jsonRequest('POST', { expectedVersion: run.version }))).status, 202)
+    const eventsAfterRetry = await agentRunEvents(h.tenantId, h.caseId, exec.run.id)
+    assert.equal(eventsAfterRetry.filter(e => e.kind === 'RETRIED').length, 1, '手動retryのRETRIEDイベントが記録されていない')
     const stored = (await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/agentRuns/${exec.run.id}`).get()).data() as AgentRunEntity
     assert.equal(stored.activeWaitRequestId, null)
     assert.equal((await h.client.deliver({ ...exec.job, eventId: stored.currentJobId! })).status, 'ACCEPTED')

@@ -4,6 +4,7 @@ import type { AgentRunEventEntity, AgentRunEventKind } from '../../domain/agent/
 import { collections } from '../../domain/shared/collections.js'
 import type { DocLocation, Tx } from '../ports/persistence.js'
 import { fingerprintOf } from '../../shared/fingerprint.js'
+import { errors } from '../../shared/app-error.js'
 
 /**
  * 公開可能なRun履歴の記録（Issue #125）。
@@ -75,7 +76,9 @@ export function recordRunTransitionEvent(
   status: AgentRunStatus,
   options: { eventId?: string; attempt?: number; detail?: Record<string, unknown> } = {},
 ) {
-  if (!run.caseId) return Promise.resolve()
+  // すべてのAgentRunはCase配下（作成時にcaseIdを渡す）。ここに来る時点でnullは
+  // データ不整合であり、履歴を黙って欠落させるより即座に失敗させる方が安全。
+  if (!run.caseId) throw errors.internal({ internal: { reason: 'AgentRun missing caseId while recording event', runId: run.id } })
   return recordAgentRunEvent(tx, {
     caseId: run.caseId, runId: run.id, kind, status,
     attempt: options.attempt ?? run.attempt, sequence: run.version + 1,

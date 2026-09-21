@@ -246,6 +246,14 @@ export class InternalExecutionService {
         fencingToken: grant.fencingToken,
         contentHash: fingerprintOf(snapshot.content), expiresAt: new Date(Date.now() + 300_000).toISOString() }
       tx.create<RunArtifactEntity>(location, { id, runId: run.id, jobId: claims.jobId, executionAttempt: claims.executionAttempt, artifact })
+      // QUEUED→RUNNINGはイベントとして記録しない(Issue #125レビュー指摘への対応)。
+      // AI側から明示のPROGRESS（`event()`）が送られない限り、公開履歴上は
+      // ACCEPTED→RESULTの間に「処理中」stageが現れない。既存テスト
+      // (internal-execution.test.tsの「dispatch→context→artifact→heartbeat→
+      // progress→result」)がAI側PROGRESSの個数・順序・detailを厳密に検証して
+      // おり、ここでBackend発のPROGRESSを自動追加すると重複してその契約を壊す。
+      // 将来Backend起点の処理中イベントを追加するなら、AI起点のPROGRESSと
+      // 区別できるdetail（"source": "BACKEND"等）を契約に含めてから行う。
       tx.update<AgentRunEntity>(runLocation(claims.caseId, run.id), run.version, {
         status: 'RUNNING', fencingToken: grant.fencingToken, startedAt: run.startedAt ?? new Date().toISOString(),
       })

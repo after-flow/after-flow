@@ -368,6 +368,9 @@ export class AgentRunService {
         pendingResume: { kind: 'RETRY', previousAttemptId: run.currentAttemptId, snapshotId: null, waitRequestId: null, outcome: 'QUESTIONS_ANSWERED' },
         failureReason: null, waitingFor: null, finishedAt: null,
       })
+      await recordRunTransitionEvent(tx, run, 'RETRIED', 'QUEUED', {
+        eventId: jobId, attempt: run.attempt + 1, detail: { attempt: run.attempt + 1, outcome: 'QUESTIONS_ANSWERED' },
+      })
       tx.audit({ caseId, type: 'agent_run.questions_answered', target: { collection: collections.agentRuns.name, id: runId, version: run.version + 1 }, detail: { resultId: input.resultId, answerCount: input.answers.length } })
       tx.outbox({ id: jobId, type: 'agent.case_planning', caseId, payload: { caseId, runId, operation: run.operation, targetType: run.targetType, targetId: run.targetId, attempt: run.attempt + 1 } })
     })

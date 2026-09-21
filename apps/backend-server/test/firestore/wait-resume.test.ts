@@ -541,6 +541,12 @@ describeFirestore('待機と再開', () => {
 
     const lease = await env.loadLease()
     assert.equal(lease?.holderRunId, null)
+
+    // 公開可能な取消履歴（Issue #125）。同意撤回によるCANCELLEDもイベントに残る。
+    const events = await agentRunEvents(env.tenantId, env.caseId, exec.run.id)
+    const cancelled = events.filter((e) => e.kind === 'CANCELLED')
+    assert.equal(cancelled.length, 1, 'CANCELLEDイベントが記録されていない')
+    assert.equal(cancelled[0]!.status, 'CANCELLED')
   })
 
   it('他の実行の承認を待たせない', async (t) => {

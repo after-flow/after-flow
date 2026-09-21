@@ -56,7 +56,10 @@ export const testActor: ActorRef = { type: 'USER', userId: 'user-test-0001', age
  * 対象Runの公開AgentRun進捗イベントを発生順で取得する（Issue #125）。
  *
  * 公開GET /agent-runs/:runId/eventsと同じ read.list(where runId, orderBy sequence)
- * を通すため、複合indexの整合も併せて検証できる。
+ * を通すため、クエリの形（where + orderBy + ページング）は検証できる。
+ * ただしFirestore Emulatorは複合indexを強制しないため、
+ * infra/firestore/firestore.indexes.jsonのagentRunEvents index定義が
+ * 本番へ実際にデプロイされているかはこのテストでは検証できない（本番のみの確認事項）。
  */
 export async function agentRunEvents(tenantId: string, caseId: string, runId: string): Promise<AgentRunEventEntity[]> {
   const page = await readRepository().list<AgentRunEventEntity>(tenantId, collections.agentRunEvents, caseId, {

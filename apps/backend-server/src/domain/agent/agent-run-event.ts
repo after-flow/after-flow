@@ -9,6 +9,11 @@ import type { EntityBase } from '../shared/entity.js'
  *
  * prompt、非公開の思考過程、資格情報、原本文はここへ絶対に書かない。
  * `detail` へ入れてよいのは、列挙値・ID・件数などの安全な範囲だけ。
+ *
+ * 「処理中」stageは現時点でAIが内部APIへ送るPROGRESSイベント（`event()`）
+ * だけが表す。BackendはQUEUED→RUNNINGの遷移自体をイベントとして記録しない
+ * （chat_reply/task_guidanceのようにAIがPROGRESSを送らない操作では、公開
+ * 履歴はACCEPTEDの次にRESULTが並ぶ）。
  */
 export type AgentRunEventKind =
   | 'ACCEPTED'
