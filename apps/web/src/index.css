@@ -12,10 +12,12 @@
  * 面と点にはその色を、文字には濃い方（*-text）を使う。
  */
 @theme {
-  /* 日本語は system フォントの品質が十分に高く、第三者への通信も増やさずに済む。
-     自前ホストの Noto Sans JP へ差し替える場合はこの変数だけを変更する。 */
+  /* BIZ UDPゴシックを使う。線が太くしっかりしており、画数の多い字や似た字（シとツなど）も
+     見分けやすいユニバーサルデザインのフォントで、高齢の利用者にも読みやすい。
+     自前でホストし（@fontsource、main.tsx で読み込む）、第三者への通信は増やさない。
+     文字の範囲ごとに分かれているので、使う文字の分だけ読み込まれる。読み込めないときは system フォントで出す。 */
   --font-sans:
-    'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic',
+    'BIZ UDPGothic', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic',
     Meiryo, system-ui, sans-serif;
 
   /* 地・面・枠・文字 */
