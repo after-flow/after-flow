@@ -36,6 +36,7 @@ export interface InsightServiceDeps {
   insights: CaseScopedRepository<Insight>
   views: InsightViewStore
   runs: AgentRunLookup
+  caseVersion?: (tenantId: string, caseId: string) => Promise<number | null>
   evidence: EvidenceResolver
   ledger: InsightResultLedger
   memberships: CaseMembershipPort
@@ -224,6 +225,9 @@ export class InsightService {
   /* ---------- DTO ---------- */
 
   private async toDto(i: Insight, view: InsightView): Promise<InsightDto> {
+    const caseVersion = i.basisCaseVersion === undefined ? undefined : await this.deps.caseVersion?.(i.tenantId, i.caseId)
+    const caseFreshness: EvidenceFreshness | null = i.basisCaseVersion === undefined ? null :
+      caseVersion === undefined || caseVersion === null ? 'UNAVAILABLE' : caseVersion === i.basisCaseVersion ? null : 'STALE'
     const evidence: InsightEvidenceDto[] = await Promise.all(
       i.evidence.map(async (e) => {
         const current = e.documentId
@@ -237,7 +241,7 @@ export class InsightService {
           ...(e.documentId !== null && { documentId: e.documentId }),
           ...(e.documentName !== null && { documentName: e.documentName }),
           ...(e.taskId !== null && { taskId: e.taskId }),
-          freshness: freshnessOf(e, current),
+          freshness: freshnessOf(e, current) === 'UNAVAILABLE' ? 'UNAVAILABLE' : caseFreshness ?? freshnessOf(e, current),
         }
       }),
     )

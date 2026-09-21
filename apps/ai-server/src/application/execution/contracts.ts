@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { internalId, operationSchema } from '@aftercare/internal-contracts'
+import { internalId, operationSchema, interruptedResultSchema, runSummarySchema } from '@aftercare/internal-contracts'
 
 export const budgetSchema = z.object({
   tools: z.number().int().positive().max(1000), research: z.number().int().positive().max(100),
@@ -21,10 +21,12 @@ export const receiptSchema = z.object({
   kind: z.enum(['dispatch', 'resume']), resume: resumeSchema.nullable(),
   workflowName: internalId, workflowRunId: internalId,
   encryptedDispatch: z.string().min(1).max(12000),
-  state: z.enum(['QUEUED', 'RUNNING', 'WAITING', 'COMPLETED', 'STOPPED', 'FAILED']),
+  state: z.enum(['QUEUED', 'RUNNING', 'WAITING', 'COMPLETED', 'STOPPED', 'FAILED', 'REPORTING']),
   owner: internalId.nullable(), leaseUntil: z.number().int().nonnegative(),
   waitRequestId: internalId.nullable(), createdAt: z.number().int(), updatedAt: z.number().int(),
-  failure: z.enum(['STOPPED', 'EXECUTION_FAILED', 'BUDGET_EXCEEDED']).nullable(),
+  failure: z.enum(['STOPPED', 'EXECUTION_FAILED', 'BUDGET_EXCEEDED', 'TIME_LIMIT']).nullable(),
+  progress: z.object({ caseVersion: z.number().int().positive(), output: runSummarySchema }).strict().nullable().optional(),
+  pendingResult: interruptedResultSchema.nullable().optional(),
 }).strict()
 export type Receipt = z.infer<typeof receiptSchema>
 export class ExecutionRejected extends Error {

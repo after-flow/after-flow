@@ -38,11 +38,16 @@ function setup(coreTurns: Parameters<typeof scriptedModel>[0] = [{ text: '確認
 test('native skills load with stable versions; guidance and research cannot load proposal skill', async () => {
   const { coreAgent, researchAgent } = setup()
   assert.equal(skillCatalog.length, 6)
+  for (const definition of skillCatalog) {
+    const reference = JSON.parse(definition.references['output-schema.json'])
+    assert.ok(Object.keys(reference.schemas).length > 0)
+    assert.equal(reference.boundary, definition.outputBoundary)
+  }
   assert.equal((await coreAgent.listSkills()).length, 3)
   assert.equal((await researchAgent.listSkills()).length, 2)
   const skill = await coreAgent.getSkill('case-assessment')
   assert.ok(skill?.instructions.includes('extracted_candidate'))
-  assert.equal(skill?.metadata?.version, '1.0.0')
+  assert.equal(skill?.metadata?.version, '1.1.0')
   assert.match(String(skill?.metadata?.hash), /^[a-f0-9]{64}$/)
   assert.equal(await coreAgent.getSkill('change-proposal'), null)
   assert.throws(() => resolveSkills(['change-proposal'], 'core', 'guidance', ['propose']))

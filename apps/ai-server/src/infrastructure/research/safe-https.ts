@@ -3,6 +3,7 @@ import { BlockList, isIP } from 'node:net'
 import { request } from 'node:https'
 import type { RequestOptions } from 'node:https'
 import type { IncomingHttpHeaders } from 'node:http'
+import { OFFICIAL_PDF_MAX_BYTES } from './pdf-text.js'
 import type { OfficialResponse } from './official-catalog.js'
 
 const blocked = new BlockList()
@@ -45,7 +46,7 @@ export async function pinnedSourceRequest(url: URL, signal: AbortSignal,
       if (options.all) callback(null, [{ address, family: 4 }])
       else callback(null, address, 4)
     },
-    headers: { Accept: 'text/html, text/plain', 'Accept-Encoding': 'identity', 'User-Agent': 'after-flow-official-research/1' },
+    headers: { Accept: 'text/html, text/plain, application/pdf', 'Accept-Encoding': 'identity', 'User-Agent': 'after-flow-official-research/1' },
   }
 }
 
@@ -72,17 +73,22 @@ export async function readOfficialResponse(response: SourceResponse, signal: Abo
   try {
     const contentType = response.headers['content-type'] ?? ''
     const mediaType = contentType.split(';')[0]?.trim().toLowerCase()
-    if (response.statusCode !== 200 || !['text/html', 'text/plain'].includes(mediaType ?? '') ||
+    if (response.statusCode !== 200 || !['text/html', 'text/plain', 'application/pdf'].includes(mediaType ?? '') ||
       (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') ||
       (/charset\s*=/i.test(contentType) && !/charset\s*=\s*"?utf-8"?(?:\s*;|\s*$)/i.test(contentType))) throw new Error('Official source response is not supported')
     let size = 0; const chunks: Uint8Array[] = []
     for await (const chunk of response) {
       signal.throwIfAborted(); size += chunk.byteLength
-      if (size > 524288) throw new Error('Official source response exceeds limit')
+      if (size > (mediaType === 'application/pdf' ? OFFICIAL_PDF_MAX_BYTES : 524288)) throw new Error('Official source response exceeds limit')
       chunks.push(chunk)
     }
     signal.throwIfAborted()
-    return { body: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)), contentType: mediaType as OfficialResponse['contentType'] }
+    const body = Buffer.concat(chunks)
+    if (mediaType === 'application/pdf') {
+      if (!body.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new Error('Invalid PDF signature')
+      return { body: new Uint8Array(body), contentType: 'application/pdf' }
+    }
+    return { body: new TextDecoder('utf-8', { fatal: true }).decode(body), contentType: mediaType as 'text/html' | 'text/plain' }
   } catch {
     response.destroy()
     throw new Error('Official source response rejected')

@@ -76,3 +76,31 @@ test('HTTP body reader rejects redirects, binary/compressed bodies, oversized st
   await assert.rejects(readOfficialResponse(response(200, 'text/plain', [Buffer.from('data')]), abort.signal), /rejected/)
   assert.deepEqual(await readOfficialResponse(response(200, 'text/plain; charset=utf-8', [Buffer.from('合成')]), signal), { body: '合成', contentType: 'text/plain' })
 })
+
+test('official PDF retrieval extracts real text with page provenance; invalid, image-only and cancelled PDFs fail closed', async () => {
+  const { extractOfficialPdf } = await import('../src/infrastructure/research/pdf-text.js')
+  const pdf = (text: string) => {
+    const stream = text ? `BT /F1 12 Tf 72 720 Td (${text}) Tj ET` : ''
+    const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`]
+    let body = '%PDF-1.4\n'; const offsets = [0]
+    for (const [index, object] of objects.entries()) { offsets.push(body.length); body += `${index + 1} 0 obj\n${object}\nendobj\n` }
+    const start = body.length
+    body += `xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${start}\n%%EOF\n`
+    return new Uint8Array(Buffer.from(body))
+  }
+  const bytes = pdf('Synthetic official document')
+  const response = Object.assign(Readable.from([bytes]), { statusCode: 200, headers: { 'content-type': 'application/pdf' } })
+  const retrieved = await readOfficialResponse(response, signal)
+  const provider = createOfficialCatalogProvider([catalog], { now: () => time, fetchText: async () => retrieved })
+  const [candidate] = await provider.search({ query: '必要書類', catalogIds: ['synthetic'], signal })
+  const document = await provider.read({ candidate: candidate!, signal })
+  assert.match(document.text, /\[PDF page 1\][\s\S]*Synthetic official document/)
+  assert.match(document.location, /1〜1ページ/)
+  await assert.rejects(extractOfficialPdf(pdf(''), signal), /unreadable/)
+  await assert.rejects(extractOfficialPdf(Buffer.from('%PDF-broken'), signal), /unreadable/)
+  const abort = new AbortController()
+  const processing = extractOfficialPdf(bytes, abort.signal); abort.abort()
+  await assert.rejects(processing, /unreadable/)
+})

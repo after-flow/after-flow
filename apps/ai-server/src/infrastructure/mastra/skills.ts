@@ -6,7 +6,7 @@ export function createAgentSkills(ids: readonly SkillId[], role: AgentRole, mode
   return resolveSkills(ids, role, mode, capabilities).map((skill) => createSkill({
     name: skill.id, description: skill.description, instructions: skill.instructions,
     'user-invocable': false,
-    metadata: { version: skill.version, hash: skill.hash, role: skill.role },
+    metadata: { version: skill.version, hash: skill.hash, role: skill.role, outputBoundary: skill.outputBoundary, outputSchema: 'references/output-schema.json' },
     references: { ...skill.references },
   }))
 }

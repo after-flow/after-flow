@@ -22,9 +22,9 @@ function bindBudget(prepared: Pick<GuidanceAgentDependencies, 'models'> & { budg
   if (prepared.budget.inferenceChargedByProviderAdapter || Array.isArray(prepared.models.core) || Array.isArray(prepared.models.research)) {
     assertAuthorizedModelSet(prepared.models.core, { charge: session.guard, role: 'core', operation: session.receipt.operation })
     assertAuthorizedModelSet(prepared.models.research, { charge: session.guard, role: 'research', operation: session.receipt.operation })
-    return { ...prepared.budget, inferenceChargedByProviderAdapter: true, charge: session.guard }
+    return { ...prepared.budget, onLimit: session.exhaust, inferenceChargedByProviderAdapter: true, charge: session.guard }
   }
-  return { ...prepared.budget, charge: session.guard }
+  return { ...prepared.budget, onLimit: session.exhaust, charge: session.guard }
 }
 export function createGuidanceHandler(config: HandlerConfig<ProcedureGuidanceDependencies>): WorkflowHandler {
   return { workflowName: 'procedure-guidance-v1', async execute(session) {
@@ -63,7 +63,7 @@ export function createPlanningHandler(config: {
   return { workflowName: PLANNING_EXECUTION, async execute(session) {
     await session.guard()
     const workflow = createPlanningExecutionWorkflow({ backend: session.backend, signal: session.signal, guard: session.guard,
-      previousAttemptId: session.receipt.resume?.previousAttemptId ?? null, allowedKinds: ['TASK_PROPOSAL'], registerWait: session.registerWait,
+      checkpoint: session.checkpoint, previousAttemptId: session.receipt.resume?.previousAttemptId ?? null, allowedKinds: ['TASK_PROPOSAL'], registerWait: session.registerWait,
       templates: config.templates, maxSourceAgeMs: config.maxSourceAgeMs,
       prepare: async () => { const prepared = await config.prepare(session); return { ...prepared, agents: { ...prepared.agents, budget: bindBudget(prepared.agents, session) } } },
     })
@@ -72,10 +72,13 @@ export function createPlanningHandler(config: {
     if (resume?.kind === 'WAIT') {
       if (!resume.snapshotId) throw new Error('Planning resume requires a durable snapshot')
       await config.snapshots.forkSuspendedSnapshot({ workflowName: PLANNING_EXECUTION, fromRunId: resume.snapshotId, toRunId: session.receipt.workflowRunId })
+    } else if (resume?.kind === 'RETRY') {
+      // A user-authorized full replan uses fresh Context/history, the same Run budget and a new workflow ID.
+      await session.guard({ replans: 1 })
     } else if (resume) throw new Error('Planning replay requires explicit recovery policy')
     const run = await mastra.getWorkflow('workflow').createRun({ runId: session.receipt.workflowRunId })
     const result = resume?.kind === 'WAIT' ? await run.resume({ resumeData: { resume: true } }) :
-      await run.start({ inputData: { runId: session.receipt.runId, resultId: contentHash({ runId: session.receipt.runId, kind: 'planning-result' }) } })
+      await run.start({ inputData: { runId: session.receipt.runId, resultId: contentHash({ runId: session.receipt.runId, jobId: session.receipt.jobId, kind: 'planning-result' }) } })
     if (result.status === 'suspended') return 'WAITING'
     if (result.status !== 'success') throw new Error('Planning execution did not complete')
     return 'COMPLETED'

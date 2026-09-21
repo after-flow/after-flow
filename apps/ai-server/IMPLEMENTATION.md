@@ -17,7 +17,9 @@
 | Insight | Backend検出イベントの根拠/対象版照合、安定result ID、別の書類要求/引継ぎProposal候補 | [気づき](EVENT_INSIGHTS.md) |
 | 評価 | 標準Datasets/Experiments/Scorer、32合成ケース、各3回、全試行保存、比較CLI、PR/手動CI | [評価](EVALUATION.md) |
 
-P-03は1 Runで1件の正式提案を処理する。承認で案件が変わるため、残りは要確認として新Runで再計画する。承認待ち中にTemplate/根拠の有効性が変わった場合も成功にせず要確認を返す。実行途中の任意位置からのCHECKPOINT再開は提供しない。
+P-03は1 Runで1件の正式提案を処理する。承認で案件が変わるため、残りは要確認として、回答/再試行から同じRunの新attemptで再計画する。承認待ち中にTemplate/根拠の有効性が変わった場合も成功にせず要確認を返す。実行途中の任意位置からのCHECKPOINT再開は提供しない。
+
+起動時の共通配線は[startConfiguredAiService](COMPOSITION.md)へ実装済み。実Adapter・業務設定を渡した際に3操作のHandlerと永続Workerを組み立てる。
 
 ## 現在の起動状態と残る依存
 
@@ -30,7 +32,7 @@ P-03は1 Runで1件の正式提案を処理する。承認で案件が変わる�
 | 対応業務 | P-01/P-03/P-04の対象機関・手続きの公式資料レビュー、Source Catalog/Templateの確定 |
 | P-02の接続 | Backendの検査済み加工版配信と同意制御、実PDF/画像OCR、抽出Fieldから正式Proposalへのレビュー済み対応 |
 | P-04の接続 | Backend生成Artifact保存/承認契約、書類待ち・生成物承認待ちの実データ接続 |
-| Insightの接続 | Backend検出イベントの配信契約、内部resultのInsight variant、Case/eventごとの永続重複抑止 |
+| Insightの追加起動経路 | 計画Context→結果→公開一覧は接続済み。定期検査イベント専用Runのスケジューラは未接続 |
 | 運用/実評価 | 専用クラウドIAM・秘密鍵・保持/削除条件、実モデル/実Orchの品質・費用・性能、実資料での人による評価校正 |
 
 これらの未確定契約や資格情報を推測で埋めない。接続用Portと実処理はあるが、未提供Backend APIを架空のパスへ送信しない。Workflowへの入力は信頼済みcomposition rootが認証付き内部HTTPから取得し、モデルの自己申告を認可証拠にしない。
@@ -44,3 +46,21 @@ P-03は1 Runで1件の正式提案を処理する。承認で案件が変わる�
 PRは機能ごとのstack。起点はmain `9385b67`、順序と各PRは[継続計画](DELIVERY_PLAN.md)。個別PRには親ブランチへマージ済みのものがある。mainへの反映は別の統合PRでまとめて検証する。元の作業ディレクトリにあった未commit変更は触らず、隔離worktreeで作業した。
 
 Devinは着手許可を意味するラベルではない。共有PRの契約・依存が揃った周辺実装から担当可能。今回実装済みのIssueを重複着手しないよう、PRの範囲と残る実接続条件を先に確認する。Provider/Orch/業務判断の未確定部分は、任意の製品やFakeを選ばせて埋めない。
+
+### 公式資料PDFの読み取り
+
+レビュー済みCatalogの公式URLはHTML・UTF-8テキスト・PDFを取得できる。PDFはPDF.js 6.3.289で本文を抽出し、ページ番号を根拠に残す。5 MiB・40ページ・本文60,000文字・処理5秒を超える資料や暗号化/破損/文字のない資料は拒否する。画像文字はOCRしない。独立したWorkerを中断時に終了し、PDF内スクリプト・添付ファイル・外部リンクは実行/取得しない。URL/DNS/HTTPSの既存検証は共通。
+
+実装参照: [PDF.js Node example](https://github.com/mozilla/pdf.js/blob/master/examples/node/getinfo.mjs)、[v6.3.289](https://github.com/mozilla/pdf.js/releases/tag/v6.3.289)。
+
+### 中断結果と再送
+
+共有予算超過・実行時間切れ・実行エラーは、検証済みの途中経過と残作業を`execution_interrupted`としてBackendへ返す。Backendは現在のoperation・Context・leaseを検証してNEEDS_ATTENTIONにし、公開Run.outcomeへ保存する。途中でCase版が変わった場合は古い途中経過を返さない。
+
+結果をAI側のREPORTING receiptへ先に保存し、通信失敗時は10秒後に同じ結果ID/本文だけを再送する。所有権期限後の再取得でもAgent/Toolを再実行しない。取消・古い認可・Context不一致は停止し、Backend Reconcilerに委ねる。承認待ちを中断結果で上書きしない。結果作成前のContext取得失敗や認可期限切れを、結果配送成功とは扱わない。
+
+### 取消の直接配送
+
+公開取消APIはBackendのRunをCANCELLEDにし、旧job/attemptと取消Outboxを同じトランザクションで保存する。`POST /internal/v1/runs/:runId/cancel`へサービス認証付きで配送し、同意撤回後も停止通知は配送する。AIは取消を永続化して未到着のdispatchも拒否し、同一プロセスの実行をAbortする。別Workerでも次の共有所有権検査で停止する。既に完了した正式変更は戻さない。
+
+取消記録を削除すると遅延dispatchの復活防止を失うため、execution_cancellationsに自動TTLは設定しない。取消payloadは業務本文・ユーザー認証・モデル設定を含まない。

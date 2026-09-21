@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { dispatchSchema, INTERNAL_LIMITS, internalId, snapshotStatusSchema } from '@aftercare/internal-contracts'
+import { dispatchSchema, cancelExecutionSchema, INTERNAL_LIMITS, internalId, snapshotStatusSchema } from '@aftercare/internal-contracts'
 import type { ExecutionRuntime } from '../../../../application/ports/execution-runtime.js'
 
 export interface ExecutionOptions {
@@ -47,6 +47,17 @@ export function executionRoutes(options: ExecutionOptions) {
       return c.json({ jobId: input.data.jobId, runId: input.data.runId, status }, status === 'ACCEPTED' ? 202 : 200)
     })
   }
+  app.post('/runs/:runId/cancel', async c => {
+    const input = cancelExecutionSchema.safeParse(await c.req.json().catch(() => null))
+    const now = Math.floor(Date.now() / 1000)
+    if (!input.success || input.data.runId !== c.req.param('runId') || c.req.header('X-Request-Id') !== input.data.cancelId ||
+      c.req.header('Idempotency-Key') !== input.data.cancelId || input.data.issuedAt > now || input.data.expiresAt <= now ||
+      input.data.expiresAt <= input.data.issuedAt || input.data.expiresAt - input.data.issuedAt > INTERNAL_LIMITS.requestSeconds) return c.json({ error: { code: 'INVALID_CANCEL' } }, 400)
+    if (!options.runtime?.cancel) return c.json(unavailable, 503)
+    const { cancelId, runId, jobId, executionAttempt } = input.data
+    const status = await options.runtime.cancel(input.data)
+    return c.json({ cancelId, runId, jobId, executionAttempt, status }, 200)
+  })
   app.get('/runs/:runId/snapshot-status', async c => {
     const runId = internalId.safeParse(c.req.param('runId'))
     const input = snapshotQuerySchema.safeParse({ ...c.req.query(), waitRequestId: c.req.query('waitRequestId') ?? null })

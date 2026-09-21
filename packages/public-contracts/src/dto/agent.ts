@@ -31,6 +31,17 @@ export type AgentOperationResource =
   | 'task_guidance'
   | 'chat_reply'
 
+/** AI narrative and questions; not confirmed business facts. */
+export interface AgentRunOutcomeResource {
+  resultId: string
+  attemptId: string
+  caseVersion: number
+  summary: string
+  completed: string[]
+  questions: string[]
+  remaining: string[]
+}
+
 export interface AgentRunResource {
   id: string
   caseId: string
@@ -43,6 +54,7 @@ export interface AgentRunResource {
   waiting: boolean
   waitingFor: string | null
   failureReason: string | null
+  outcome: AgentRunOutcomeResource | null
   /** 受付時点のCase版。結果の鮮度判定に使う。 */
   caseVersionAtAccept: number
   startedAt: ISODateTime | null

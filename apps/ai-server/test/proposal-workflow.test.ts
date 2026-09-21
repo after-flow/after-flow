@@ -10,7 +10,7 @@ test('action identity is independent of attempt and denied/bad-hash proposals ne
   assert.notEqual(actionIdFor('other-run', 'planning-v1', 'slot'), actionId)
   for (const allowed of [false, true]) {
     let submitted = 0; let waits = 0
-    const content = { operation: 'case_planning', documents: [], tasks: [] }
+    const content = { operation: 'case_planning', planningRestriction: null, documents: [], tasks: [] }
     const context = { caseVersion: 1, contextSnapshotId: 'context', fencingToken: 1, artifactVersion: 1, contentHash: contentHash(content), content, expiresAt: new Date(Date.now() + 60000).toISOString() }
     const workflow = createProposalWorkflow({ signal: new AbortController().signal, previousAttemptId: null, allowedKinds: allowed ? ['TASK_PROPOSAL'] : [], guard: async () => {},
       registerWait: async () => { waits++ }, backend: {
@@ -19,5 +19,21 @@ test('action identity is independent of attempt and denied/bad-hash proposals ne
       } })
     const result = await (await workflow.createRun()).start({ inputData: { actionId, context, draft: { kind: 'TASK_PROPOSAL', title: 'fixture', summary: '', payload: {}, basis: [], assetDisposal: false } } })
     assert.equal(result.status, 'failed'); assert.equal(submitted, allowed ? 1 : 0); assert.equal(waits, 0)
+  }
+})
+
+
+test('proposal submission fails closed for missing or active owner restriction before contacting Backend', async () => {
+  for (const restriction of [undefined, { reason: 'do not plan' }]) {
+    const content = { operation: 'case_planning', documents: [], tasks: [], ...(restriction ? { planningRestriction: restriction } : {}) }
+    const context = { caseVersion: 1, contextSnapshotId: 'context', fencingToken: 1, artifactVersion: 1,
+      content, contentHash: contentHash(content), expiresAt: new Date(Date.now() + 60000).toISOString() }
+    const workflow = createProposalWorkflow({ signal: new AbortController().signal, previousAttemptId: null,
+      allowedKinds: ['TASK_PROPOSAL'], guard: async () => {}, registerWait: async () => assert.fail('unexpected wait'),
+      backend: { context: async () => context, control: async () => ({ instruction: 'CONTINUE', reason: null, caseVersion: 1 }),
+        propose: async () => assert.fail('unexpected proposal') } })
+    const result = await (await workflow.createRun()).start({ inputData: { actionId: 'action', context,
+      draft: { kind: 'TASK_PROPOSAL', title: 'fixture', summary: '', payload: {}, basis: [], assetDisposal: false } } })
+    assert.equal(result.status, 'failed')
   }
 })

@@ -1,4 +1,6 @@
-import { planningHistorySchema } from '@aftercare/internal-contracts'
+import { detectInsightEvents } from './insight-events.js'
+import { saveInsightResults } from './insight-results.js'
+import { planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema } from '@aftercare/internal-contracts'
 import type { ProposalVersionEntity } from '../../domain/proposal/proposal-version.js'
 import type { ApprovalEntity } from '../../domain/proposal/approval.js'
 import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent, WaitRequestInput } from '@aftercare/internal-contracts'
@@ -64,6 +66,12 @@ export class InternalExecutionService {
   constructor(private readonly read: SnapshotReader, private readonly uow: UnitOfWork,
     private readonly consent: ConsentService, private readonly intake: AgentResultIntake,
     private readonly proposals?: ProposalService) {}
+
+  async cancellation(tenantId: string, caseId: string, runId: string, cancelId: string) {
+    const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, runId))
+    if (!run || run.status !== 'CANCELLED' || run.cancellation?.cancelId !== cancelId) throw errors.conflict()
+    return { ...run.cancellation, runId: run.id }
+  }
 
   /** mint/delivery前にも保存済みscope、membership、同意を確認する。 */
   async dispatchClaims(tenantId: string, caseId: string, runId: string, jobId: string): Promise<ExecutionClaims> {
@@ -189,7 +197,11 @@ export class InternalExecutionService {
             status: a.status, applicationStatus: a.applicationStatus, decisionNote: a.decisionNote, applicationFailureReason: a.applicationFailureReason })),
         })
         if (!planningHistory.success) throw errors.preconditionFailed({ details: { reason: 'PLANNING_HISTORY_UNAVAILABLE' } })
+        content.clarificationHistory = clarificationHistorySchema.parse(run.clarificationHistory ?? [])
+        content.unresolvedQuestions = (run.outcome?.questions ?? []).filter((_question, index) =>
+          !(run.clarificationHistory ?? []).some(answer => answer.resultId === run.outcome?.resultId && answer.questionIndex === index))
         content.planningHistory = planningHistory.data
+        content.planningRestriction = planningRestrictionSchema.parse(entity.aiPlanningRestriction ?? null)
       }
       // 原本・ファイル名・Storage keyは含めない。検査済みでも文書本文は#27接続まで配信しない。
       const documents = await reader.list<DocumentEntity>(claims.tenantId, collections.documents, claims.caseId, {
@@ -212,6 +224,7 @@ export class InternalExecutionService {
       if (run.operation !== 'case_planning') {
         content.documents = (content.documents as { id: string }[]).filter(doc => targetDocumentIds.has(doc.id))
       }
+      if (run.operation === 'case_planning') content.insightEvents = detectInsightEvents(claims.caseId, entity.caseVersion, content)
       if (Buffer.byteLength(JSON.stringify(content)) > INTERNAL_LIMITS.bodyBytes) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
       return { caseVersion: entity.caseVersion, content }
     })
@@ -320,15 +333,18 @@ export class InternalExecutionService {
   result(call: InternalCall, input: InternalResult) {
     return this.execute(call, async (tx, run) => {
       if (run.activeWaitRequestId) throw errors.conflict({ details: { reason: 'WAIT_OUTSTANDING' } })
-      if (input.kind !== run.operation) throw errors.forbidden()
+      if ((input.kind === 'execution_interrupted' ? input.operation : input.kind) !== run.operation) throw errors.forbidden()
       const artifact = await tx.require<RunArtifactEntity>(artifactLocation(call.claims.caseId, input.contextSnapshotId))
       await this.assertArtifact(tx, call, artifact, input)
       await this.assertBasis(tx, call, artifact, input.basis)
+      if (input.kind === 'case_planning' && input.insights?.length) await saveInsightResults(tx, run, artifact.artifact, input.insights)
       await releaseLease(tx, call.claims.caseId, run.id, input.fencingToken)
       const envelope = { runId: run.id, attemptId: run.currentAttemptId }
       if (input.kind === 'task_guidance') return this.intake.applyGuidanceResult(tx, call.claims.caseId, { ...input, ...envelope })
       if (input.kind === 'chat_reply') return this.intake.applyChatReply(tx, call.claims.caseId, { ...input, ...envelope })
-      tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString() })
+      tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString(),
+        failureReason: input.kind === 'execution_interrupted' ? input.failureReason : null,
+        outcome: input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
       tx.audit({ caseId: call.claims.caseId, type: 'agent_run.result',
         target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { resultId: input.resultId, status: input.status } })
       return { applied: true, reason: null }

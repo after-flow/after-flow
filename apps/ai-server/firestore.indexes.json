@@ -199,6 +199,16 @@
       "collectionGroup": "execution_receipts",
       "fieldPath": "encryptedDispatch",
       "indexes": []
+    },
+    {
+      "collectionGroup": "execution_receipts",
+      "fieldPath": "progress",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "execution_receipts",
+      "fieldPath": "pendingResult",
+      "indexes": []
     }
   ]
 }
