@@ -99,12 +99,27 @@ test('#163 埋葬料と埋葬費の起算日の取り違えを除く', () => {
 })
 
 test('#163 引用に無い金額や期間を含む主張を除く', () => {
-  for (const text of ['埋葬料は70,000円。', '埋葬料は死亡した日の翌日から3年以内に申請する。', '支給は10営業日以内。']) {
+  for (const text of ['埋葬料は70,000円。', '埋葬料は7万円。', '埋葬料は死亡した日の翌日から3年以内に申請する。', '支給は10営業日以内。']) {
     const outcome = ground({ ...complete, steps: [c(text, 'amount', 'deadline')] })
     assert.deepEqual(outcome.dropped.map(item => item.reason), ['UNSUPPORTED_QUANTITY'], text)
   }
   // 表記の違い（全角・桁区切り）は同じ数量とみなす。
   assert.deepEqual(ground({ ...complete, steps: [c('埋葬料は５００００円。', 'amount'), complete.steps[1]!] }).dropped, [])
+  assert.deepEqual(ground({ ...complete, steps: [c('埋葬料は5万円。', 'amount'), complete.steps[1]!] }).dropped, [])
+})
+
+test('#163 引用に無いURLへ誘導する主張を除く', () => {
+  for (const text of ['詳細は https://attacker.example/form を確認する。', '申請書はhttps://official.example.evil/から入手する。']) {
+    assert.deepEqual(ground({ ...complete, steps: [c(text, 'submission')] }).dropped.map(item => item.reason), ['UNSUPPORTED_URL'], text)
+  }
+})
+
+test('#163 給付の名称を引用に含まない正しい支給額の説明は除かない', () => {
+  // 公式ページの支給額の区分は「埋葬費」の語を使わずに説明している。
+  const amount = { ...synthesis, answers: [...synthesis.answers.slice(0, 1), { questionId: 'amount', text: '実費',
+    evidence: [quote('s2', '埋葬料（5万円）の範囲内で実際に埋葬に要した費用です')] }, synthesis.answers[2]!] }
+  const outcome = ground({ ...complete, steps: [c('埋葬費は5万円の範囲内で、実際に埋葬に要した費用が支給される。', 'amount'), complete.steps[1]!] }, research(amount))
+  assert.deepEqual(outcome.dropped, [])
 })
 
 test('#163 根拠を示さない主張と、案内から抜け落ちた問いを検出する', () => {
