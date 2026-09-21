@@ -39,9 +39,14 @@ export class ScopedHttpAgentJobClient implements AgentJobClient, ExecutionSnapsh
           && (response.status !== 409 || ack.data.status === 'DUPLICATE')) return { status: 'ACCEPTED' }
         return { status: 'RETRYABLE', reason: 'INVALID_DISPATCH_ACK' }
       }
-      return response.status === 429 || response.status >= 500
-        ? { status: 'RETRYABLE', reason: `status ${response.status}` }
-        : { status: 'REJECTED', reason: `status ${response.status}` }
+      if (response.status === 429 || response.status >= 500) {
+        // AI未接続はステータス設定であり時間をおいても変わらない。一時障害と区別して即時REJECTEDにする。
+        let code: unknown
+        try { code = (await readAck(response) as { error?: { code?: unknown } } | null)?.error?.code } catch { code = undefined }
+        if (code === 'AI_EXECUTION_NOT_CONNECTED') return { status: 'REJECTED', reason: code }
+        return { status: 'RETRYABLE', reason: `status ${response.status}` }
+      }
+      return { status: 'REJECTED', reason: `status ${response.status}` }
     } catch (cause) {
       if (cause instanceof AppError) return { status: 'RETRYABLE', reason: cause.code }
       return { status: 'RETRYABLE', reason: 'INTERNAL_TRANSPORT_ERROR' }

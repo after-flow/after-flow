@@ -410,6 +410,32 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(await h.service.abandonDispatch(h.tenantId, h.caseId, run.id, run.currentJobId!, 'again'), false, '終端済みのRunを上書きしない')
   })
 
+  it('AI未接続(AI_EXECUTION_NOT_CONNECTED)は配送期限を待たず即時RunをFAILED・案内をFAILEDにする', async t => {
+    const h = await setup(t)
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
+    const accepted = await call(h.app, `/cases/${h.caseId}/agent-runs`, jsonRequest('POST', { operation: 'task_guidance', targetId: task.body.data.id, targetType: 'TASK' }))
+    const run = (await h.read.get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: accepted.body.data.id }))!
+    const outboxRef = firestore().doc(`tenants/${h.tenantId}/outbox/${run.currentJobId}`)
+    const abandoned: string[] = []
+    const dispatcher = new OutboxDispatcher(firestore(), h.client, h.consent, 1_000, undefined, {
+      deliveryTimeoutMs: 60_000,
+      onGiveUp: async (event, reason) => { abandoned.push(reason); await h.service.abandonDispatch(event.tenantId, event.caseId!, event.payload.runId as string, event.id, reason) },
+    })
+    for (const doc of (await firestore().collection(`tenants/${h.tenantId}/outbox`).where('type', '!=', 'agent.task_guidance').get()).docs) {
+      await doc.ref.update({ status: 'DELIVERED' })
+    }
+    h.ai.respondWith(503, { error: { code: 'AI_EXECUTION_NOT_CONNECTED' } })
+    const result = await dispatcher.dispatchBatch(h.tenantId)
+    assert.deepEqual([result.retrying.length, result.rejected.length], [0, 1], '未接続は一時障害と区別して即時終端する')
+    assert.equal((await outboxRef.get()).get('status'), 'FAILED')
+    assert.equal((await outboxRef.get()).get('lastError'), 'AI_EXECUTION_NOT_CONNECTED')
+    assert.equal(abandoned.length, 1)
+    const view = await call(h.app, `/cases/${h.caseId}/agent-runs/${run.id}`)
+    assert.equal(view.body.data.status, 'FAILED'); assert.equal(view.body.data.failureReason, 'AI_EXECUTION_NOT_CONNECTED')
+    const guidance = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
+    assert.equal(guidance.body.data.status, 'FAILED'); assert.equal(guidance.body.data.failureReason, 'AI_EXECUTION_NOT_CONNECTED')
+  })
+
   it('取消はTask側の案内も失敗にし、受け手の無い通知イベントはローカルで配送済みにする', async t => {
     const h = await setup(t)
     const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
