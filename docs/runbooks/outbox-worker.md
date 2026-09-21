@@ -19,7 +19,7 @@ node apps/backend-server/dist/worker-main.js
 プロセス監視基盤により異常終了時に再起動する。Cloud RunならCPUの常時割当を持つ独立worker、
 またはSchedulerから `--once` ジョブを定期起動する構成が必要。HTTP応答後の実行継続には依存しない。
 
-## Docker開発環境（#122）
+## Docker開発環境
 
 `make up` は `backend-worker` containerを業務Firestore Emulatorと同じ `data` profileで起動する。
 HTTP用 `backend-server` と同じimageだが別container・別processで、hostへportを公開しない。

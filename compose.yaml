@@ -106,7 +106,7 @@ services:
       ai-runtime-emulator:
         condition: service_healthy
 
-  # HTTP要求から独立してOutboxを配送するBackend専用worker（#122）。
+  # HTTP要求から独立してOutboxを配送するBackend専用worker。
   # backend-serverと同じimageだが別container・別process。hostへportを公開しない。
   # 業務Firestoreの data とAI Serverへの services にだけ参加し、frontend、AI Runtime、
   # emulator-host には参加しない。原本Storage・AI→Backend資格情報・readiness tokenは渡さない。

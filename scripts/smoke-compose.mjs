@@ -95,7 +95,7 @@ assert.ok(Object.values(aiRuntimeNetworks).every((network) =>
   Object.values(businessNetworks).every((business) => network.NetworkID !== business.NetworkID)),
   'AI runtime and business Firestore must not share a network')
 
-// Backend Outbox worker (#122): a separate long-running process, never an HTTP after-effect.
+// Backend Outbox worker: a separate long-running process, never an HTTP after-effect.
 const workerId = docker('compose', '--profile', 'data', 'ps', '--quiet', 'backend-worker')
 assert.ok(workerId, 'backend-worker container must be running')
 const workerContainer = JSON.parse(docker('inspect', workerId))[0]
