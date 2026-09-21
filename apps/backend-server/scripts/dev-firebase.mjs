@@ -10,6 +10,9 @@
  *     emailVerified を true にしてから ID token を標準出力へ出す（有効約1時間）。
  *   node apps/backend-server/scripts/dev-firebase.mjs verify-email --email <email>
  *     既存アカウントの emailVerified を true にする（FE の /signup 直後にメール確認を通す用途）。
+ *   node apps/backend-server/scripts/dev-firebase.mjs uid --email <email> --password <password>
+ *     Emulator にアカウントが無ければ作成する（あれば同じパスワードでサインインする）。
+ *     localId（Firebase uid）だけを標準出力へ出す。dev-seed.ts の --user に渡す用途。
  *
  * 接続先は FIREBASE_AUTH_EMULATOR_HOST（既定 firebase-auth-emulator:9099。
  * Docker コンテナ内から呼ぶ前提のホスト名）。
@@ -25,7 +28,8 @@ const BASE = `http://${HOST}/identitytoolkit.googleapis.com/v1`
 const [command, ...rest] = process.argv.slice(2)
 if (command === 'token') await token(rest)
 else if (command === 'verify-email') await verifyEmail(rest)
-else fail('使い方: dev-firebase.mjs token --email <email> --password <password> | verify-email --email <email>')
+else if (command === 'uid') await uid(rest)
+else fail('使い方: dev-firebase.mjs token --email <email> --password <password> | verify-email --email <email> | uid --email <email> --password <password>')
 
 async function call(method, body) {
   const response = await fetch(`${BASE}/${method}?key=${API_KEY}`, {
@@ -91,6 +95,13 @@ async function token(args) {
   })
   if (!refreshed.ok) fail(`emailVerified 反映後のサインインに失敗しました: ${JSON.stringify(refreshed.body)}`)
   process.stdout.write(`${refreshed.body.idToken}\n`)
+}
+
+async function uid(args) {
+  const { values } = parseArgs({ args, options: { email: { type: 'string' }, password: { type: 'string' } } })
+  if (!values.email || !values.password) fail('--email と --password を指定してください。')
+  const account = await signUpOrSignIn(values.email, values.password)
+  process.stdout.write(`${account.localId}\n`)
 }
 
 async function verifyEmail(args) {
