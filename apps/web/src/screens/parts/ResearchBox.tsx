@@ -111,7 +111,14 @@ export function ResearchBox({
     return (
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rd-border bg-rd-bg px-4 py-3">
         <p className="text-[0.9rem] text-rd-text-2">いまの案内は一般的な内容です。</p>
-        <Button size="sm" icon="pin" disabled={request.isPending} onClick={again}>
+        {/* 自治体名が入るので長さが決まらない。狭い画面では枠の幅で折り返す（1行のままだと枠からはみ出す） */}
+        <Button
+          size="sm"
+          icon="pin"
+          className="h-auto! min-h-9 max-w-full py-1.5 whitespace-normal!"
+          disabled={request.isPending}
+          onClick={again}
+        >
           {municipality}の窓口を調べてもらう
         </Button>
       </div>
