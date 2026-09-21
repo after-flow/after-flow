@@ -21,7 +21,7 @@ services:
       - "127.0.0.1:${WEB_PORT:-5173}:5173"
     environment:
       <<: *hot-reload
-      VITE_USE_MOCK: ${VITE_USE_MOCK:-true}
+      VITE_USE_MOCK: ${VITE_USE_MOCK:-false}
       VITE_API_BASE_URL: /api/v1
       VITE_API_PROXY: http://backend-server:8080
       VITE_WATCH_POLLING: "true"

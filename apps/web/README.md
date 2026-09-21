@@ -33,7 +33,7 @@ pnpm install --frozen-lockfile
 pnpm dev:web
 ```
 
-http://127.0.0.1:5173 を開きます。開発時は既定でMSWが有効です。
+http://127.0.0.1:5173 を開きます。既定でMSWは無効で、Backendに接続します。
 
 Docker、Backend、Emulatorも含めて起動する場合:
 
@@ -45,14 +45,13 @@ make up
 
 | 環境変数                | 開発時の既定    | 本番ビルドの既定  | 用途                               |
 | ------------------- | --------- | --------- | -------------------------------- |
-| `VITE_USE_MOCK`     | `true`    | `false`   | MSWの有効化。デモ以外の本番で有効にしないでください。     |
+| `VITE_USE_MOCK`     | `false`   | `false`   | MSWの有効化。デモ以外で有効にしないでください。       |
 | `VITE_API_BASE_URL` | `/api/v1` | `/api/v1` | Public APIのベースURL                |
 | `VITE_API_PROXY`    | 未設定       | —         | ViteからBackendへ `/api` をプロキシする接続先 |
 
-ローカルのBackendへ接続する例:
+ローカルのBackendへ接続する例（`VITE_USE_MOCK`は既定でfalseなので指定不要）:
 
 ```bash
-VITE_USE_MOCK=false \
 VITE_API_PROXY=http://127.0.0.1:8080 \
 pnpm dev:web
 ```
