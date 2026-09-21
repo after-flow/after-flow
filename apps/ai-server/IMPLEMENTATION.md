@@ -50,3 +50,9 @@ Devinは着手許可を意味するラベルではない。共有PRの契約・�
 レビュー済みCatalogの公式URLはHTML・UTF-8テキスト・PDFを取得できる。PDFはPDF.js 6.3.289で本文を抽出し、ページ番号を根拠に残す。5 MiB・40ページ・本文60,000文字・処理5秒を超える資料や暗号化/破損/文字のない資料は拒否する。画像文字はOCRしない。独立したWorkerを中断時に終了し、PDF内スクリプト・添付ファイル・外部リンクは実行/取得しない。URL/DNS/HTTPSの既存検証は共通。
 
 実装参照: [PDF.js Node example](https://github.com/mozilla/pdf.js/blob/master/examples/node/getinfo.mjs)、[v6.3.289](https://github.com/mozilla/pdf.js/releases/tag/v6.3.289)。
+
+### 中断結果と再送
+
+共有予算超過・実行時間切れ・実行エラーは、検証済みの途中経過と残作業を`execution_interrupted`としてBackendへ返す。Backendは現在のoperation・Context・leaseを検証してNEEDS_ATTENTIONにし、公開Run.outcomeへ保存する。途中でCase版が変わった場合は古い途中経過を返さない。
+
+結果をAI側のREPORTING receiptへ先に保存し、通信失敗時は10秒後に同じ結果ID/本文だけを再送する。所有権期限後の再取得でもAgent/Toolを再実行しない。取消・古い認可・Context不一致は停止し、Backend Reconcilerに委ねる。承認待ちを中断結果で上書きしない。結果作成前のContext取得失敗や認可期限切れを、結果配送成功とは扱わない。

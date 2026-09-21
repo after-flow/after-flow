@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import type { Firestore, Transaction } from '@google-cloud/firestore'
-import { internalId } from '@aftercare/internal-contracts'
+import { internalId, interruptedResultSchema, runSummarySchema } from '@aftercare/internal-contracts'
+import type { InternalResult, RunSummary } from '@aftercare/internal-contracts'
+
 import { budgetSchema, emptyBudget, ExecutionRejected, receiptSchema } from '../../application/execution/contracts.js'
 import type { Budget, BudgetCharge, Receipt } from '../../application/execution/contracts.js'
 
@@ -38,7 +40,7 @@ export class FirestoreExecutions {
           const snapshot = await tx.get(this.db.collection('workflow_snapshots').doc(snapshotKey))
           if (!receipt.resume.snapshotId || receipt.resume.waitRequestId !== previous.waitRequestId || !snapshot.exists || snapshot.get('status') !== 'suspended') throw new ExecutionRejected('CONFLICT')
         }
-        if (previous.state === 'QUEUED' || previous.state === 'RUNNING') tx.update(previousDoc.ref, {
+        if (previous.state === 'QUEUED' || previous.state === 'RUNNING' || previous.state === 'REPORTING') tx.update(previousDoc.ref, {
           state: 'STOPPED', owner: null, leaseUntil: 0, encryptedDispatch: 'erased', failure: 'STOPPED', updatedAt: this.now(),
         })
       } else if (receipt.resume) throw new ExecutionRejected('CONFLICT')
@@ -51,18 +53,18 @@ export class FirestoreExecutions {
   async claim(owner: string, leaseMs: number): Promise<Receipt | null> {
     internalId.parse(owner)
     if (!Number.isInteger(leaseMs) || leaseMs < 1000 || leaseMs > 60_000) throw new Error('Invalid runtime lease')
-    const candidates = await this.db.collection('execution_receipts').where('state', '==', 'QUEUED').orderBy('createdAt').limit(20).get()
-    for (const candidate of candidates.docs) {
+    const batches = await Promise.all(['REPORTING', 'QUEUED'].map(state => this.db.collection('execution_receipts').where('state', '==', state).orderBy('createdAt').limit(20).get()))
+    for (const candidate of batches.flatMap(batch => batch.docs)) {
       const claimed = await this.db.runTransaction(async tx => {
         const doc = await tx.get(candidate.ref)
         const receipt = receiptSchema.parse(doc.data())
         const run = await tx.get(this.run(receipt.runId))
-        if (receipt.state !== 'QUEUED') return null
+        if (receipt.state !== 'QUEUED' && !(receipt.state === 'REPORTING' && receipt.pendingResult && receipt.leaseUntil <= this.now())) return null
         if (run.get('jobId') !== receipt.jobId) {
           tx.update(doc.ref, { state: 'STOPPED', encryptedDispatch: 'erased', updatedAt: this.now() })
           return null
         }
-        const updated: Receipt = { ...receipt, state: 'RUNNING', owner, leaseUntil: this.now() + leaseMs, updatedAt: this.now() }
+        const updated: Receipt = { ...receipt, state: receipt.pendingResult ? 'REPORTING' : 'RUNNING', owner, leaseUntil: this.now() + leaseMs, updatedAt: this.now() }
         tx.set(doc.ref, updated)
         return updated
       })
@@ -74,7 +76,7 @@ export class FirestoreExecutions {
   private async owned(tx: Transaction, jobId: string, owner: string) {
     const doc = await tx.get(this.job(jobId)); const receipt = receiptSchema.parse(doc.data())
     const run = await tx.get(this.run(receipt.runId))
-    if (receipt.state !== 'RUNNING' || receipt.owner !== owner || receipt.leaseUntil <= this.now() || run.get('jobId') !== jobId) throw new ExecutionRejected('STALE_OWNER')
+    if (!['RUNNING', 'REPORTING'].includes(receipt.state) || receipt.owner !== owner || receipt.leaseUntil <= this.now() || run.get('jobId') !== jobId) throw new ExecutionRejected('STALE_OWNER')
     return { doc, receipt, run }
   }
   async renew(jobId: string, owner: string, leaseMs: number): Promise<void> {
@@ -100,6 +102,29 @@ export class FirestoreExecutions {
       tx.update(run.ref, { used: next }); return next
     })
   }
+  async checkpoint(jobId: string, owner: string, caseVersion: number, output: RunSummary): Promise<void> {
+    const progress = receiptSchema.shape.progress.parse({ caseVersion, output: runSummarySchema.parse(output) })
+    await this.db.runTransaction(async tx => {
+      const { doc, receipt } = await this.owned(tx, jobId, owner)
+      if (receipt.state !== 'RUNNING') throw new ExecutionRejected('CONFLICT')
+      tx.update(doc.ref, { progress, updatedAt: this.now() })
+    })
+  }
+  async stageResult(jobId: string, owner: string, input: InternalResult): Promise<void> {
+    const pendingResult = interruptedResultSchema.parse(input)
+    await this.db.runTransaction(async tx => {
+      const { doc, receipt } = await this.owned(tx, jobId, owner)
+      if (receipt.operation !== pendingResult.operation || receipt.waitRequestId) throw new ExecutionRejected('CONFLICT')
+      tx.update(doc.ref, { state: 'REPORTING', pendingResult, failure: pendingResult.failureReason, updatedAt: this.now() })
+    })
+  }
+  async deferResult(jobId: string, owner: string): Promise<void> {
+    await this.db.runTransaction(async tx => {
+      const { doc, receipt } = await this.owned(tx, jobId, owner)
+      if (!receipt.pendingResult || receipt.state !== 'REPORTING') throw new ExecutionRejected('CONFLICT')
+      tx.update(doc.ref, { owner: null, leaseUntil: this.now() + 10000, updatedAt: this.now() })
+    })
+  }
   async registerWait(jobId: string, owner: string, waitRequestId: string): Promise<void> {
     internalId.parse(waitRequestId)
     await this.db.runTransaction(async tx => {
@@ -111,7 +136,7 @@ export class FirestoreExecutions {
     await this.db.runTransaction(async tx => {
       const { doc, receipt } = await this.owned(tx, jobId, owner)
       if (state === 'WAITING' && !receipt.waitRequestId) throw new ExecutionRejected('CONFLICT')
-      tx.update(doc.ref, { state, failure, owner: null, leaseUntil: 0, encryptedDispatch: 'erased', updatedAt: this.now() })
+      tx.update(doc.ref, { state, failure, pendingResult: null, owner: null, leaseUntil: 0, encryptedDispatch: 'erased', updatedAt: this.now() })
     })
   }
 }
