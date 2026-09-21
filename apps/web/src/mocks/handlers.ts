@@ -630,8 +630,11 @@ export const handlers = [
         ...researching,
         status: 'COMPLETED',
         where: t.submitTo ?? '窓口にご確認ください',
-        bring: ['本人確認書類', '印鑑'],
-        steps: ['窓口で申請書を受け取ります。', '必要書類とあわせて提出します。'],
+        // 持ち物は、その手続きの持ち物の一覧から作る。どの手続きにも同じ「印鑑」を返すと、
+        // 押印が任意の死亡届などにも印鑑が出てしまう
+        bring: t.requiredDocuments.length > 0 ? t.requiredDocuments.map((r) => r.label) : ['手続きをする方の本人確認書類'],
+        // どの手続きにも当てはまる手順だけにする（死亡届のように、用紙を窓口でもらわない手続きもある）
+        steps: ['持ち物をそろえて、窓口へ行きます。', '窓口の案内にしたがって提出します。'],
         note: '受付時間は自治体・機関によって異なります。事前にご確認ください。',
         sources: [{ label: `${t.submitTo ?? '窓口'}の案内`, url: 'https://example.com/guidance', checkedAt: new Date().toISOString() }],
         version: researching.version + 1,
