@@ -130,7 +130,7 @@ export function TasksScreen() {
             <label htmlFor="who" className="text-[0.86rem] font-bold text-rd-text-2">担当</label>
             <select
               id="who"
-              className={`${inputClass} h-9 w-auto py-0`}
+              className={inputClass.replace('h-11 w-full', 'h-9 w-auto min-w-40')}
               value={who ?? ''}
               onChange={(e) => setParam('who', e.target.value || null)}
             >
@@ -238,10 +238,12 @@ function TaskTable({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[]; 
                   {t.assigneeName && <span>担当：{t.assigneeName}</span>}
                 </span>
               </span>
-              <span className="hidden sm:block">
+              {/* 状態はタブでもおおよそ分かるため、幅が足りない画面では手続きの名前を優先する */}
+              <span className="hidden lg:block">
                 <TaskStatusBadge status={t.status} />
               </span>
-              <span className="w-20 shrink-0 text-right sm:w-28">
+              {/* 日付の行（例：2026年12月15日（火）より前に）が1行に収まる幅。狭い画面では日付を出さない */}
+              <span className="w-20 shrink-0 text-right sm:w-48">
                 <Due deadline={t.deadline} done={done} prep={prepDeadline(t, all)} />
               </span>
               <Icon name="chevron-right" size={16} className="hidden text-rd-text-3 sm:block" />
