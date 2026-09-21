@@ -5,7 +5,7 @@
   "type": "module",
   "files": ["dist"],
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc --noEmit" },
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc --noEmit -p tsconfig.test.json", "test": "node --import tsx --test \"test/**/*.test.ts\"" },
   "dependencies": { "zod": "4.6.5" },
-  "devDependencies": { "typescript": "~6.0.2" }
+  "devDependencies": { "@types/node": "24.13.3", "tsx": "4.23.13", "typescript": "~6.0.2" }
 }
