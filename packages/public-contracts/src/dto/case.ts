@@ -1,4 +1,4 @@
-import type { CaseStatus, ISODate, ISODateTime } from './resources.js'
+import type { CaseProfile, CaseStatus, ISODate, ISODateTime } from './resources.js'
 
 /**
  * 新しい公開契約の Case。
@@ -48,6 +48,13 @@ export interface CaseResource {
   selfPersonId: string | null
   /** Owner-managed pause of AI task proposals. null means unrestricted. */
   aiPlanningRestriction: { reason: string } | null
+  /**
+   * 故人の状況（ケース作成の直後に聞く質問への答え）。
+   * BE ユニット4が返すまで常に undefined。Backend の `caseResourceSchema` は
+   * まだこの項目を返さないため、`profile === undefined` の間は Setup の質問群と
+   * ホームの「質問に答える」導線を出さない。
+   */
+  profile?: CaseProfile
   status: CaseStatus
   /** 楽観ロックの版。更新時に expectedVersion として送り返す。 */
   version: number

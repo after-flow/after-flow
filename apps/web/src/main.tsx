@@ -30,7 +30,47 @@ async function unregisterStaleMockWorker() {
   }
 }
 
+/**
+ * 実認証に必要な設定が無いまま起動しない（fail-closed）。
+ *
+ * VITE_USE_MOCK=false なのに VITE_FIREBASE_API_KEY が無い環境は、
+ * 誰でもログインできたように見えて実は何もできない（あるいは401地獄になる）よりも、
+ * 起動を止めて理由を画面に出す方が安全（README「空配列や仮データで未接続を成功に見せない」と同じ考え方）。
+ * 本番ビルド（mode production）で VITE_FIREBASE_AUTH_EMULATOR_URL が設定されている場合も、
+ * 誤って Emulator へ向いたまま公開してしまう事故を防ぐため同様に止める。
+ *
+ * ここで画面に出すのは静的な文言だけで、HTTP応答自体は index.html の 200 のまま
+ * （`scripts/smoke-production.mjs` は web の HTTP 200 を見るだけなので壊さない）。
+ */
+function authConfigError(): string | null {
+  if (useMock) return null
+  if (!import.meta.env.VITE_FIREBASE_API_KEY) {
+    return 'この環境ではログインに必要な設定（VITE_FIREBASE_API_KEY）が見つかりませんでした。管理者にご連絡ください。'
+  }
+  if (import.meta.env.MODE === 'production' && import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL) {
+    return 'この環境の設定に誤りがあります（本番ビルドで検証用の認証サーバーが指定されています）。管理者にご連絡ください。'
+  }
+  return null
+}
+
+function renderFailClosed(reason: string) {
+  createRoot(document.getElementById('root')!).render(
+    <div style={{ display: 'flex', minHeight: '100dvh', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div style={{ maxWidth: 420, textAlign: 'center' }}>
+        <p style={{ fontWeight: 700, fontSize: '1.05rem' }}>いまはご利用いただけません</p>
+        <p style={{ marginTop: 8, color: '#555', lineHeight: 1.6 }}>{reason}</p>
+      </div>
+    </div>,
+  )
+}
+
 async function bootstrap() {
+  const reason = authConfigError()
+  if (reason) {
+    renderFailClosed(reason)
+    return
+  }
+
   if (useMock) {
     const { startMockWorker } = await import('./mocks/browser')
     await startMockWorker()

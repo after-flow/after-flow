@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import type { ProposalDiffRow } from '@aftercare/public-contracts'
+import { useEffect, useState } from 'react'
 import { useDocumentContent } from '@/lib/api/queries'
-import { HttpError } from '@/lib/api/client'
+import { ApiError } from '@/lib/api/client'
 import { Icon } from '@/kit/Icon'
 import { Button } from '@/kit/kit'
 
@@ -27,16 +26,10 @@ async function detectKind(blob: Blob, fileName: string): Promise<Kind> {
   return 'unsupported'
 }
 
-export interface SourceBoxRow {
-  field: string
-  box: NonNullable<ProposalDiffRow['sourceBox']>
-}
-
 /**
  * 書類の原本を表示する。
  *
- * - 画像：読み取った位置（sourceBox）に枠を重ねる。枠は画像に対する割合なので、画像と一緒に伸び縮みする。
- * - PDF：ブラウザの表示に任せる。ページ内の位置が分からないため枠は出さない。
+ * - 画像／PDF：ブラウザの表示に任せる。
  * - 表示できない形式（HEIC など）：保存して開けるようにする。
  *
  * 取り出したデータ（Blob URL）は、画面を離れるときに必ず破棄する。
@@ -45,22 +38,16 @@ export function DocumentView({
   caseId,
   documentId,
   fileName,
-  boxes = [],
-  picked = null,
   heightClass = 'h-72 sm:h-96',
 }: {
   caseId: string
   documentId: string
   fileName: string
-  boxes?: SourceBoxRow[]
-  picked?: string | null
   /** 表示枠の高さ。長い書類は枠の中でスクロールする */
   heightClass?: string
 }) {
   const content = useDocumentContent(caseId, documentId)
   const [view, setView] = useState<{ url: string; kind: Kind } | null>(null)
-  const activeRef = useRef<HTMLSpanElement>(null)
-  const frameRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const blob = content.data
@@ -77,25 +64,10 @@ export function DocumentView({
     }
   }, [content.data, fileName])
 
-  /*
-    項目を選んだら、その枠が見える位置まで「表示枠の中だけ」をスクロールする。
-    scrollIntoView はページ全体も動かすため、スマートフォンで入力中の欄が画面から消えてしまう。
-  */
-  useEffect(() => {
-    const frame = frameRef.current
-    const box = activeRef.current
-    if (!frame || !box) return
-    const top = box.offsetTop
-    const bottom = top + box.offsetHeight
-    if (top < frame.scrollTop || bottom > frame.scrollTop + frame.clientHeight) {
-      frame.scrollTo({ top: Math.max(0, top - 32), behavior: 'smooth' })
-    }
-  }, [picked, view])
-
   const frame = `relative overflow-auto rounded-md border border-rd-border-2 bg-rd-shade ${heightClass}`
 
   if (content.isError) {
-    const notFound = content.error instanceof HttpError && (content.error.status === 404 || content.error.status === 409)
+    const notFound = content.error instanceof ApiError && (content.error.status === 404 || content.error.status === 409)
     return (
       <div className={`${frame} flex flex-col items-center justify-center gap-2 px-6 text-center`}>
         <Icon name="document" size={26} className="text-rd-text-3" />
@@ -146,27 +118,8 @@ export function DocumentView({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div ref={frameRef} className={frame}>
-        <div className="relative">
-          <img src={view.url} alt={`元の書類：${fileName}`} className="block w-full" />
-          {boxes.map(({ field, box }) => {
-            const on = picked === field
-            return (
-              <span
-                key={field}
-                ref={on ? activeRef : undefined}
-                className={`absolute rounded border-2 transition-colors ${on ? 'border-rd-primary bg-rd-primary/15' : 'border-rd-primary-line bg-rd-primary/5'}`}
-                style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.w * 100}%`, height: `${box.h * 100}%` }}
-              >
-                {on && (
-                  <span className={`absolute ${box.y < 0.06 ? 'top-full mt-0.5' : '-top-5'} -left-0.5 rounded bg-rd-primary px-1.5 text-[0.8rem] font-bold leading-[18px] whitespace-nowrap text-white`}>
-                    {field}
-                  </span>
-                )}
-              </span>
-            )
-          })}
-        </div>
+      <div className={frame}>
+        <img src={view.url} alt={`元の書類：${fileName}`} className="block w-full" />
       </div>
       <a href={view.url} target="_blank" rel="noreferrer" className="self-end text-[0.86rem] font-bold text-rd-primary-text hover:underline">
         大きく表示する

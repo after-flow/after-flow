@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useApprovals, useCaseOverview, useInsights, useTasks } from '@/lib/api/queries'
+import type { ApprovalResource, Insight } from '@aftercare/public-contracts'
 import { Icon, type IconName } from '@/kit/Icon'
 import { isDisplayableInsight } from '@/lib/insights'
 import { formatDate } from '@/lib/format'
@@ -62,13 +63,13 @@ export function useNavCounts(caseId: string) {
     (t) =>
       t.status !== 'COMPLETED' &&
       !(locked && t.assetDisposal) &&
-      t.deadline != null &&
+      t.deadline?.daysRemaining != null &&
       t.deadline.daysRemaining <= 7,
   ).length
 
   const reviews =
-    (approvals.data?.items ?? []).filter((a) => a.status === 'PENDING').length +
-    (insights.data?.items ?? []).filter((i) => i.status === 'NEW' && isDisplayableInsight(i)).length
+    (approvals.data ?? []).filter((a: ApprovalResource) => a.status === 'PENDING').length +
+    (insights.data ?? []).filter((i: Insight) => i.status === 'NEW' && isDisplayableInsight(i)).length
 
   return { tasks: tasksDue, reviews }
 }

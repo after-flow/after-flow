@@ -3,13 +3,17 @@ import { useSearchParams } from 'react-router-dom'
 import {
   useAssets,
   useBenefits,
+  useConfirmAsset,
+  useConfirmLiability,
   useContracts,
   useCreateAsset,
   useCreateContract,
   useCreateLiability,
   useLiabilities,
+  useReportBenefitProgress,
+  useReportContractProgress,
+  useSetContractPolicy,
   useUpdateAsset,
-  useUpdateBenefit,
   useUpdateContract,
   useUpdateLiability,
 } from '@/lib/api/queries'
@@ -164,7 +168,7 @@ function SourceMark({ source }: { source: 'AI' | 'MANUAL' }) {
 }
 
 function AssetsTable({ caseId, items, onEdit }: { caseId: string; items: Asset[]; onEdit: (x: Asset) => void }) {
-  const update = useUpdateAsset(caseId)
+  const confirm = useConfirmAsset(caseId)
   if (items.length === 0) return <Empty icon="bank" title="まだ財産は登録されていません">通帳や不動産の書類を追加すると、AIが見つけてここに並べます。</Empty>
   return (
     <Table head={['名前', '種類', '金額', '内容の確認']}>
@@ -184,7 +188,7 @@ function AssetsTable({ caseId, items, onEdit }: { caseId: string; items: Asset[]
             {x.confirmation === 'CONFIRMED' ? (
               <Badge tone="green" icon="check">確認済み</Badge>
             ) : (
-              <Button size="sm" variant="primary" disabled={update.isPending} onClick={() => void update.mutateAsync({ id: x.id, confirmation: 'CONFIRMED' })}>
+              <Button size="sm" variant="primary" disabled={confirm.isPending} onClick={() => void confirm.mutateAsync({ id: x.id, expectedVersion: x.version })}>
                 合っている
               </Button>
             )}
@@ -196,7 +200,7 @@ function AssetsTable({ caseId, items, onEdit }: { caseId: string; items: Asset[]
 }
 
 function LiabilitiesTable({ caseId, items, onEdit }: { caseId: string; items: Liability[]; onEdit: (x: Liability) => void }) {
-  const update = useUpdateLiability(caseId)
+  const confirm = useConfirmLiability(caseId)
   return (
     <>
       <div className="px-4 pt-3">
@@ -221,7 +225,7 @@ function LiabilitiesTable({ caseId, items, onEdit }: { caseId: string; items: Li
                 {x.confirmation === 'CONFIRMED' ? (
                   <Badge tone="green" icon="check">確認済み</Badge>
                 ) : (
-                  <Button size="sm" variant="primary" disabled={update.isPending} onClick={() => void update.mutateAsync({ id: x.id, confirmation: 'CONFIRMED' })}>
+                  <Button size="sm" variant="primary" disabled={confirm.isPending} onClick={() => void confirm.mutateAsync({ id: x.id, expectedVersion: x.version })}>
                     合っている
                   </Button>
                 )}
@@ -239,7 +243,8 @@ const POLICIES: ContractPolicy[] = ['UNDECIDED', 'CONTINUE', 'TRANSFER', 'CANCEL
 const LOCKED_POLICIES: ContractPolicy[] = ['TRANSFER', 'CANCEL']
 
 function ContractsTable({ caseId, items, onEdit }: { caseId: string; items: Contract[]; onEdit: (x: Contract) => void }) {
-  const update = useUpdateContract(caseId)
+  const setPolicy = useSetContractPolicy(caseId)
+  const reportProgress = useReportContractProgress(caseId)
   const { locked } = useLock(caseId)
   if (items.length === 0) return <Empty icon="plug" title="まだ契約は登録されていません">電気・ガス・携帯電話・サブスクなどを追加しておくと、止め忘れを防げます。</Empty>
   return (
@@ -260,7 +265,7 @@ function ContractsTable({ caseId, items, onEdit }: { caseId: string; items: Cont
               className={`${inputClass} h-9 w-36 text-[0.9rem]`}
               aria-label={`${x.name}をどうするか`}
               value={x.policy}
-              onChange={(e) => void update.mutateAsync({ id: x.id, policy: e.target.value as ContractPolicy })}
+              onChange={(e) => void setPolicy.mutateAsync({ id: x.id, expectedVersion: x.version, policy: e.target.value as ContractPolicy })}
             >
               {POLICIES.map((p) => (
                 <option key={p} value={p} disabled={locked && LOCKED_POLICIES.includes(p)}>
@@ -275,7 +280,7 @@ function ContractsTable({ caseId, items, onEdit }: { caseId: string; items: Cont
               className={`${inputClass} ml-auto h-9 w-28 text-[0.9rem]`}
               aria-label={`${x.name}の対応状況`}
               value={x.progress}
-              onChange={(e) => void update.mutateAsync({ id: x.id, progress: e.target.value as ContractProgress })}
+              onChange={(e) => void reportProgress.mutateAsync({ id: x.id, expectedVersion: x.version, progress: e.target.value as ContractProgress })}
             >
               {(Object.keys(CONTRACT_PROGRESS_META) as ContractProgress[]).map((p) => (
                 <option key={p} value={p}>{CONTRACT_PROGRESS_META[p].label}</option>
@@ -290,7 +295,7 @@ function ContractsTable({ caseId, items, onEdit }: { caseId: string; items: Cont
 
 function BenefitsTable({ caseId }: { caseId: string }) {
   const { data } = useBenefits(caseId)
-  const update = useUpdateBenefit(caseId)
+  const reportProgress = useReportBenefitProgress(caseId)
   const items = data?.items ?? []
   if (items.length === 0) return <Empty title="受け取れるお金は見つかっていません">保険証券や年金の書類を追加すると、AIが探します。</Empty>
   return (
@@ -311,7 +316,7 @@ function BenefitsTable({ caseId }: { caseId: string }) {
               className={`${inputClass} ml-auto h-9 w-28 text-[0.9rem]`}
               aria-label={`${x.name}の対応状況`}
               value={x.progress}
-              onChange={(e) => void update.mutateAsync({ id: x.id, progress: e.target.value as ContractProgress })}
+              onChange={(e) => void reportProgress.mutateAsync({ id: x.id, expectedVersion: x.version, progress: e.target.value as ContractProgress })}
             >
               {(Object.keys(CONTRACT_PROGRESS_META) as ContractProgress[]).map((p) => (
                 <option key={p} value={p}>{CONTRACT_PROGRESS_META[p].label}</option>
@@ -380,18 +385,18 @@ function ItemDialog({
         const digits = amount.replace(/[^\d]/g, '')
         const n = digits ? Number(digits) : undefined
         const nm = name.trim()
-        // 直すときに空にした欄は null を送って消す（undefined だと送られず、前の値が残る）
+        // 追加時は空欄を送らない（undefined）。直すときは空文字で消す（このフィールドは null を受け付けない）
         const party2 = party.trim() || undefined
-        const partyOrNull = party.trim() || null
+        const partyForUpdate = party.trim()
         if (kind === 'assets') {
-          if (item) await updateAsset.mutateAsync({ id: item.id, name: nm, kind: selected as Asset['kind'], institution: partyOrNull, amount: n ?? null })
-          else await createAsset.mutateAsync({ name: nm, kind: selected as Asset['kind'], institution: party2, amount: n, source: 'MANUAL', confirmation: 'CONFIRMED' })
+          if (item) await updateAsset.mutateAsync({ id: item.id, expectedVersion: item.version, name: nm, kind: selected as Asset['kind'], institution: partyForUpdate, amount: n ?? null })
+          else await createAsset.mutateAsync({ name: nm, kind: selected as Asset['kind'], institution: party2, amount: n })
         } else if (kind === 'liabilities') {
-          if (item) await updateLiability.mutateAsync({ id: item.id, name: nm, kind: selected as Liability['kind'], creditor: partyOrNull, amount: n ?? null })
-          else await createLiability.mutateAsync({ name: nm, kind: selected as Liability['kind'], creditor: party2, amount: n, source: 'MANUAL', confirmation: 'CONFIRMED' })
+          if (item) await updateLiability.mutateAsync({ id: item.id, expectedVersion: item.version, name: nm, kind: selected as Liability['kind'], creditor: partyForUpdate, amount: n ?? null })
+          else await createLiability.mutateAsync({ name: nm, kind: selected as Liability['kind'], creditor: party2, amount: n })
         } else {
-          if (item) await updateContract.mutateAsync({ id: item.id, name: nm, kind: selected as Contract['kind'], provider: partyOrNull })
-          else await createContract.mutateAsync({ name: nm, kind: selected as Contract['kind'], provider: party2, policy: 'UNDECIDED', progress: 'NOT_STARTED', source: 'MANUAL' })
+          if (item) await updateContract.mutateAsync({ id: item.id, expectedVersion: item.version, name: nm, kind: selected as Contract['kind'], provider: partyForUpdate })
+          else await createContract.mutateAsync({ name: nm, kind: selected as Contract['kind'], provider: party2 })
         }
         onClose()
       }}

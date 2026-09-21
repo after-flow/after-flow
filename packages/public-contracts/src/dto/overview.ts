@@ -55,6 +55,11 @@ export interface CaseOverviewResource {
     /** 関係者が未登録のため判定できない状態。 */
     unknown: boolean
     perHeir: DecisionSummaryResource[]
+    /**
+     * 3か月の熟慮期間の期限。BE ユニット3が返すまで常に undefined。
+     * それまで FE は `stage==='decision'` の未完了 Task の期限から代替表示する。
+     */
+    deliberationDeadline?: DeadlineResource | null
   }
   recentAgentRuns: AgentRunResource[]
   /** AIが接続されているか。活動が無い理由を区別するために返す。 */

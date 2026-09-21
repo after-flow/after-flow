@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useCompleteTask } from '@/lib/api/queries'
-import type { Task } from '@aftercare/public-contracts'
+import { useRunTaskCommand } from '@/lib/api/queries'
+import type { TaskResource } from '@aftercare/public-contracts'
 import { Checkbox, Confirm } from '@/kit/kit'
 
 /**
@@ -17,12 +17,12 @@ export function CompleteTaskDialog({
   onDone,
 }: {
   caseId: string
-  task: Task
+  task: TaskResource
   open: boolean
   onClose: () => void
   onDone?: () => void
 }) {
-  const complete = useCompleteTask(caseId)
+  const run = useRunTaskCommand(caseId)
   const [checked, setChecked] = useState(false)
   const close = () => {
     setChecked(false)
@@ -35,11 +35,11 @@ export function CompleteTaskDialog({
       title={`「${task.title}」を完了にしますか？`}
       description="窓口での手続きが済んでいるかを確かめてから記録してください。"
       confirmLabel="完了として記録する"
-      busy={complete.isPending}
+      busy={run.isPending}
       disabled={!checked}
       onClose={close}
       onConfirm={async () => {
-        await complete.mutateAsync({ taskId: task.id, confirmedBySelf: true })
+        await run.mutateAsync({ taskId: task.id, command: 'complete', expectedVersion: task.version })
         setChecked(false)
         onDone?.()
         onClose()

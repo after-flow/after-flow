@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useApprovals, useCaseOverview, useInsights, useTasks, useUpdateInsightStatus } from '@/lib/api/queries'
-import type { FlowStage, Insight, Task } from '@aftercare/public-contracts'
+import { useApprovals, useAcknowledgeInsight, useCaseOverview, useInsights, useProposals, useTasks } from '@/lib/api/queries'
+import type { FlowStageResource, Insight, TaskResource } from '@aftercare/public-contracts'
+import { agentRunIsActive } from '@/lib/model/agent-run'
+import { joinApprovals } from '@/lib/model/approval'
 import { Icon } from '@/kit/Icon'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { isCarriedOver, isDisplayableInsight } from '@/lib/insights'
 import { INSIGHT_KIND_META } from '@/lib/labels'
-import { AGENT_RUN_WORD, APPROVAL_KIND_WORD, FLOW_STAGE_WORD } from '@/kit/words'
+import { AGENT_RUN_WORD, FLOW_STAGE_WORD, approvalKindWord } from '@/kit/words'
 import { Badge, Button, Empty, ErrorState, LinkButton, Loading, Notice, Page, Panel } from '@/kit/kit'
 import { toast } from '@/kit/toast'
 import { CompleteTaskDialog } from './parts/CompleteTaskDialog'
@@ -35,6 +37,7 @@ export function HomeScreen() {
   const overview = useCaseOverview(caseId)
   const tasks = useTasks(caseId)
   const approvals = useApprovals(caseId)
+  const proposals = useProposals(caseId)
   const insights = useInsights(caseId)
   const { locked } = useLock(caseId)
 
@@ -56,23 +59,24 @@ export function HomeScreen() {
   const [first, ...rest] = todo
   // 30日以内に期限が来るものに加えて、相続の方法を決める前の下準備も出す（期限が無いと埋もれてしまうため）
   const soon = rest
-    .filter((t) => (t.deadline && t.deadline.daysRemaining <= 30) || prepDeadline(t, tasks.data.items))
+    .filter((t) => (t.deadline?.daysRemaining != null && t.deadline.daysRemaining <= 30) || prepDeadline(t, tasks.data.items))
     .slice(0, 6)
 
-  const pending = (approvals.data?.items ?? [])
-    .filter((a) => a.status === 'PENDING')
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const fresh = (insights.data?.items ?? []).filter((i) => i.status === 'NEW' && isDisplayableInsight(i))
+  const pendingViews = joinApprovals(approvals.data ?? [], proposals.data ?? [])
+    .filter((v) => v.approval.status === 'PENDING')
+    .sort((a, b) => a.approval.createdAt.localeCompare(b.approval.createdAt))
+  const pending = pendingViews.map((v) => v.approval)
+  const fresh = (insights.data ?? []).filter((i) => i.status === 'NEW' && isDisplayableInsight(i))
   // 止まっている手続き・前提の変化は「前回からの続き」に出すので、確認の件数には重ねて数えない
   const carried = fresh.filter(isCarriedOver)
   const newInsights = fresh.filter((i) => !isCarriedOver(i))
   const reviewCount = pending.length + newInsights.length
-  const running = overview.data.recentAgentRuns.filter((r) => r.status === 'RUNNING')
+  const running = overview.data.recentAgentRuns.filter(agentRunIsActive)
 
   // 期限を過ぎたものと、これから来るものは分けて伝える
-  const overdueCount = todo.filter((t) => t.deadline && t.deadline.daysRemaining < 0).length
+  const overdueCount = todo.filter((t) => t.deadline?.daysRemaining != null && t.deadline.daysRemaining < 0).length
   const weekCount = todo.filter(
-    (t) => t.deadline && t.deadline.daysRemaining >= 0 && t.deadline.daysRemaining <= 7,
+    (t) => t.deadline?.daysRemaining != null && t.deadline.daysRemaining >= 0 && t.deadline.daysRemaining <= 7,
   ).length
 
   return (
@@ -176,13 +180,13 @@ export function HomeScreen() {
             ) : (
               <>
                 <ul>
-                  {pending.slice(0, 3).map((a) => (
+                  {pendingViews.slice(0, 3).map(({ approval: a, proposal }) => (
                     <li key={a.id} className="border-b border-rd-border-2">
                       <Link to={`${base}/approvals/${a.id}`} className="block px-4 py-2.5 hover:bg-rd-bg">
                         <span className="block text-[0.8rem] font-bold text-rd-text-3">
-                          {APPROVAL_KIND_WORD[a.kind]}
+                          {proposal ? approvalKindWord(proposal.kind) : '確認'}
                         </span>
-                        <span className="text-[0.94rem] font-bold leading-snug">{a.title}</span>
+                        <span className="text-[0.94rem] font-bold leading-snug">{proposal?.title ?? '確認をお願いします'}</span>
                       </Link>
                     </li>
                   ))}
@@ -220,9 +224,10 @@ export function HomeScreen() {
                       <span className="relative inline-flex h-2 w-2 rounded-full bg-rd-primary" />
                     </span>
                     <span className="min-w-0">
-                      <span className="block text-[0.94rem]">{r.summary}</span>
+                      <span className="block text-[0.94rem]">{r.outcome?.summary ?? AGENT_RUN_WORD[r.operation]}</span>
                       <span className="block text-[0.8rem] text-rd-text-3">
-                        {AGENT_RUN_WORD[r.type]}・{formatDateTime(r.startedAt)}
+                        {AGENT_RUN_WORD[r.operation]}・{formatDateTime(r.startedAt ?? r.createdAt)}
+                        {r.waiting && r.waitingFor && `・待っています：${r.waitingFor}`}
                       </span>
                     </span>
                   </li>
@@ -246,7 +251,7 @@ export function HomeScreen() {
  * 止まっている手続きと、前提の変化（相続人が増えた・放棄があったなど）を、次に開いたときに知らせる。
  */
 function CarriedOver({ caseId, base, items }: { caseId: string; base: string; items: Insight[] }) {
-  const update = useUpdateInsightStatus(caseId)
+  const update = useAcknowledgeInsight(caseId)
   return (
     <Panel title="前回からの続き" padded={false}>
       <ul>
@@ -280,7 +285,7 @@ function CarriedOver({ caseId, base, items }: { caseId: string; base: string; it
                     size="sm"
                     variant="ghost"
                     disabled={update.isPending}
-                    onClick={() => void update.mutateAsync({ id: ins.id, status: 'ACKNOWLEDGED' })}
+                    onClick={() => void update.mutateAsync({ id: ins.id })}
                   >
                     読みました
                   </Button>
@@ -308,17 +313,17 @@ function todayLabel() {
 }
 
 /** 画面でいちばん大きい要素。ここを押せば次の一歩が分かる。 */
-function FirstTask({ task, base, caseId }: { task: Task; base: string; caseId: string }) {
+function FirstTask({ task, base, caseId }: { task: TaskResource; base: string; caseId: string }) {
   // 死亡届のように、葬儀社や家族がもう済ませていることも多い。詳細を開かずに片づけられるようにする
   const [completing, setCompleting] = useState(false)
   const d = task.deadline
-  const hot = d != null && d.daysRemaining <= 3
-  // 未取得の必要書類と、案内にある持ち物（印鑑など）の両方を出す。重複は除く
-  const docs = task.requiredDocuments ?? []
-  const bring = [
-    ...docs.filter((r) => !r.collected).map((r) => r.label),
-    ...(task.guidance?.bring ?? []).filter((b) => !docs.some((r) => r.label === b)),
-  ]
+  const hot = d?.daysRemaining != null && d.daysRemaining <= 3
+  /*
+    未取得の必要書類。案内（guidance）は別リソースになり、一覧をまたいで取りに行くと N+1 になるため
+    ホームでは task.requiredDocuments だけを出す（案内込みの一覧は手続き詳細で見せる）。
+    `collected` は BE ユニット2待ちのため、`documentId != null` を代わりに使う（§確定内容・暫定）。
+  */
+  const bring = task.requiredDocuments.filter((r) => r.documentId == null).map((r) => r.label)
 
   return (
     <section
@@ -338,9 +343,11 @@ function FirstTask({ task, base, caseId }: { task: Task; base: string; caseId: s
         {d && (
           <span className="ml-auto flex flex-wrap items-baseline gap-x-2">
             <strong className="text-[1.2rem] leading-tight">{dueWords(d)}</strong>
-            <span className="text-[0.86rem]">
-              {formatDate(d.dueDate, { weekday: true })}まで{d.critical && '・法律で定められた期限'}
-            </span>
+            {d.dueDate && (
+              <span className="text-[0.86rem]">
+                {formatDate(d.dueDate, { weekday: true })}まで{d.critical && '・法律で定められた期限'}
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -418,9 +425,11 @@ const STAGE_STATE = {
   COMPLETED: { word: '済み', icon: 'check', bar: 'bg-rd-success', fg: 'text-rd-success-text' },
   IN_PROGRESS: { word: '進行中', icon: 'progress', bar: 'bg-rd-primary', fg: 'text-rd-primary-text' },
   NOT_STARTED: { word: 'これから', icon: 'circle', bar: 'bg-rd-border', fg: 'text-rd-text-3' },
+  // 対象の手続きが0件の段階。完了ではない
+  NO_TASKS: { word: '該当なし', icon: 'circle', bar: 'bg-rd-border-2', fg: 'text-rd-text-3' },
 } as const
 
-function FlowOverview({ stages }: { stages: FlowStage[] }) {
+function FlowOverview({ stages }: { stages: FlowStageResource[] }) {
   const done = stages.filter((s) => s.state === 'COMPLETED').length
   return (
     <Panel
@@ -436,7 +445,7 @@ function FlowOverview({ stages }: { stages: FlowStage[] }) {
       */}
       <ol className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-5 xl:grid-cols-10 xl:gap-x-3">
         {stages.map((s, i) => {
-          const st = STAGE_STATE[s.state]
+          const st = STAGE_STATE[s.state] ?? STAGE_STATE.NOT_STARTED
           const current = s.state === 'IN_PROGRESS'
           return (
             <li
