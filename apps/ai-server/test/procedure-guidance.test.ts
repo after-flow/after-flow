@@ -6,7 +6,7 @@ import { internalResultSchema, TASK_GUIDANCE_LIMITS } from '@aftercare/internal-
 import type { InternalResult } from '@aftercare/internal-contracts'
 import { buildCoreContext, contentHash, minimizedModelInput, modelInputAllowlist } from '../src/orchestration/context/builder.js'
 import { createResearchTools } from '../src/infrastructure/mastra/tools/research.js'
-import { createProcedureGuidanceWorkflow } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
+import { createProcedureGuidanceWorkflow, createProcedureGuidanceWorkflowForEvaluation } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
 import type { ProcedureGuidanceDependencies } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
 import { scriptedModel } from './helpers/scripted-model.js'
 import { assertCompleteResearch, researchEvidenceSchema, researchRequestSchema } from '../src/orchestration/research/contracts.js'
@@ -114,6 +114,22 @@ test('P-01 uses both real Mastra agents and tools, rechecks context, and reports
   // 調査担当は実Toolから見出し単位の本文を受け取る（#165）。
   assert.ok(JSON.stringify(research.calls[2]).includes('sections'))
   assert.ok(controls.includes('search') && controls.includes('read-source'))
+})
+
+test('#182 legacy comparison is evaluation-only and sends every playbook Skill at every Core stage', async () => {
+  const { deps, core, research } = setup()
+  const result = await (await createProcedureGuidanceWorkflowForEvaluation(deps, 'legacy-all').createRun())
+    .start({ inputData: { resultId: 'result-1' } })
+  assert.equal(result.status, 'success', JSON.stringify(result))
+  for (const index of [0, 1, 3]) {
+    const request = JSON.stringify(core.calls[index])
+    assert.match(request, /Skill: case-assessment/)
+    assert.match(request, /Skill: research-briefing/)
+    assert.match(request, /Skill: grounded-guidance/)
+  }
+  const researchRequest = JSON.stringify(research.calls)
+  assert.match(researchRequest, /Skill: official-source-research/)
+  assert.match(researchRequest, /Skill: evidence-reconciliation/)
 })
 
 test('#162 model draft and transport share task-guidance length limits', () => {
