@@ -1,29 +1,44 @@
 import { useEffect } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom'
-import { getToken, setUnauthorizedHandler } from '@/lib/api/client'
+import { HttpError, getToken, setUnauthorizedHandler } from '@/lib/api/client'
 import { useConsents } from '@/lib/api/queries'
-import { Spinner } from '@/components/ui/Primitives'
 import { useLogout } from '@/lib/useLogout'
-import { CaseLayout } from '@/components/layout/CaseLayout'
-import { LoginPage } from '@/features/auth/LoginPage'
-import { CaseListPage } from '@/features/cases/CaseListPage'
-import { CaseNewPage } from '@/features/cases/CaseNewPage'
-import { DashboardPage } from '@/features/cases/DashboardPage'
-import { DocumentsPage } from '@/features/documents/DocumentsPage'
-import { DocumentDetailPage } from '@/features/documents/DocumentDetailPage'
-import { TasksPage } from '@/features/tasks/TasksPage'
-import { TaskDetailPage } from '@/features/tasks/TaskDetailPage'
-import { PropertyPage } from '@/features/estate/PropertyPage'
-import { ApprovalsPage } from '@/features/approvals/ApprovalsPage'
-import { ApprovalDetailPage } from '@/features/approvals/ApprovalDetailPage'
-import { ChatPage } from '@/features/chat/ChatPage'
-import { InsightsPage } from '@/features/insights/InsightsPage'
-import { FamilyPage } from '@/features/family/FamilyPage'
-import { ConsentPage } from '@/features/auth/ConsentPage'
-import { LegalPage } from '@/features/auth/LegalPage'
+import { AppShell } from '@/shell/AppShell'
+import { ConsentScreen } from '@/screens/ConsentScreen'
+import { LegalScreen } from '@/screens/LegalScreen'
+import { Toaster, toast } from '@/kit/toast'
+import { Loading } from '@/kit/kit'
+import { CaseNewScreen, CasesScreen, LoginScreen } from '@/screens/EntryScreens'
+import { HomeScreen } from '@/screens/HomeScreen'
+import { TasksScreen } from '@/screens/TasksScreen'
+import { TaskScreen } from '@/screens/TaskScreen'
+import { ApprovalsScreen } from '@/screens/ApprovalsScreen'
+import { ApprovalScreen } from '@/screens/ApprovalScreen'
+import { DocumentScreen, DocumentsScreen } from '@/screens/DocumentsScreen'
+import { PropertyScreen } from '@/screens/PropertyScreen'
+import { FamilyScreen } from '@/screens/FamilyScreen'
+import { ChatScreen } from '@/screens/ChatScreen'
+import { SetupScreen } from '@/screens/SetupScreen'
 
 const queryClient = new QueryClient({
+  /*
+    保存・記録の失敗は、どの画面でも必ず知らせる。
+    画面側で独自に文言を出すもの（書類のアップロードなど）は meta.handlesError で除く。
+    セッション切れ（401）はログイン画面へ戻すので、ここでは出さない。
+  */
+  mutationCache: new MutationCache({
+    onError: (error, _vars, _ctx, mutation) => {
+      if (mutation.meta?.handlesError) return
+      if (error instanceof HttpError && error.status === 401) return
+      toast(
+        error instanceof HttpError && error.status === 409
+          ? 'ほかの方が先に内容を変えたため、保存できませんでした。画面を開き直してから、もう一度お試しください。'
+          : '保存できませんでした。通信の状態をご確認のうえ、もう一度お試しください。',
+        'error',
+      )
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 15_000,
@@ -43,7 +58,7 @@ function RequireAuth() {
  */
 function RequireConsent() {
   const { data, isLoading, isError } = useConsents()
-  if (isLoading) return <Spinner label="確認事項を読み込み中" />
+  if (isLoading) return <Loading label="確認事項を読み込み中" />
   // 取得できないときに利用を止めてしまうと復旧できないので、通したうえで画面側で扱う
   if (isError) return <Outlet />
   return data?.outstanding ? <Navigate to="/consent" replace /> : <Outlet />
@@ -66,30 +81,32 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <SessionExpiryHandler />
+        <Toaster />
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login" element={<LoginScreen />} />
 
           <Route element={<RequireAuth />}>
-            <Route path="/consent" element={<ConsentPage />} />
-            <Route path="/legal/:docId" element={<LegalPage />} />
+            <Route path="/consent" element={<ConsentScreen />} />
+            <Route path="/legal/:docId" element={<LegalScreen />} />
 
             <Route element={<RequireConsent />}>
-            <Route path="/cases" element={<CaseListPage />} />
-            <Route path="/cases/new" element={<CaseNewPage />} />
+              <Route path="/cases" element={<CasesScreen />} />
+              <Route path="/cases/new" element={<CaseNewScreen />} />
 
-            <Route path="/cases/:caseId" element={<CaseLayout />}>
-              <Route index element={<DashboardPage />} />
-              <Route path="documents" element={<DocumentsPage />} />
-              <Route path="documents/:documentId" element={<DocumentDetailPage />} />
-              <Route path="tasks" element={<TasksPage />} />
-              <Route path="tasks/:taskId" element={<TaskDetailPage />} />
-              <Route path="property" element={<PropertyPage />} />
-              <Route path="approvals" element={<ApprovalsPage />} />
-              <Route path="approvals/:approvalId" element={<ApprovalDetailPage />} />
-              <Route path="insights" element={<InsightsPage />} />
-              <Route path="chat" element={<ChatPage />} />
-              <Route path="family" element={<FamilyPage />} />
-            </Route>
+              <Route path="/cases/:caseId" element={<AppShell />}>
+                <Route index element={<HomeScreen />} />
+                <Route path="tasks" element={<TasksScreen />} />
+                <Route path="tasks/:taskId" element={<TaskScreen />} />
+                <Route path="approvals" element={<ApprovalsScreen />} />
+                <Route path="approvals/:approvalId" element={<ApprovalScreen />} />
+                <Route path="insights" element={<Navigate to="../approvals?tab=insights" replace />} />
+                <Route path="documents" element={<DocumentsScreen />} />
+                <Route path="documents/:documentId" element={<DocumentScreen />} />
+                <Route path="property" element={<PropertyScreen />} />
+                <Route path="family" element={<FamilyScreen />} />
+                <Route path="chat" element={<ChatScreen />} />
+                <Route path="setup" element={<SetupScreen />} />
+              </Route>
             </Route>
           </Route>
 
