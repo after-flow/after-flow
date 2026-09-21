@@ -227,7 +227,7 @@ describe('法律の数え方（申し送り3-3）', () => {
     assert.equal(result.dueDate, '2029-09-15')
   })
 
-  it('YEAR単位: 閏日起算の1年は翌年の末日を応当日として扱う（2028-02-29から1年後は2029-02-28）', () => {
+  it('YEAR単位: 閏日の翌日3/1が起算日なら応当日3/1の前日で満了する（2028-02-29から1年後は2029-02-28）', () => {
     const result = computeDeadline(
       reviewedRule({ period: { unit: 'YEAR', count: 1, includeFirstDay: false } }),
       { dateOfDeath: null, knownAt: '2028-02-29' },

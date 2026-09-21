@@ -124,6 +124,13 @@ describe('readRuleCatalog', () => {
     assert.throws(() => readRuleCatalog({ NODE_ENV: 'production', DEADLINE_RULES_PATH: file }))
   })
 
+  it('placeholderを省略したファイルは本番以外でも拒否する', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'after-flow-rule-catalog-'))
+    const file = path.join(dir, 'rules.json')
+    writeFileSync(file, JSON.stringify({ deadlineRules: [], initialProcedures: [], deliberationDeadlineRuleId: null }))
+    assert.throws(() => readRuleCatalog({ DEADLINE_RULES_PATH: file }), /placeholder/)
+  })
+
   it('deliberationDeadlineRuleIdを省略したファイルはnull扱いになる', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'after-flow-rule-catalog-'))
     const file = path.join(dir, 'rules.json')

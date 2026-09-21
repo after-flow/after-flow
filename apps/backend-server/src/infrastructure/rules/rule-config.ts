@@ -43,6 +43,10 @@ export function readRuleCatalog(env: NodeJS.ProcessEnv = process.env): RuleCatal
  * 同じ検証をかける。
  */
 export function assertRuleCatalogUsable(catalog: RuleCatalog): void {
+  if (typeof catalog.placeholder !== 'boolean') {
+    // 省略を「本番可」と読まれないよう、明示を必須にする。
+    throw new Error('カタログの placeholder は boolean で明示する必要があります。')
+  }
   const ruleIds = new Set(catalog.deadlineRules.map((rule) => rule.id))
   if (ruleIds.size !== catalog.deadlineRules.length) {
     throw new Error('期限ルールの ID が重複しています。')
