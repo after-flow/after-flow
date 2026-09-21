@@ -46,6 +46,16 @@ export interface GuidanceSourceResource {
   checkedAt: ISODateTime
 }
 
+/** 案内の1項目の根拠となる公式資料の引用。 */
+export interface GuidanceCitationResource {
+  item: 'where' | 'bring' | 'steps'
+  /** その区分内の項目番号（0始まり）。 */
+  index: number
+  sourceUrl: string
+  sectionHeading: string | null
+  quote: string
+}
+
 export interface GuidanceResource {
   taskId: string
   status: GuidanceStatusResource
@@ -58,6 +68,8 @@ export interface GuidanceResource {
   note: string | null
   /** 出典と確認日。これが無い案内をそのまま信じさせない。 */
   sources: GuidanceSourceResource[]
+  /** 項目ごとの根拠。本文との逐語一致を確かめた引用だけが入る。 */
+  citations: GuidanceCitationResource[]
   /** 調べきれなかった項目。空でないときは全件確認済みではない。 */
   missing: string[]
   failureReason: string | null

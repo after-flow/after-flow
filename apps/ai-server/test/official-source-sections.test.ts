@@ -106,10 +106,13 @@ test('#165 引用した資料の申請書リンクだけを案内に載せる', 
   // 申請書そのものを優先し、無い場合に記入例を使う。
   assert.equal(officialForm([cited])?.url, 'https://official.example/assets/form.pdf')
 
-  const claim = (text: string) => ({ text, sourceIds: ['source-1'] })
+  const claim = (text: string) => ({ text, questionIds: ['documents'] })
   const result = guidanceResult({
     draft: { status: 'partial', where: claim('支部へ郵送する'), bring: [claim('申請書')], steps: [claim('郵送する')], missing: ['加入支部'] },
-    sources: [cited, uncited], research: { briefs: [], outcomes: [] },
+    sources: [cited, uncited],
+    research: { briefs: [{ briefId: 'b', procedure: 'p', institution: 'i', jurisdiction: 'j', sourceCatalogIds: ['c'], questions: [{ id: 'documents', text: '書類' }] }],
+      outcomes: [{ briefId: 'b', findings: { status: 'partial', missing: [], conflicts: [], answers: [{ questionId: 'documents', text: '申請書', sourceIds: ['source-1'],
+        applicability: 'a', evidence: [{ sourceId: 'source-1', sectionId: 's1', quote: '本文' }] }] } }] },
     proof: { caseVersion: 1, contextSnapshotId: 'snapshot-1', fencingToken: 1, artifactVersion: 1, contentHash: textHash('proof') },
     resultId: 'result-1', target: '合成手続き',
   })

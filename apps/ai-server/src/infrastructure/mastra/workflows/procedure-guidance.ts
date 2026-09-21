@@ -3,10 +3,10 @@ import { createStep, createWorkflow } from '@mastra/core/workflows'
 import type { ModelWithRetries } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
-import { artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
+import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
-import { GuidanceOutputContractError, guidanceDraftSchema, guidanceResult, requireCaseApplicability } from '../../../orchestration/playbooks/guidance-output.js'
+import { GuidanceOutputContractError, guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { finalizeResearchSynthesis, researchEvidenceSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { createGuidanceAgents } from '../agents/guidance-agents.js'
@@ -32,6 +32,21 @@ export interface ProcedureGuidanceDependencies {
   beforeTool: (kind: 'search' | 'read-source') => Promise<void>
   maxSourceAgeMs: number
   timeoutMs: number
+}
+
+/**
+ * 構造化出力がスキーマに合わない場合だけ、1回だけ生成し直す。
+ * OrcaRouter経由のjson_schemaはstrictを指定できず、実モデルの評価（#164）で
+ * スキーマ外の要素を返す失敗が一定割合で起きたため。それ以外の失敗は再試行しない。
+ */
+async function generateStructured<T>(generate: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  try {
+    return await generate()
+  } catch (error) {
+    signal.throwIfAborted()
+    if (!(error instanceof Error && /Structured output validation failed/.test(error.message))) throw error
+    return generate()
+  }
 }
 
 /** Workflow definition for a durable host; main.ts does not start it in an unmanaged Promise. */
@@ -86,37 +101,44 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       for (const candidate of selectedCandidates) await tools.execute.read(selection.brief.briefId, candidate.id)
       const sources = tools.sources(selection.brief.briefId)
       await deps.budget?.charge({ research: 1 })
-      const researchResponse = await researchAgent.generate(JSON.stringify({
-        goal: '各questionに公式資料だけで回答し、回答ごとに取得済みsourceIdを付けてください。すべて確認できた場合だけstatusをcompleteにし、確認できない項目はmissingに残してください。',
+      const researchResponse = await generateStructured(() => researchAgent.generate(JSON.stringify({
+        goal: `各questionに、渡した公式資料の本文だけで回答してください。
+- 回答ごとにevidenceを1〜5件付ける。evidenceは根拠となる本文をsections[].textからそのまま写したquote（2〜200文字）と、そのsourceIdとsectionIdにする。
+- quoteは本文の連続した一部分を1文ずつ写す。語を足す・省く・言い換える・「など」で終える・別の文や見出しとつなぐことはしない。例えば本文が「ご加入の支部は」なら「加入の支部は」と書かない。
+- answersの各要素は questionId、text、evidence をすべて持つ。evidenceを別の要素にしない。
+- quoteに無い金額・期限・提出先・提出方法をtextに書かない。
+- 資料で確認できない問いはanswersに入れずmissingに残す。資料どうしの記載が食い違う場合はconflictsに書く。
+- すべての問いを確認できた場合だけstatusをcompleteにする。
+引用は本文と照合し、一致しない回答は採用しません。`,
         brief: selection.brief,
         // 主要コンテンツを見出し単位で渡す。ナビゲーション等は抽出時に除いている（#165）。
         sources: sources.map(({ id, title, issuer, url, fetchedAt, sections }) => ({ id, title, issuer, url, fetchedAt, sections })),
       }), {
         maxSteps: 1, toolChoice: 'none', abortSignal: deps.signal,
         structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'strict' },
-      })
-      const findings = finalizeResearchSynthesis(researchResponse.object, selection.brief, tools.retrievedSourceIds(selection.brief.briefId))
+      }), deps.signal)
+      // 引用が本文と一致しない回答はここで捨てる（#163）。
+      const findings = finalizeResearchSynthesis(researchResponse.object, selection.brief, sources)
       const research = researchEvidenceSchema.parse({ briefs: [selection.brief], outcomes: [{ briefId: selection.brief.briefId, findings }] })
-      const applicabilityQuestions = scope.caseApplicabilityQuestions ?? []
       const coreInput = {
         goal: `対象手続きの案内を次の区分で作成してください。
-- where: 提出先を1件。根拠のsourceIdを付ける。
-- bring: 主な必要書類と条件付き追加書類を、書類ごとの配列にする。stepsへまとめず、必ず1件以上を入れる。
-- steps: 申請手順、申請期限、注意点を項目ごとの配列にする。
-- missing: 公式資料で確認できない事項だけを入れる。
-where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcompleteにする。それ以外はpartialまたはneeds_inputにする。`,
+- where: 提出先・提出方法を1件（${GUIDANCE_LIMITS.where}文字以内）。
+- bring: 主な必要書類と条件付き追加書類を、書類ごとの配列にする（各${GUIDANCE_LIMITS.bringItem}文字以内）。stepsへまとめず、必ず1件以上を入れる。
+- steps: 申請手順、支給額、申請期限、注意点を項目ごとの配列にする（各${GUIDANCE_LIMITS.stepItem}文字以内）。
+- missing: 公式資料で確認できない事項だけを入れる（各${GUIDANCE_LIMITS.missingItem}文字以内）。
+各項目のquestionIdsには、その項目の根拠となるanswersのquestionIdを入れる。
+- 項目はanswersのevidence（公式資料からの引用）に書かれている内容だけで書く。textは要約で、evidenceに無い書類・金額・期限・提出先・提出方法（窓口への持参、特定の支部名や自治体、最寄りの支部など）を足さない。
+- answersにあるquestionIdごとに、少なくとも1つの項目で扱う。給付の種類（埋葬料・埋葬費・家族埋葬料）で条件・支給額・起算日が異なる場合は、種類ごとに書き分ける。
+- 条件によって内容が変わる場合は条件を省かない。
+ハーネスが各項目をevidenceと照合し、根拠の無い項目は表示しません。すべてのquestionを扱えた場合だけstatusをcompleteにする。
+これは制度の一般的な案内です。この案件に当てはまるかの確認はハーネスが別に行います。`,
         // allowlistの項目だけを送る。Case全体は鮮度・scope検証のためハーネスに残す（#166）。
         context: minimizedModelInput(context, 'task_guidance'),
-        verifiedResearch: research,
-        sources: sources.map(({ id, title, issuer, url, fetchedAt, updatedAt, location }) => ({ id, title, issuer, url, fetchedAt, updatedAt, location })),
-        constraint: '調査はハーネスが完了しています。Research Agentへ再委譲せず、verifiedResearchだけを根拠に案内してください。',
-        caseApplicability: {
-          confirmed: applicabilityQuestions.length === 0,
-          instruction: applicabilityQuestions.length
-            ? '次の案件固有情報は未確認です。statusをpartialにしてmissingへ含め、一般制度がこの案件に適用できると断定しないでください。'
-            : '案件固有の追加確認事項はありません。',
-          missing: applicabilityQuestions,
-        },
+        questions: selection.brief.questions,
+        answers: findings.answers.map(({ questionId, text, evidence }) => ({ questionId, text, evidence: evidence?.map(item => item.quote) ?? [] })),
+        researchStatus: findings.status,
+        researchMissing: findings.missing,
+        constraint: '調査はハーネスが完了しています。Research Agentへ再委譲せず、answersだけを根拠に案内してください。',
       }
       let draft: z.infer<typeof guidanceDraftSchema> | undefined
       let validationIssues: { path: PropertyKey[]; code: string; message: string }[] = []
@@ -124,29 +146,16 @@ where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcomp
         if (attempt) await checkControl()
         const response = await coreAgent.generate(JSON.stringify({
           ...coreInput,
-          ...(attempt ? {
-            repair: {
-              instruction: '前回の出力は契約に適合しませんでした。内容を省略せず、項目を分けて上限内のJSONを再生成してください。文字列を途中で切りません。',
-              validationIssues,
-            },
-          } : {}),
+          ...(attempt ? { repair: {
+            instruction: '前回の出力は契約に適合しませんでした。内容を省略せず、項目を分けて上限内のJSONを再生成してください。文字列を途中で切りません。',
+            validationIssues,
+          } } : {}),
         }), {
           maxSteps: 1, toolChoice: 'none',
-          // Mastra validates against the exact transport limits. `warn` lets the
-          // harness distinguish invalid model output from provider I/O failure.
           structuredOutput: { schema: guidanceDraftSchema, errorStrategy: 'warn' }, abortSignal: deps.signal,
         })
         const parsed = guidanceDraftSchema.safeParse(response.object)
-        if (parsed.success) {
-          try {
-            draft = requireCaseApplicability(parsed.data, applicabilityQuestions)
-            break
-          } catch (error) {
-            if (!(error instanceof z.ZodError)) throw error
-            validationIssues = error.issues.map(issue => ({ path: issue.path, code: issue.code, message: issue.message }))
-            continue
-          }
-        }
+        if (parsed.success) { draft = parsed.data; break }
         validationIssues = parsed.error.issues.map(issue => ({ path: issue.path, code: issue.code, message: issue.message }))
       }
       if (!draft) throw new GuidanceOutputContractError()
@@ -163,7 +172,10 @@ where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcomp
       assertContextFresh(before, latest)
       if (inputData.sources.some(source => Date.now() - Date.parse(source.fetchedAt) > deps.maxSourceAgeMs)) throw new Error('Guidance sources expired before reporting')
       const target = contextTaskTitle(latest.modelInput.facts)
-      const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target })
+      // 適用条件は最新のContextで判定する。モデルの自己申告では確認済みにしない（#162）。
+      const unresolved = unresolvedApplicability(scope.applicabilityChecks ?? [], latest.modelInput.facts)
+      const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target, unresolved,
+        rules: scope.groundingRules })
       await checkControl()
       const outcome = await deps.backend.result(result, { requestId: inputData.resultId, signal: deps.signal })
       return { resultId: inputData.resultId, ...outcome }

@@ -33,6 +33,15 @@ export const guidanceResourceSchema = z.object({
   sources: z.array(
     z.object({ label: z.string(), url: z.string(), checkedAt: isoDateTimeSchema }),
   ),
+  citations: z.array(
+    z.object({
+      item: z.enum(['where', 'bring', 'steps']),
+      index: z.number().int(),
+      sourceUrl: z.string(),
+      sectionHeading: z.string().nullable(),
+      quote: z.string(),
+    }),
+  ),
   missing: z.array(z.string()),
   failureReason: z.string().nullable(),
   researchedBy: z.enum(['AI', 'MANUAL']).nullable(),
