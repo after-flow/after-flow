@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import type { CaseAction, CaseResource } from '@aftercare/public-contracts'
+import type { CaseAction, CaseProfileResource, CaseResource } from '@aftercare/public-contracts'
 import type { CaseEntity } from '../../domain/case/case.js'
 import { nextCaseVersion } from '../../domain/case/case.js'
 import { businessToday, findCaseDateIssues, type CaseDateIssue } from '../../domain/case/case-dates.js'
+import type { CaseProfile, ProfileInput } from '../../domain/case/case-profile.js'
+import { normalizeProfile } from '../../domain/case/case-profile.js'
+import type { ProcedureFacts } from '../../domain/case/case-profile.js'
 import { roleAllows } from '../../domain/authorization/case-role.js'
 import type { TenantMember } from '../authorization/case-access.js'
 import type { CaseMember } from '../../domain/authorization/case-role.js'
@@ -20,6 +23,7 @@ import type {
   ReadRepository,
   UnitOfWork,
 } from '../ports/persistence.js'
+import { EMPTY_PREPARATION, ProcedureSyncService } from '../task/procedure-sync-service.js'
 
 /**
  * 作成時に、作成者本人を Person として同じ Transaction で同時登録する指定。
@@ -52,6 +56,8 @@ export interface UpdateCaseInput {
   ownerName?: string
   relationshipToDeceased?: string
   municipality?: string | null
+  /** 丸ごと置換。省略項目は UNKNOWN に正規化される。null で未回答に戻す。キー省略は変更なし。 */
+  profile?: ProfileInput | null
 }
 
 export interface CommandMeta {
@@ -78,7 +84,10 @@ function personLocation(caseId: string, personId: string): DocLocation {
  * ような presentation の語彙（route の Zod 検証と同じ details 形）への整形は
  * ここ Application で行う。
  */
-export function assertCaseDatesValid(dates: { dateOfDeath: string; knownAt: string | null }, today: string): void {
+export function assertCaseDatesValid(
+  dates: { dateOfDeath: string; knownAt: string | null; dateOfBirth?: string | null },
+  today: string,
+): void {
   const issues: CaseDateIssue[] = findCaseDateIssues(dates, today)
   if (issues.length > 0) {
     throw errors.validationFailed({
@@ -94,6 +103,25 @@ export function assertCaseDatesValid(dates: { dateOfDeath: string; knownAt: stri
  * 許可された操作はサーバーが判定して返す。フロントが役割から
  * 推測すると、画面と Backend の判断がずれる。
  */
+function toCaseProfileResource(profile: CaseProfile): CaseProfileResource {
+  return {
+    healthInsurance: profile.healthInsurance,
+    pension: profile.pension,
+    occupation: profile.occupation,
+    realEstate: profile.realEstate,
+    car: profile.car,
+    mortgage: profile.mortgage,
+    answeredAt: profile.answeredAt,
+  }
+}
+
+/** 正規化後の深い等価比較。answeredAt だけ違っても差分として扱う（洗い出しの plan は no-op になる）。 */
+function profileEquals(a: CaseProfile | null, b: CaseProfile | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.healthInsurance === b.healthInsurance && a.pension === b.pension && a.occupation === b.occupation
+    && a.realEstate === b.realEstate && a.car === b.car && a.mortgage === b.mortgage && a.answeredAt === b.answeredAt
+}
+
 export function toCaseResource(entity: CaseEntity, access: CaseAccess): CaseResource {
   const allowedActions: CaseAction[] = []
   if (access.can('case.write')) allowedActions.push('UPDATE_BASIC_INFO')
@@ -106,6 +134,8 @@ export function toCaseResource(entity: CaseEntity, access: CaseAccess): CaseReso
     dateOfDeath: entity.dateOfDeath,
     dateOfBirth: entity.dateOfBirth,
     knownAt: entity.knownAt,
+    // 未回答（null/欠落）ならキー自体を出さない。
+    ...(entity.profile ? { profile: toCaseProfileResource(entity.profile) } : {}),
     ownerName: entity.ownerName,
     relationshipToDeceased: entity.relationshipToDeceased,
     municipality: entity.municipality,
@@ -128,6 +158,7 @@ export class CaseService {
     private readonly read: ReadRepository,
     private readonly uow: UnitOfWork,
     private readonly clock: Clock = { now: () => new Date().toISOString() },
+    private readonly procedureSync: ProcedureSyncService,
   ) {}
 
   /**
@@ -145,7 +176,7 @@ export class CaseService {
 
     // 書き込み前に弾く。何も残さずに 400 を返す。
     assertCaseDatesValid(
-      { dateOfDeath: input.dateOfDeath, knownAt: input.knownAt ?? null },
+      { dateOfDeath: input.dateOfDeath, knownAt: input.knownAt ?? null, dateOfBirth: input.dateOfBirth ?? null },
       businessToday(new Date(this.clock.now())),
     )
 
@@ -163,6 +194,7 @@ export class CaseService {
           relationshipToDeceased: input.relationshipToDeceased,
           municipality: input.municipality ?? null,
           ownerPersonId,
+          profile: null,
           aiPlanningRestriction: null,
           status: 'ACTIVE',
           caseVersion: 1,
@@ -218,12 +250,22 @@ export class CaseService {
           })
         }
 
-        // 初期手続きと期限の生成は #9。配送は #10。ここでは事実だけを残す。
+        // Outbox の case.created は補正経路（Outbox worker の再同期）として残す。
+        // 初期手続き・期限の生成は下の procedureSync.apply が同じ tx で行う。
         tx.outbox({
           type: 'case.created',
           caseId,
           payload: { caseId, dateOfDeath: created.dateOfDeath, knownAt: created.knownAt },
         })
+
+        const facts: ProcedureFacts & { caseId: string } = {
+          caseId,
+          dateOfDeath: created.dateOfDeath,
+          knownAt: created.knownAt,
+          dateOfBirth: created.dateOfBirth,
+          profile: created.profile ?? null,
+        }
+        await this.procedureSync.apply(tx, facts, EMPTY_PREPARATION, 'CASE_CREATED')
 
         return { caseId, ...created }
       },
@@ -294,6 +336,11 @@ export class CaseService {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
     // Firestore の再試行で毎回別の「今日」にならないよう、tx の外で 1 回だけ算出する。
     const today = businessToday(new Date(this.clock.now()))
+    // 洗い出しの prepare（evidence・依存関係・legacy Deadline ID の検索）は tx の外で行う。
+    // 入力にこれらのキーが無ければ洗い出しは走らないため、prepare も省略してよい。
+    const touchesProcedureFacts = ['dateOfDeath', 'knownAt', 'dateOfBirth', 'profile']
+      .some((key) => key in input)
+    const prep = touchesProcedureFacts ? await this.procedureSync.prepare(user.tenantId, caseId) : EMPTY_PREPARATION
 
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const current = await tx.require<CaseEntity>(caseLocation(caseId))
@@ -311,11 +358,12 @@ export class CaseService {
       }
 
       // 日付を触らない PATCH では legacy の日付不整合 Case を巻き込まない。
-      if ('dateOfDeath' in patch || 'knownAt' in patch) {
+      if ('dateOfDeath' in patch || 'knownAt' in patch || 'dateOfBirth' in patch) {
         assertCaseDatesValid(
           {
             dateOfDeath: patch.dateOfDeath ?? current.dateOfDeath,
             knownAt: 'knownAt' in patch ? (patch.knownAt ?? null) : current.knownAt,
+            dateOfBirth: 'dateOfBirth' in patch ? (patch.dateOfBirth ?? null) : (current.dateOfBirth ?? null),
           },
           today,
         )
@@ -334,13 +382,28 @@ export class CaseService {
         detail: { changed: Object.keys(patch) },
       })
 
-      // 起算日が変われば期限の再評価が要る。判定は #9 が行う。
+      // 起算日が変われば期限の再評価が要る。
       if ('dateOfDeath' in patch || 'knownAt' in patch) {
         tx.outbox({
           type: 'case.reference_dates_changed',
           caseId,
           payload: { caseId, dateOfDeath: patch.dateOfDeath ?? current.dateOfDeath, knownAt: patch.knownAt ?? current.knownAt },
         })
+      }
+      if ('profile' in patch || 'dateOfBirth' in patch) {
+        tx.outbox({ type: 'case.profile_changed', caseId, payload: { caseId } })
+      }
+
+      // profile / dateOfBirth / dateOfDeath / knownAt の変更で手続きを洗い出し直す（同じ tx）。
+      if ('dateOfDeath' in patch || 'knownAt' in patch || 'dateOfBirth' in patch || 'profile' in patch) {
+        const facts: ProcedureFacts & { caseId: string } = {
+          caseId,
+          dateOfDeath: patch.dateOfDeath ?? current.dateOfDeath,
+          knownAt: 'knownAt' in patch ? (patch.knownAt ?? null) : current.knownAt,
+          dateOfBirth: 'dateOfBirth' in patch ? (patch.dateOfBirth ?? null) : (current.dateOfBirth ?? null),
+          profile: 'profile' in patch ? (patch.profile ?? null) : (current.profile ?? null),
+        }
+        await this.procedureSync.apply(tx, facts, prep, 'CASE_UPDATED')
       }
     })
 
@@ -395,5 +458,9 @@ function buildPatch(current: CaseEntity, input: UpdateCaseInput): Partial<CaseEn
   assign('ownerName')
   assign('relationshipToDeceased')
   assign('municipality')
+  if ('profile' in input) {
+    const normalized: CaseProfile | null = input.profile == null ? null : normalizeProfile(input.profile)
+    if (!profileEquals(current.profile ?? null, normalized)) patch.profile = normalized
+  }
   return patch
 }

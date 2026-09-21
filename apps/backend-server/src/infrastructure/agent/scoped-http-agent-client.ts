@@ -15,13 +15,13 @@ export class ScopedHttpAgentJobClient implements AgentJobClient, ExecutionSnapsh
     if (url.username || url.password || url.search || url.hash || !['http:', 'https:'].includes(url.protocol)) throw new Error('Invalid AI URL')
   }
   async deliver(job: AgentJob): Promise<AgentDeliveryOutcome> {
-    if (!job.type.startsWith('agent.') || !job.caseId || !internalId.safeParse(job.payload.runId).success) {
-      return { status: 'RETRYABLE', reason: 'CONTROL_DELIVERY_NOT_CONNECTED' }
-    }
+    if (!job.type.startsWith('agent.')) return { status: 'REJECTED', reason: 'NO_CONSUMER' }
+    if (!job.caseId || !internalId.safeParse(job.payload.runId).success) return { status: 'REJECTED', reason: 'INVALID_AGENT_JOB' }
     try {
       if (job.type === 'agent.cancel') return await this.cancel(job)
-      if (await this.service.deliverySettled(job.tenantId, job.caseId, job.payload.runId as string, job.eventId)) return { status: 'ACCEPTED' }
-      const claims = await this.service.dispatchClaims(job.tenantId, job.caseId, job.payload.runId as string, job.eventId)
+      const runId = job.payload.runId as string
+      if (await this.service.deliverySettled(job.tenantId, job.caseId, runId, job.eventId)) return { status: 'ACCEPTED' }
+      const claims = await this.service.dispatchClaims(job.tenantId, job.caseId, runId, job.eventId)
       const issuedAt = Math.floor(Date.now() / 1000)
       const body = dispatchSchema.parse({ jobId: claims.jobId, runId: claims.runId, executionAttempt: claims.executionAttempt,
         operation: claims.operation, issuedAt, expiresAt: issuedAt + INTERNAL_LIMITS.requestSeconds,

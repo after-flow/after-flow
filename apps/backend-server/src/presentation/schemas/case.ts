@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { PROFILE_VALUES } from '../../domain/case/case-profile.js'
 import { idSchema, isoDateSchema, isoDateTimeSchema, expectedVersionSchema } from './common.js'
 
 /**
@@ -19,6 +20,27 @@ export const updatePlanningRestrictionBodySchema = z.object({
 export const caseStatusSchema = z.enum(['ACTIVE', 'CLOSED'])
 export const caseActionSchema = z.enum(['UPDATE_BASIC_INFO', 'ADMINISTER'])
 
+/** `PROFILE_VALUES` を Zod と検証の唯一の出所にする（文字列を二重に書かない）。 */
+export const caseProfileResourceSchema = z.object({
+  healthInsurance: z.enum(PROFILE_VALUES.healthInsurance),
+  pension: z.enum(PROFILE_VALUES.pension),
+  occupation: z.enum(PROFILE_VALUES.occupation),
+  realEstate: z.enum(PROFILE_VALUES.realEstate),
+  car: z.enum(PROFILE_VALUES.car),
+  mortgage: z.enum(PROFILE_VALUES.mortgage),
+  answeredAt: isoDateTimeSchema,
+})
+
+export const caseProfileInputSchema = z.object({
+  healthInsurance: z.enum(PROFILE_VALUES.healthInsurance).optional(),
+  pension: z.enum(PROFILE_VALUES.pension).optional(),
+  occupation: z.enum(PROFILE_VALUES.occupation).optional(),
+  realEstate: z.enum(PROFILE_VALUES.realEstate).optional(),
+  car: z.enum(PROFILE_VALUES.car).optional(),
+  mortgage: z.enum(PROFILE_VALUES.mortgage).optional(),
+  answeredAt: isoDateTimeSchema,
+}).strict()
+
 export const caseResourceSchema = z.object({
   id: z.string(),
   deceasedName: z.string(),
@@ -26,6 +48,7 @@ export const caseResourceSchema = z.object({
   dateOfDeath: z.string(),
   dateOfBirth: z.string().nullable(),
   knownAt: z.string().nullable(),
+  profile: caseProfileResourceSchema.optional(),
   ownerName: z.string(),
   relationshipToDeceased: z.string(),
   municipality: z.string().nullable(),
@@ -83,6 +106,11 @@ export const updateCaseBodySchema = z
     dateOfDeath: isoDateSchema.optional(),
     dateOfBirth: isoDateSchema.nullish(),
     knownAt: isoDateSchema.nullish(),
+    /**
+     * 丸ごと置換。省略した項目は `normalizeProfile` で UNKNOWN に正規化する。
+     * `null` で未回答に戻す。キー省略（undefined）は変更しない。
+     */
+    profile: caseProfileInputSchema.nullish(),
     ownerName: nameSchema.optional(),
     relationshipToDeceased: z.string().trim().min(1).max(50).optional(),
     municipality: municipalitySchema.nullish(),

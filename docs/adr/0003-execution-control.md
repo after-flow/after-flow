@@ -48,6 +48,7 @@ AIの実行を受け付けてから結果が返るまでの間に、プロセス
 ## 実装済みの範囲
 
 - AgentRunの受付・取得・一覧・取消・再試行と、保存済みRunからのscope導出
+- 公開可能なAgentRun進捗イベント（受付/progress/wait/resume/result/取消/再試行）を対象Runの状態変化と同一transactionで記録し、`GET C/agent-runs/:runId/events`でカーソル付きに取得（#125）。prompt・非公開の思考・資格情報・原本文は含めない
 - Case leaseの取得・更新・解放、fencingToken、期限切れ所有者の拒否
 - 永続Outboxの配送・再配送・可視性タイムアウト、配送時の同意検査
 - AI Server向けHTTP Clientのポートと実装

@@ -42,6 +42,8 @@ export const collections = {
   deadlines: caseCollection('deadlines'),
   evidence: caseCollection('evidence'),
   agentRuns: caseCollection('agentRuns'),
+  /** 公開可能なAgentRun進捗イベント。受付・処理中・待機・再開・完了の履歴（仕様書 6.2, Issue #125）。 */
+  agentRunEvents: caseCollection('agentRunEvents'),
   /** Backendが整形したRun/attempt scopeの短寿命context生成物。 */
   runArtifacts: caseCollection('runArtifacts'),
   /** 内部要求の本文hashと結果。異なる内容の再送を拒否する。 */

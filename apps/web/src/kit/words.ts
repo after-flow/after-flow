@@ -47,7 +47,7 @@ export const AGENT_RUN_WORD: Record<AgentRunType, string> = {
 }
 
 /**
- * 全体の流れの段階名。API の名前は長く業務的（「最終確認・ケースクローズ」など）なので、
+ * 手続きの流れの段階名。API の名前は長く業務的（「最終確認・ケースクローズ」など）なので、
  * 短く分かりやすい言い方を画面側で持つ。知らない段階が来たら API の名前をそのまま使う。
  */
 export const FLOW_STAGE_WORD: Record<FlowStageId, string> = {

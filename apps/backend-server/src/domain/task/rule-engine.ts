@@ -1,4 +1,5 @@
 import { errors } from '../../shared/app-error.js'
+import type { ProfileField } from '../case/case-profile.js'
 import type { DeadlineBasis, DeadlineFacts, DeadlineSeverity, DeadlineUnresolvedReason } from './deadline.js'
 import type { FlowStageId } from './task.js'
 
@@ -14,6 +15,24 @@ export interface DeadlinePeriod {
 
 /** 期限の法的性質。placeholder カタログで reviewed:true にできるのは STATUTORY だけ。 */
 export type DeadlineLegalNature = 'STATUTORY' | 'JURISDICTIONAL'
+
+/**
+ * ルール・カタログを確認した専門家の資格。
+ *
+ * `ENGINEER` は実装者による条文照合。placeholder カタログでのみ許す
+ * （3-5: 本番カタログは司法書士・税理士・社会保険労務士・弁護士のいずれかの確認が必要）。
+ */
+export type ReviewerQualification =
+  | 'ENGINEER'
+  | 'JUDICIAL_SCRIVENER'
+  | 'TAX_ACCOUNTANT'
+  | 'SOCIAL_INSURANCE_CONSULTANT'
+  | 'LAWYER'
+
+export interface Reviewer {
+  name: string
+  qualification: ReviewerQualification
+}
 
 /**
  * 期限ルールの定義。
@@ -32,6 +51,11 @@ export interface DeadlineRule {
    * 例「亡くなった日の翌日から数えて14日以内」。機械生成しない。
    */
   basisLabel: string
+  /**
+   * KNOWN_AT のルールだけ必須（DATE_OF_DEATH では null）。「知った日」を
+   * このルールの言い方で表す（`knownAtFallbackNote` の付記文に使う）。
+   */
+  knownAtLabel: string | null
   legalNature: DeadlineLegalNature
   jurisdiction: string
   /** 業務レビュー済みか。false のルールから確定した期限を出さない。 */
@@ -40,6 +64,46 @@ export interface DeadlineRule {
   sourceCheckedAt: string | null
   extendable: boolean | null
   critical: boolean
+  /** reviewed:true のとき必須。誰がどの資格で確認したか。 */
+  reviewedBy: Reviewer | null
+}
+
+export type ProcedureInclusion = 'yes' | 'maybe' | 'no'
+
+/**
+ * 手続きの出し分け条件 DSL。
+ *
+ * カタログ（JSON）は専門家レビューの対象物（3-5）なので、条件は TS の
+ * 参照ではなくカタログの中に書く。必要な述語は3種類だけに絞る。
+ */
+export type ProcedureCondition =
+  | { field: ProfileField; in: string[] }
+  | { ageAtDeath: { gte?: number; lt?: number } }
+  | { all: ProcedureCondition[] }
+  | { any: ProcedureCondition[] }
+  | { not: ProcedureCondition }
+
+export interface ProcedureApplicability {
+  /** どの rule にも当たらないときの結果。 */
+  default: ProcedureInclusion
+  /** 上から順に評価し最初に当たったものを採る。 */
+  rules: { when: ProcedureCondition; include: ProcedureInclusion }[]
+}
+
+/** 当たった variant の指定済み項目だけで基本値を上書きする。 */
+export interface ProcedureVariant {
+  when: ProcedureCondition
+  title?: string
+  summary?: string
+  submitTo?: string | null
+  /** null は「期限なし」への上書き。省略は基本値を継承する。 */
+  deadlineRuleId?: string | null
+}
+
+export interface ProcedureTargetDate {
+  /** 熟慮期間ルール（deliberationDeadlineRuleId）の期間から差し引く月数。 */
+  monthsBeforeDeliberationDeadline: number
+  basisLabel: string
 }
 
 /** Case 作成時に生成する手続きの定義。 */
@@ -54,7 +118,13 @@ export interface InitialProcedure {
   assetDisposal: boolean
   requiredDocuments: { id: string; label: string }[]
   deadlineRuleId: string | null
+  applicability: ProcedureApplicability
+  variants: ProcedureVariant[]
+  targetDate: ProcedureTargetDate | null
 }
+
+/** 申し送りの上限値。現行カタログの実最大は 26（employer/self-employed の排他などのため）。 */
+export const MAX_INITIAL_PROCEDURES = 28
 
 export interface RuleCatalog {
   /** 業務レビュー未了の仮定義かどうか。 */
@@ -63,6 +133,9 @@ export interface RuleCatalog {
   initialProcedures: InitialProcedure[]
   /** 熟慮期間（申し送り3-4）に使うルール。null なら overview に deliberationDeadline を載せない。 */
   deliberationDeadlineRuleId: string | null
+  /** 手続き一覧そのものの確認者。placeholder:false では必須。 */
+  reviewedBy: Reviewer | null
+  reviewedAt: string | null
 }
 
 /** 計算に用いる時間帯。日付境界の解釈を固定する。 */
@@ -86,9 +159,12 @@ export interface ComputedDeadline {
  * Case 作成・更新の両経路で `knownAt >= dateOfDeath` を強制している
  * （`domain/case/case-dates.ts` の `findCaseDateIssues`）ため、この代替は
  * 常に早い側（またはちょうど同じ）にしか外れない。実際の期限より遅く
- * 見せてしまうことはない。
+ * 見せてしまうことはない。ルールごとの `knownAtLabel` を使い、括弧ではなく
+ * 「。」区切りで basisLabel に付記する。
  */
-export const KNOWN_AT_FALLBACK_NOTE = '（相続の開始を知った日が未入力のため、亡くなった日から数えています）'
+export function knownAtFallbackNote(rule: DeadlineRule): string {
+  return `${rule.knownAtLabel ?? '相続の開始を知った日'}が未入力のため、亡くなった日から数えています`
+}
 
 function parseDate(value: string): { year: number; month: number; day: number } | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
@@ -175,7 +251,7 @@ export function computeDeadline(rule: DeadlineRule, dates: BasisDates): Computed
   // 逆方向（DATE_OF_DEATH のルールで死亡日が未入力なとき知った日を使う）は行わない。
   const knownAtFallback = rule.basis === 'KNOWN_AT' && dates.knownAt === null && dates.dateOfDeath !== null
   const start = rule.basis === 'DATE_OF_DEATH' ? dates.dateOfDeath : (dates.knownAt ?? dates.dateOfDeath)
-  const basisLabel = knownAtFallback ? `${rule.basisLabel}${KNOWN_AT_FALLBACK_NOTE}` : rule.basisLabel
+  const basisLabel = knownAtFallback ? `${rule.basisLabel}。${knownAtFallbackNote(rule)}` : rule.basisLabel
 
   if (!rule.reviewed) {
     // 未レビューのルールから確定した期限を作らない。起算日の事実自体は返す。

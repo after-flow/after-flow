@@ -92,6 +92,8 @@ make up
 | AI Server | Docker内部ネットワークのみ。ホストには公開しません。 |
 | AI Runtime Emulator | AI Server専用。ホストにも業務側にも公開しません。 |
 
+`make up` で起動した開発コンテナはホットリロードに対応しています。`apps/web/src` の変更はVite HMRでブラウザへ反映され、`apps/backend-server/src` と`apps/ai-server/src` の変更は各Node processを自動再起動します。Backend Outbox WorkerもBackendのソース変更を監視します。依存関係、`package.json`、Dockerfile、Compose設定を変更した場合は、再度`make up`を実行してimageとcontainerを更新してください。
+
 起動後の確認:
 
 ```bash

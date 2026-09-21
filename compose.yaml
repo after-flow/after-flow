@@ -6,6 +6,12 @@ x-development: &development
     target: development
   init: true
 
+# Docker Desktopのbind mountでも変更を確実に検知するため、開発用processは
+# chokidarのpollingを共通利用する。WebはVite側でも同じ設定を明示する。
+x-hot-reload: &hot-reload
+  CHOKIDAR_USEPOLLING: "true"
+  CHOKIDAR_INTERVAL: "500"
+
 services:
   web:
     <<: *development
@@ -14,6 +20,7 @@ services:
     ports:
       - "127.0.0.1:${WEB_PORT:-5173}:5173"
     environment:
+      <<: *hot-reload
       VITE_USE_MOCK: ${VITE_USE_MOCK:-true}
       VITE_API_BASE_URL: /api/v1
       VITE_API_PROXY: http://backend-server:8080
@@ -43,6 +50,7 @@ services:
     image: after-flow-backend-server:local
     command: pnpm --filter @aftercare/backend-server dev
     environment:
+      <<: *hot-reload
       HOST: 0.0.0.0
       PORT: 8080
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
@@ -99,6 +107,7 @@ services:
     restart: unless-stopped
     command: pnpm --filter @aftercare/ai-server dev
     environment:
+      <<: *hot-reload
       HOST: 0.0.0.0
       PORT: 8081
       AI_RUNTIME_MODE: ${AI_RUNTIME_MODE:-auto}
@@ -138,13 +147,16 @@ services:
     image: after-flow-backend-server:local
     profiles: [data]
     restart: unless-stopped
-    command: pnpm --filter @aftercare/backend-server worker
+    command: pnpm --filter @aftercare/backend-server worker:dev
     environment:
+      <<: *hot-reload
       # 担当tenantを明示する。暗黙の全tenant走査はしない。
       OUTBOX_TENANT_IDS: ${OUTBOX_TENANT_IDS:-after-flow-demo}
       OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
       # AI HTTP timeout（AI_SERVICE_TIMEOUT_MS）より必ず長くする。
       OUTBOX_VISIBILITY_MS: ${OUTBOX_VISIBILITY_MS:-120000}
+      # この時間を過ぎても配送できないイベントは打ち切り、RunとTaskの案内を失敗として確定する。
+      OUTBOX_DELIVERY_TIMEOUT_MS: ${OUTBOX_DELIVERY_TIMEOUT_MS:-900000}
       FIRESTORE_EMULATOR_HOST: ${FIRESTORE_EMULATOR_HOST-}
       FIRESTORE_PROJECT_ID: ${FIRESTORE_PROJECT_ID:-after-flow-local}
       # Backend→AIの配送先と資格情報。backend-serverと同じ値にする。

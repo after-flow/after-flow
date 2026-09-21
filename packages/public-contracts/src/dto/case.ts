@@ -1,4 +1,5 @@
 import type { CaseStatus, ISODate, ISODateTime } from './resources.js'
+import type { CaseProfileResource } from './case-profile.js'
 
 /**
  * 新しい公開契約の Case。
@@ -26,6 +27,8 @@ export interface CaseResource {
    * 死亡日とは別の事実。不明な場合は null で、死亡日で補完しない。
    */
   knownAt: ISODate | null
+  /** 手続きの出し分け条件（申し送り 3-1）。未回答（欠落）ならキー自体を出さない。 */
+  profile?: CaseProfileResource
   /** 申告された手続き担当者名。認証上の本人確認の根拠ではない。 */
   ownerName: string
   /** 申告された続柄。法的な相続人の認定ではない。 */

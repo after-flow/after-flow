@@ -52,6 +52,7 @@ workerが起動していても、Backend HTTPが `AI_CONNECTED_OPERATIONS` を�
 `case_planning`・`chat_reply`・`document_analysis` はこの段階では有効にしない。
 
 AI Serverが未起動、readiness 503、timeout、5xxの場合、workerはイベントを成功扱いせずRETRYABLEとして残す。
+`OUTBOX_DELIVERY_TIMEOUT_MS` を超えると打ち切り、Runと案内を失敗として確定する。
 外部AI同意が無いイベントはBLOCKEDとして残し、消さない。Job本文・Context・service token・署名鍵はログへ出さない。
 
 ### 滞留の確認
@@ -68,9 +69,18 @@ tickが2周期以上出ない場合はcontainerの状態（`make ps`）とFirest
 - claim時にTransaction内で期限を再検証する。claim IDが変わったイベントを旧workerの応答では更新しない。
 - 配送保証はat-least-once。同じevent IDを受信側が永続的に重複排除する。配送タイムアウトを成功として扱わない。
 - `nextAttemptAt` の旧ISO文字列とTimestampを読み、新規更新はTimestampに統一する。イベントを削除・再作成して再送しない。
-- `case.created` は初期Task生成、`case.reference_dates_changed` は期限再評価をBackend内で実行する。
-  最新Caseを読み、古いイベントの起算日で上書きしない。AI接続・任意AI同意なしでも手動管理用の処理を続ける。
+- `case.created` / `case.reference_dates_changed` / `case.profile_changed` はいずれも洗い出し（手続き・期限の同期）をBackend内で1回実行する。
+  初期Task・期限の生成はCase作成・PATCHのTransaction内で既に同期実行されているため、ここは通常no-opの補正経路（カタログ更新後の再同期・生成漏れの補正）。
+  最新Caseを読み、古いイベントの起算日・profileで上書きしない。AI接続・任意AI同意なしでも手動管理用の処理を続ける。
 - 外部配送では毎回同意を再判定する。未接続ならPENDINGで再試行する。
+- 一時障害の再試行は `OUTBOX_DELIVERY_TIMEOUT_MS`（既定15分）で打ち切る。打ち切ったAI向けイベントは、
+  先にRunを `FAILED`（`failureReason: DELIVERY_TIMEOUT:<直近の理由>`）、`task_guidance` の案内を `FAILED` に確定し、
+  その後Outboxを `FAILED` にする。AI Serverの一時停止・timeout・5xxは期限内なら従来どおり再試行する。
+- 受付時のCase版と現在の版がずれた未開始（QUEUED）のRunは、配送前に現在の版へ載せ替え、試行IDを取り直してから配送する。
+  Case作成直後の初期Task生成で版が進んでも、その直後の依頼が `STALE_CONTEXT` で無期限に再送されることはない。
+  実行中に版が進んだ場合は従来どおりcontrolがSTOPを返し、Reconcilerが新しい試行として再配送する。
+- 受け手の無い通知イベント（`task.completed`、`decision.confirmed`）はworkerがローカルで配送済みにする。
+  `agent.*` 以外の未知の種別はREJECTEDで終端し、無期限に再試行しない。
 - `proposal.applied` / `approval.rejected` / `document.registered` はBackend Inboxへ冪等保存する。`approval.requested`はローカル通知として扱い、個人データをAIへ汎用転送しない。
 - 各tickで担当tenantのRunを安定した100件ページで照合する。先行Inbox、Snapshot保存後に通知できなかった待機、期限切れlease/RUNNINGを回復する。
 - SnapshotメタデータはAI内部HTTP経由だけで確認。1件の照会失敗はfailedとして数え、後続Runを続ける。同意/権限失効RunはHTTP照会前に取消す。

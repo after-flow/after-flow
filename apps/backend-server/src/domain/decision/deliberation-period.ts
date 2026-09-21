@@ -15,11 +15,9 @@ export const DELIBERATION_DEADLINE_ID = 'deliberation-period'
  * 熟慮期間の期限をその場で算定する（申し送り3-4）。
  *
  * 永続化しない。理由:
- * 1. Case 作成直後は `case.created` の Outbox 配送前で、初期 Task・
- *    永続 Deadline がまだ無い。それでも overview には熟慮期間を出したい。
- * 2. 熟慮期間はすべての Case に存在する法的事実で、Task の生成条件
+ * 1. 熟慮期間はすべての Case に存在する法的事実で、Task の生成条件
  *   （`Case.profile` 等）に依存させたくない。
- * 3. 永続しないので再評価の遅延が無い。Task 側の期限
+ * 2. 永続しないので再評価の遅延が無い。Task 側の期限
  *   （`inheritance-choice` ルール）と同じルール・同じ純粋関数
  *   （`buildDeadlineFacts`）から算定するため、再評価後は必ず一致する。
  *   再評価前の一時的な不一致（Case の日付を訂正した直後、Task 側の

@@ -1,6 +1,7 @@
 export type * from './dto/resources.js'
 export type * from './dto/envelope.js'
 export type * from './dto/case.js'
+export type * from './dto/case-profile.js'
 export type * from './dto/consent.js'
 export type * from './dto/document.js'
 export type * from './dto/task.js'

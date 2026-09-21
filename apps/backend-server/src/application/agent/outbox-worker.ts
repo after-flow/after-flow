@@ -4,20 +4,32 @@ import type { TaskService } from '../task/task-service.js'
 import type { AgentDeliveryOutcome } from '../ports/agent-client.js'
 import { logger } from '../../presentation/http/logger.js'
 
-/** 初期Taskと期限再評価はBackend内のCommand。外部AI同意を必要としない。 */
+/**
+ * 洗い出し（syncRuleTasks）はBackend内のCommand。外部AI同意を必要としない。
+ *
+ * 作成・PATCH の tx で既に同期実行されているため、通常は no-op（補正経路）。
+ * カタログ更新後の再同期や、同期生成が何らかの理由で欠けた場合の再生成に使う。
+ */
 export function caseTaskHandler(tasks: TaskService): LocalOutboxHandler {
   return {
-    types: new Set(['case.created', 'case.reference_dates_changed']),
+    types: new Set(['case.created', 'case.reference_dates_changed', 'case.profile_changed']),
     async deliverLocal(event): Promise<AgentDeliveryOutcome> {
       if (!event.caseId || !event.initiatedByUserId) return { status: 'REJECTED', reason: 'MISSING_CASE_ACTOR' }
       const user = { tenantId: event.tenantId, userId: event.initiatedByUserId }
       const meta = { requestId: event.id, idempotency: null }
-      // payloadの起算日は使わない。遅着・再配送時にも最新のCaseを読み直す。
-      if (event.type === 'case.created') await tasks.generateInitialTasks(user, event.caseId, meta)
-      await tasks.reevaluateDeadlines(user, event.caseId, meta)
+      // payloadの内容は使わない。遅着・再配送時にも最新のCaseを読み直す。
+      await tasks.reconcileFromOutbox(user, event.caseId, meta)
       return { status: 'ACCEPTED' }
     },
   }
+}
+
+/**
+ * 受け手がまだ無い通知イベントを配送済みとして閉じる。
+ * 外部AIへ渡す種別ではなく、再試行しても届く先が増えることはない。
+ */
+export function acknowledgeLocally(types: readonly string[]): LocalOutboxHandler {
+  return { types: new Set(types), deliverLocal: async () => ({ status: 'ACCEPTED' }) }
 }
 
 export function combineLocalHandlers(...handlers: LocalOutboxHandler[]): LocalOutboxHandler {

@@ -37,6 +37,7 @@ The core Backend foundation is implemented:
 - Case, persons, relationships, assets, liabilities, contracts, benefits, documents, tasks, deadlines, evidence, insights, and overview APIs.
 - Proposal versioning, Approval application,本人による Decision confirmation, stale checks, and Case versioning.
 - AgentRun acceptance/status/cancel/retry, Outbox delivery logic, Case lease/fencing, WaitRequest, resume intent, and Reconciler.
+- AgentRun progress history: a public, cursor-paginated `GET /cases/:caseId/agent-runs/:runId/events` records accepted/progress/waiting/resumed/result/cancelled/retried in the same transaction as the underlying state change (#125).
 - Chat and task-guidance asynchronous acceptance/result storage.
 - Firestore Repository/UnitOfWork, cursor pagination, idempotency, atomic audit/outbox writes, and Security Rules denying direct client access.
 - Local and Cloud Storage adapters, content signature and size validation, archive behavior, and inspection-state modeling.
@@ -49,7 +50,7 @@ This does not mean production readiness. In particular:
 - Health is liveness; dependency readiness and production preflight are incomplete.
 - A real authentication provider, approved consent catalog, and reviewed deadline catalog are not selected/configured.
 - Real My Number detection/masking is not implemented. Only the port, state, quarantine contract, and `PASSED`-only delivery guard exist.
-- AgentRun progress history and safe audit-log reads lack public APIs.
+- Safe audit-log reads (`GET C/audit-logs`) still lack a public API and the per-role visibility decision (#126).
 - Retention and periodic orphan cleanup are not implemented.
 
 ## Business and security invariants

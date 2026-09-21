@@ -58,9 +58,9 @@ ID tokenを `Authorization: Bearer` で送る。ローカルは Firebase Auth Em
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
 | `GET /cases` | Case一覧 | `GET /api/v1/cases`（membership を持つ Case のみ） | 同一 | #7 |
-| `POST /cases` | Case作成 | `POST /api/v1/cases` body `{ deceasedName, dateOfDeath, ownerName, relationshipToDeceased, knownAt?, municipality?, ownerPerson? }` → 201。作成者は OWNER。`ownerPerson: { isHeir }` を指定すると作成者本人を Person として同時登録し `ownerPersonId`/`selfPersonId` に紐付ける（指定時は `POST /cases/:caseId/persons` への本人の2回目の登録は不要・二重登録になるので行わないこと）。未来の死亡日、死亡日より前または未来の「知った日」は 400 | 同一（フィールド追加） | #7 |
+| `POST /cases` | Case作成 | `POST /api/v1/cases` body `{ deceasedName, dateOfDeath, ownerName, relationshipToDeceased, knownAt?, dateOfBirth?, municipality?, ownerPerson? }` → 201。作成者は OWNER。`ownerPerson: { isHeir }` を指定すると作成者本人を Person として同時登録し `ownerPersonId`/`selfPersonId` に紐付ける（指定時は `POST /cases/:caseId/persons` への本人の2回目の登録は不要・二重登録になるので行わないこと）。未来の死亡日、死亡日より前または未来の「知った日」、死亡日より後の生年月日は 400。初期手続き・期限は Case 作成と同じ Transaction で生成され、201 応答直後の `GET C/tasks`・`GET C/overview` に載る | 同一（フィールド追加） | #7 |
 | `GET /cases/:caseId` | ヘッダー表示 | `GET C` | 同一 | #7 |
-| `PATCH /cases/:caseId` | 市区町村等の訂正 | `PATCH C` body `{ municipality?, ..., expectedVersion }`。`status` / `progress` は含めない | 同一（strict化） | #7 |
+| `PATCH /cases/:caseId` | 市区町村等の訂正 | `PATCH C` body `{ municipality?, dateOfBirth?, profile?, ..., expectedVersion }`。`status` / `progress` は含めない。`profile` は丸ごと置換（省略項目は `UNKNOWN` に正規化、`null` で未回答に戻す）。`profile` / `dateOfBirth` / `dateOfDeath` / `knownAt` の変更で、手続きと期限を同じ Transaction で洗い出し直す。`dateOfBirth` が `dateOfDeath` より後なら 400 | 同一（strict化） | #7 |
 | `GET /cases/:caseId/overview` | ダッシュボード、10段階フロー | `GET C/overview` → Task/期限/待機/承認/段階の集約。`inheritanceDecision.deliberationDeadline`（`DeadlineSummary`相当、`DeadlineResource \| null`）に熟慮期間（民法915条）の残日数を返す。永続 Deadline ではなく Case の日付からその場で算定するため、Task 側の期限（相続方法の選択）と再評価前は一時的に不一致になりうる | 同一 | #17 |
 
 権限: 一覧・詳細・overview は全 role。作成は認証済みユーザー、更新は OWNER / EDITOR。
@@ -69,11 +69,12 @@ ID tokenを `Authorization: Bearer` で送る。ローカルは Firebase Auth Em
 
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
-| `GET /cases/:caseId/tasks` | タスク一覧 | `GET C/tasks?cursor=&limit=` | 同一 | #9 |
+| `GET /cases/:caseId/tasks` | タスク一覧 | `GET C/tasks?cursor=&limit=` → 各 Task に `conditional`（「わからない」「未回答」であてはまる可能性ありとして残している手続き）、`submitToSource`（`RULE \| RESEARCH \| MANUAL \| null`）、`targetDate`（法定期限ではない目安。永続しない、`id` が `target:` 接頭辞、`critical` は常に false）を含む | 同一 | #9 |
 | `POST /cases/:caseId/tasks` | 手動追加 | `POST C/tasks` body `{ title, summary, stage, category, submitTo?, evidenceRequired?, assetDisposal? }` | 同一 | #9 |
 | `GET /tasks/:taskId` | タスク詳細 | `GET C/tasks/:taskId` | Case配下へ | #9 |
 | `PATCH /tasks/:taskId` body `{ status }`（`useUpdateTaskStatus`） | ステータス変更 | `POST C/tasks/:taskId/commands` body `{ command, expectedVersion, note? }` | **Commandへ** | #9 |
-| `PATCH /tasks/:taskId`（説明等） | 説明・期日の訂正 | `PATCH C/tasks/:taskId` body は `title/summary/submitTo` + `expectedVersion` のみ。`status` は 400 | Case配下へ・strict化 | #9 |
+| `PATCH /tasks/:taskId`（説明等） | 説明・期日の訂正 | `PATCH C/tasks/:taskId` body は `title/summary/submitTo` + `expectedVersion` のみ。`status` は 400。`submitTo` を送ると以後の洗い出しで上書きしない（`submitToSource: MANUAL`）。`submitTo: null` を送ると規則の窓口に戻す（`submitToSource: RULE`） | Case配下へ・strict化 | #9 |
+| （新設） | カタログ更新後などの再同期 | `POST C/deadlines/reevaluate` → `{ updated, created, removed }`。作成・PATCH でも同じ処理が同じ Transaction で同期実行されるため、通常は補正用（no-op） | 新設 | #9 |
 | `POST /tasks/:taskId/complete` body `{ confirmedBySelf: true }` | 「自分で完了した」 | `POST C/tasks/:taskId/commands` body `{ command: 'complete', expectedVersion, note? }`。証拠が必須な Task は 409 `PRECONDITION_FAILED`（details.reason=`EVIDENCE_REQUIRED`） | Case配下へ | #9 / #11 |
 | `POST /tasks/:taskId/reopen` | 再開 | `POST C/tasks/:taskId/commands` body `{ command: 'reopen', expectedVersion, note? }` | Case配下へ | #9 |
 | `POST /tasks/:taskId/evidences` | 証拠登録 | `POST C/tasks/:taskId/evidences` body `{ label, kind, note?, documentId? }` | Case配下へ・複数形 | #9 / #11 |
@@ -206,7 +207,8 @@ ID tokenを `Authorization: Bearer` で送る。ローカルは Firebase Auth Em
   取得後に別要求が更新することはあるため、この表示をCommand認可や完了可否の代わりにしない。
 - 手順案内のRun・案内所有権・配送イベントは一括保存。再依頼は以前の出典や結果をRESEARCHINGの結果として使い回さない。
   結果受領は保存Transaction内で取消・attemptを再検証し、古いRunは新しい案内を上書きできない。
-- 初期Taskと期限再評価の継続実行は [Outbox worker](../runbooks/outbox-worker.md)。AI非接続でも手動管理用の処理を継続する。
+- 初期Taskの生成は Case作成・PATCHのTransaction内で同期実行する（申し送り3-1）。[Outbox worker](../runbooks/outbox-worker.md) はカタログ更新後の再同期・生成漏れの補正経路で、通常は no-op。
+- 27手続き・17期限ルールのカタログは `applicability`（条件DSL: `field in` / `ageAtDeath` / `all` / `any` / `not`）と `variants`（当たった1件だけを基本値へ上書き）で出し分ける。本番カタログ（`placeholder:false`）は、ルール単位・カタログ単位の両方で `reviewedBy` が司法書士・税理士・社会保険労務士・弁護士のいずれかであることを起動時に検証する（申し送り3-5）。
 - 提案の承認／適用は [Entity別payload](proposal-payloads.md) に従う。
   専門家引継ぎはTaskの `escalation` に理由・資料の版・`contacted:false` を返し、連絡済みと表示させない。
 

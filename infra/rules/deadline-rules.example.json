@@ -7,57 +7,1118 @@
       "version": "0.0.0-draft",
       "label": "死亡届の提出期限",
       "basis": "KNOWN_AT",
-      "period": { "unit": "DAY", "count": 7, "includeFirstDay": true },
+      "period": {
+        "unit": "DAY",
+        "count": 7,
+        "includeFirstDay": true
+      },
       "basisLabel": "亡くなったことを知った日から7日以内（その日を含めて数えます）",
+      "knownAtLabel": "亡くなったことを知った日",
       "legalNature": "STATUTORY",
       "jurisdiction": "全国",
       "reviewed": false,
       "sourceUrl": null,
       "sourceCheckedAt": null,
       "extendable": null,
-      "critical": true
+      "critical": true,
+      "reviewedBy": null
     },
     {
       "id": "inheritance-choice",
       "version": "0.0.0-draft",
       "label": "相続方法の選択期限",
       "basis": "KNOWN_AT",
-      "period": { "unit": "MONTH", "count": 3, "includeFirstDay": false },
+      "period": {
+        "unit": "MONTH",
+        "count": 3,
+        "includeFirstDay": false
+      },
       "basisLabel": "自分のために相続が始まったと知った日の翌日から数えて3か月以内（家庭裁判所に申し立てて延ばせる場合があります）",
+      "knownAtLabel": "自分のために相続が始まったと知った日",
       "legalNature": "STATUTORY",
       "jurisdiction": "全国",
       "reviewed": false,
       "sourceUrl": null,
       "sourceCheckedAt": null,
       "extendable": null,
-      "critical": true
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "household-change-notification",
+      "version": "0.0.0-draft",
+      "label": "世帯主変更届の提出期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "DAY",
+        "count": 14,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて14日以内",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "national-health-insurance-loss",
+      "version": "0.0.0-draft",
+      "label": "国民健康保険の資格喪失届の提出期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "DAY",
+        "count": 14,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて14日以内",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "late-elderly-medical-loss",
+      "version": "0.0.0-draft",
+      "label": "後期高齢者医療の資格喪失届の提出期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "DAY",
+        "count": 14,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて14日以内",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "long-term-care-insurance-loss",
+      "version": "0.0.0-draft",
+      "label": "介護保険の資格喪失届の提出期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "DAY",
+        "count": 14,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて14日以内",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "pension-stop-employees",
+      "version": "0.0.0-draft",
+      "label": "厚生年金の受給停止届の提出期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "DAY",
+        "count": 10,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて10日以内（厚生年金）",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "pension-stop-national",
+      "version": "0.0.0-draft",
+      "label": "国民年金の受給停止届の提出期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "DAY",
+        "count": 14,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて14日以内（国民年金）",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "pension-stop-unknown",
+      "version": "0.0.0-draft",
+      "label": "年金の受給停止届の提出期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "DAY",
+        "count": 10,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて10日以内（厚生年金の場合。国民年金だけなら14日以内）",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "unpaid-pension-claim",
+      "version": "0.0.0-draft",
+      "label": "未支給年金の請求期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "YEAR",
+        "count": 5,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて5年以内（時効）",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": false,
+      "reviewedBy": null
+    },
+    {
+      "id": "survivor-pension-claim",
+      "version": "0.0.0-draft",
+      "label": "遺族年金の請求期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "YEAR",
+        "count": 5,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて5年以内（時効）",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": false,
+      "reviewedBy": null
+    },
+    {
+      "id": "death-lump-sum-claim",
+      "version": "0.0.0-draft",
+      "label": "死亡一時金の請求期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "YEAR",
+        "count": 2,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて2年以内（死亡一時金。寡婦年金は5年）",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": false,
+      "reviewedBy": null
+    },
+    {
+      "id": "funeral-fee-claim",
+      "version": "0.0.0-draft",
+      "label": "葬祭費の請求期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "YEAR",
+        "count": 2,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて2年以内（葬祭費は葬儀を行った日の翌日から数えるため、実際の期限はこれより後になることがあります）",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": false,
+      "reviewedBy": null
+    },
+    {
+      "id": "burial-fee-claim",
+      "version": "0.0.0-draft",
+      "label": "埋葬料の請求期限",
+      "basis": "DATE_OF_DEATH",
+      "period": {
+        "unit": "YEAR",
+        "count": 2,
+        "includeFirstDay": false
+      },
+      "basisLabel": "亡くなった日の翌日から数えて2年以内（埋葬料）",
+      "knownAtLabel": null,
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": false,
+      "reviewedBy": null
+    },
+    {
+      "id": "final-income-tax-return",
+      "version": "0.0.0-draft",
+      "label": "準確定申告の提出期限",
+      "basis": "KNOWN_AT",
+      "period": {
+        "unit": "MONTH",
+        "count": 4,
+        "includeFirstDay": false
+      },
+      "basisLabel": "相続の開始を知った日の翌日から数えて4か月以内",
+      "knownAtLabel": "相続の開始を知った日",
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "inheritance-tax-return",
+      "version": "0.0.0-draft",
+      "label": "相続税の申告期限",
+      "basis": "KNOWN_AT",
+      "period": {
+        "unit": "MONTH",
+        "count": 10,
+        "includeFirstDay": false
+      },
+      "basisLabel": "相続の開始を知った日の翌日から数えて10か月以内",
+      "knownAtLabel": "相続の開始を知った日",
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
+    },
+    {
+      "id": "real-estate-registration",
+      "version": "0.0.0-draft",
+      "label": "相続登記の申請期限",
+      "basis": "KNOWN_AT",
+      "period": {
+        "unit": "YEAR",
+        "count": 3,
+        "includeFirstDay": false
+      },
+      "basisLabel": "相続で取得したことを知った日の翌日から数えて3年以内（遺産分割で取得した場合は分割の日から3年）",
+      "knownAtLabel": "相続で取得したことを知った日",
+      "legalNature": "STATUTORY",
+      "jurisdiction": "全国",
+      "reviewed": false,
+      "sourceUrl": null,
+      "sourceCheckedAt": null,
+      "extendable": null,
+      "critical": true,
+      "reviewedBy": null
     }
   ],
   "initialProcedures": [
     {
       "id": "death-notification",
       "title": "死亡届を提出する",
-      "summary": "市区町村の窓口へ死亡届を提出します。必要書類と受付時間は自治体ごとに異なります。",
+      "summary": "死亡届の用紙は、病院などで受け取る死亡診断書（死体検案書）と1枚になっています。左側の死亡届に記入し、市区町村の窓口へ出します。火葬許可の申請も同時に行い、火葬許可証を受け取ります（許可証がないと火葬できません）。葬儀社が代わりに出すことも多いので、済んでいるか確かめてください。国外で亡くなった場合は3か月以内です。",
       "stage": "immediate",
-      "category": "行政手続き",
-      "submitTo": null,
+      "category": "役所手続き",
+      "submitTo": "故人の本籍地・亡くなった場所、または届出人の住所地の市区町村役場（戸籍の窓口）",
       "evidenceRequired": false,
       "assetDisposal": false,
-      "requiredDocuments": [{ "id": "death-certificate", "label": "死亡診断書" }],
-      "deadlineRuleId": "death-notification"
+      "requiredDocuments": [
+        {
+          "id": "death-certificate",
+          "label": "死亡診断書（原本）"
+        },
+        {
+          "id": "applicant-identification",
+          "label": "届出人の本人確認書類"
+        }
+      ],
+      "deadlineRuleId": "death-notification",
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
     },
     {
-      "id": "inheritance-choice",
-      "title": "相続方法を検討する",
-      "summary": "単純承認・限定承認・相続放棄のいずれにするかを相続人ごとに決めます。",
-      "stage": "decision",
-      "category": "相続手続き",
+      "id": "household-change",
+      "title": "世帯主変更届を出す",
+      "summary": "故人が世帯主で、同じ世帯に残る方が2人以上いる場合に必要です。残る方が1人のときや、残るのが親1人とその15歳未満の子だけのときなど、次の世帯主が明らかな場合は不要です。",
+      "stage": "government",
+      "category": "役所手続き",
+      "submitTo": "市区町村役場の住民票の窓口",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [
+        {
+          "id": "applicant-identification",
+          "label": "届出人の本人確認書類"
+        }
+      ],
+      "deadlineRuleId": "household-change-notification",
+      "applicability": {
+        "default": "maybe",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "health-insurance-loss",
+      "title": "健康保険の資格喪失の手続きをする",
+      "summary": "保険証（または資格確認書）を返します。加入していた保険によって窓口が違います（国民健康保険・後期高齢者医療は市区町村、会社の健康保険は勤務先）。",
+      "stage": "government",
+      "category": "年金・保険",
+      "submitTo": "市区町村役場の保険年金の窓口",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [
+        {
+          "id": "health-insurance-card",
+          "label": "故人の保険証または資格確認書"
+        }
+      ],
+      "deadlineRuleId": "national-health-insurance-loss",
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [
+        {
+          "when": {
+            "any": [
+              {
+                "field": "healthInsurance",
+                "in": [
+                  "LATE_ELDERLY"
+                ]
+              },
+              {
+                "ageAtDeath": {
+                  "gte": 75
+                }
+              }
+            ]
+          },
+          "title": "後期高齢者医療の資格喪失届を出す",
+          "deadlineRuleId": "late-elderly-medical-loss"
+        },
+        {
+          "when": {
+            "field": "healthInsurance",
+            "in": [
+              "NATIONAL"
+            ]
+          },
+          "title": "国民健康保険の資格喪失届を出す"
+        },
+        {
+          "when": {
+            "field": "healthInsurance",
+            "in": [
+              "EMPLOYEE"
+            ]
+          },
+          "title": "勤務先に連絡し、健康保険証を返す",
+          "summary": "会社の健康保険は、勤務先が手続きをします。勤務先に亡くなったことを伝え、保険証（または資格確認書）を返してください。",
+          "submitTo": "勤務先",
+          "deadlineRuleId": null
+        }
+      ],
+      "targetDate": null
+    },
+    {
+      "id": "long-term-care-loss",
+      "title": "介護保険の資格喪失届を出す",
+      "summary": "介護保険の保険証を返します。65歳以上の方、または要介護・要支援の認定を受けていた方が対象です。",
+      "stage": "government",
+      "category": "年金・保険",
+      "submitTo": "市区町村役場の介護保険の窓口",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [
+        {
+          "id": "long-term-care-card",
+          "label": "介護保険の保険証"
+        }
+      ],
+      "deadlineRuleId": "long-term-care-insurance-loss",
+      "applicability": {
+        "default": "maybe",
+        "rules": [
+          {
+            "when": {
+              "ageAtDeath": {
+                "gte": 65
+              }
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "pension-stop",
+      "title": "年金の受給停止の手続きをする",
+      "summary": "年金を受け取っていた場合に必要です。厚生年金は10日以内、国民年金は14日以内です。日本年金機構にマイナンバーが登録されていれば、原則として届出は不要です。",
+      "stage": "government",
+      "category": "年金・保険",
+      "submitTo": "年金事務所または街角の年金相談センター",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [
+        {
+          "id": "pension-certificate",
+          "label": "年金証書"
+        },
+        {
+          "id": "death-fact-document",
+          "label": "死亡の事実がわかる書類"
+        }
+      ],
+      "deadlineRuleId": "pension-stop-unknown",
+      "applicability": {
+        "default": "maybe",
+        "rules": [
+          {
+            "when": {
+              "field": "pension",
+              "in": [
+                "NONE"
+              ]
+            },
+            "include": "no"
+          },
+          {
+            "when": {
+              "field": "pension",
+              "in": [
+                "EMPLOYEES",
+                "NATIONAL_ONLY"
+              ]
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "field": "pension",
+            "in": [
+              "EMPLOYEES"
+            ]
+          },
+          "summary": "厚生年金を受け取っていた場合、10日以内に届け出ます。日本年金機構にマイナンバーが登録されていれば、原則として届出は不要です（年金事務所で確かめてください）。",
+          "deadlineRuleId": "pension-stop-employees"
+        },
+        {
+          "when": {
+            "field": "pension",
+            "in": [
+              "NATIONAL_ONLY"
+            ]
+          },
+          "summary": "国民年金を受け取っていた場合、14日以内に届け出ます。日本年金機構にマイナンバーが登録されていれば、原則として届出は不要です（年金事務所で確かめてください）。",
+          "deadlineRuleId": "pension-stop-national"
+        }
+      ],
+      "targetDate": null
+    },
+    {
+      "id": "unpaid-pension-claim",
+      "title": "未支給年金を請求する",
+      "summary": "亡くなった月の分までの年金で、まだ受け取っていない分を、生計を同じくしていたご家族が請求できます。",
+      "stage": "transfer",
+      "category": "年金・保険",
+      "submitTo": "年金事務所または街角の年金相談センター",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": "unpaid-pension-claim",
+      "applicability": {
+        "default": "maybe",
+        "rules": [
+          {
+            "when": {
+              "field": "pension",
+              "in": [
+                "NONE"
+              ]
+            },
+            "include": "no"
+          },
+          {
+            "when": {
+              "field": "pension",
+              "in": [
+                "EMPLOYEES",
+                "NATIONAL_ONLY"
+              ]
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "survivor-pension-check",
+      "title": "遺族年金を受け取れるか確かめる",
+      "summary": "故人が年金に加入していた、または受け取っていた場合、条件を満たすご家族は遺族基礎年金・遺族厚生年金を受け取れることがあります。",
+      "stage": "transfer",
+      "category": "年金・保険",
+      "submitTo": "年金事務所または市区町村役場",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": "survivor-pension-claim",
+      "applicability": {
+        "default": "maybe",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "death-lump-sum-check",
+      "title": "死亡一時金・寡婦年金を受け取れるか確かめる",
+      "summary": "自営業などで国民年金の保険料を納めていた期間（第1号被保険者の期間）がある方が、年金を受け取らずに亡くなった場合に対象になることがあります。死亡一時金は納めた期間が3年以上、寡婦年金は10年以上で、遺族基礎年金を受け取れる場合などは対象外です。請求の期限は死亡一時金が2年、寡婦年金が5年です。",
+      "stage": "transfer",
+      "category": "年金・保険",
+      "submitTo": "市区町村役場の国民年金の窓口または年金事務所",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": "death-lump-sum-claim",
+      "applicability": {
+        "default": "maybe",
+        "rules": [
+          {
+            "when": {
+              "field": "pension",
+              "in": [
+                "EMPLOYEES",
+                "NATIONAL_ONLY"
+              ]
+            },
+            "include": "no"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "funeral-benefit-claim",
+      "title": "葬祭費・埋葬料を請求する",
+      "summary": "加入していた健康保険から、葬儀を行った方（喪主）に葬祭費（国民健康保険・後期高齢者医療）、または埋葬料（会社の健康保険）が支給されます。",
+      "stage": "transfer",
+      "category": "年金・保険",
+      "submitTo": "市区町村役場の保険年金の窓口",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [
+        {
+          "id": "funeral-receipt",
+          "label": "葬儀の領収書または会葬礼状"
+        }
+      ],
+      "deadlineRuleId": "funeral-fee-claim",
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [
+        {
+          "when": {
+            "field": "healthInsurance",
+            "in": [
+              "EMPLOYEE"
+            ]
+          },
+          "title": "埋葬料を請求する",
+          "summary": "会社の健康保険から、故人に生計を維持されていて埋葬を行った方に埋葬料が支給されます（該当する方がいなければ、埋葬を行った方に埋葬費）。",
+          "submitTo": "勤務先の健康保険組合または協会けんぽ",
+          "deadlineRuleId": "burial-fee-claim"
+        },
+        {
+          "when": {
+            "field": "healthInsurance",
+            "in": [
+              "NATIONAL",
+              "LATE_ELDERLY"
+            ]
+          },
+          "title": "葬祭費を請求する"
+        }
+      ],
+      "targetDate": null
+    },
+    {
+      "id": "high-cost-medical-check",
+      "title": "高額療養費の払い戻しを確かめる",
+      "summary": "入院などで医療費の自己負担が高額だった場合、上限を超えた分が払い戻されることがあります。期限は診療を受けた月の翌月1日から2年です。払い戻しは故人の財産にあたるため、相続の方法を決めてから受け取ります。",
+      "stage": "transfer",
+      "category": "年金・保険",
+      "submitTo": "加入していた健康保険の窓口",
+      "evidenceRequired": false,
+      "assetDisposal": true,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "maybe",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "will-check",
+      "title": "遺言書があるか確かめる",
+      "summary": "遺言書の有無で、相続人や遺産の分け方が変わります。公正証書遺言は公証役場で検索でき、自筆の遺言書は法務局に預けられていないかも確かめます。自筆の遺言書が見つかったら、開封する前に家庭裁判所での検認が必要です（法務局に預けられていたものは不要です）。",
+      "stage": "investigation",
+      "category": "相続",
+      "submitTo": "公証役場・法務局",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": {
+        "monthsBeforeDeliberationDeadline": 1,
+        "basisLabel": "相続の方法を決める期限に間に合わせるための目安"
+      }
+    },
+    {
+      "id": "collect-family-register",
+      "title": "相続人を調べる（戸籍の収集）",
+      "summary": "故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続の方法を決める期限（3か月）に間に合うよう、早めに始めます。2024年3月から、配偶者・子・父母などは、最寄りの市区町村の窓口で、本籍地が遠い戸籍もまとめて請求できます（広域交付。兄弟姉妹は使えず、郵送では請求できません）。そろったら法務局で「法定相続情報一覧図」の写しを作ると、ほかの手続きで戸籍の束を何度も出さずに済みます。",
+      "stage": "investigation",
+      "category": "相続",
+      "submitTo": "本籍地の市区町村（郵送でも請求できます）、または最寄りの市区町村の窓口（広域交付）",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [
+        {
+          "id": "deceased-family-register",
+          "label": "故人の出生から死亡までの戸籍謄本"
+        },
+        {
+          "id": "heirs-family-register",
+          "label": "相続人全員の戸籍謄本"
+        }
+      ],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": {
+        "monthsBeforeDeliberationDeadline": 1,
+        "basisLabel": "相続の方法を決める期限に間に合わせるための目安"
+      }
+    },
+    {
+      "id": "estate-survey",
+      "title": "財産と借金を調べる",
+      "summary": "預貯金・不動産・株式や投資信託・保険と、借金やローンを調べます。借金は信用情報機関に開示を請求すると分かることがあります。相続の方法を決める前に、できるだけ把握しておきます。",
+      "stage": "investigation",
+      "category": "相続",
       "submitTo": null,
       "evidenceRequired": false,
       "assetDisposal": false,
       "requiredDocuments": [],
-      "deadlineRuleId": "inheritance-choice"
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": {
+        "monthsBeforeDeliberationDeadline": 1,
+        "basisLabel": "相続の方法を決める期限に間に合わせるための目安"
+      }
+    },
+    {
+      "id": "inheritance-choice",
+      "title": "相続の方法を決める（承認・放棄の判断）",
+      "summary": "単純承認・限定承認・相続放棄のいずれかを決めます。相続放棄は相続人ごとに、限定承認は相続人全員がそろって、家庭裁判所に申し立てます。期限までに何もしないと、単純承認したものとみなされます。判断は法的な内容を含むため、迷う場合は弁護士にご相談ください。",
+      "stage": "decision",
+      "category": "相続",
+      "submitTo": "故人の最後の住所地の家庭裁判所（相続放棄・限定承認の場合）",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": "inheritance-choice",
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "final-income-tax-return",
+      "title": "準確定申告をする",
+      "summary": "故人のその年の所得について、相続人が代わりに確定申告をします。所得や年金の額によっては不要な場合もあるので、税務署で確かめてください。",
+      "stage": "tax",
+      "category": "税務",
+      "submitTo": "故人の住所地を管轄する税務署",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": "final-income-tax-return",
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "inheritance-tax-return",
+      "title": "相続税の申告が必要か確かめる",
+      "summary": "財産の総額が基礎控除額（3,000万円＋600万円×法定相続人の数）以下なら、申告は不要です。ただし、配偶者の税額軽減や小規模宅地等の特例を使って税額が0円になる場合は、申告が必要です。判断は税務署または税理士にご確認ください。",
+      "stage": "tax",
+      "category": "税務",
+      "submitTo": "故人の住所地を管轄する税務署",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": "inheritance-tax-return",
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "estate-division",
+      "title": "遺産の分け方を話し合う（遺産分割協議）",
+      "summary": "相続人全員で遺産の分け方を話し合い、まとまったら遺産分割協議書を作ります。協議書には相続人全員が署名して実印を押し、印鑑登録証明書を添えるのが一般的です。遺言書がある場合は、その内容が基本になります。相続人に未成年の子とその親がいる場合は、家庭裁判所で特別代理人を選ぶ必要があります。",
+      "stage": "division",
+      "category": "相続",
+      "submitTo": null,
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "bank-accounts",
+      "title": "預貯金の相続手続きをする",
+      "summary": "口座のある金融機関に亡くなったことを伝え、相続の手続きをします。遺産分割の前でも、一定額までは引き出せる制度（仮払い）があります。ただし、相続放棄を考えている場合は使わないでください（放棄できなくなるおそれがあります）。相続の方法を決めたあとに行う手続きです。",
+      "stage": "transfer",
+      "category": "金融機関",
+      "submitTo": "口座のある金融機関",
+      "evidenceRequired": false,
+      "assetDisposal": true,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "real-estate-registration",
+      "title": "不動産の相続登記をする",
+      "summary": "家や土地の名義を相続人に変えます。2024年4月から義務になり、正当な理由なく怠ると過料の対象になります。遺産分割がまとまらない場合は、相続人であることを申し出る制度（相続人申告登記）もあります。",
+      "stage": "transfer",
+      "category": "相続",
+      "submitTo": "不動産の所在地を管轄する法務局",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": "real-estate-registration",
+      "applicability": {
+        "default": "maybe",
+        "rules": [
+          {
+            "when": {
+              "field": "realEstate",
+              "in": [
+                "NO"
+              ]
+            },
+            "include": "no"
+          },
+          {
+            "when": {
+              "field": "realEstate",
+              "in": [
+                "YES"
+              ]
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "property-tax-representative",
+      "title": "固定資産税の相続人代表者を届け出る",
+      "summary": "家や土地がある場合、固定資産税の書類を受け取る相続人の代表者を市区町村に届け出ます。期限は自治体によって違います。",
+      "stage": "tax",
+      "category": "税務",
+      "submitTo": "不動産のある市区町村の税務の窓口",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "no",
+        "rules": [
+          {
+            "when": {
+              "field": "realEstate",
+              "in": [
+                "YES"
+              ]
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "car-transfer",
+      "title": "自動車の名義を変える",
+      "summary": "車を引き継ぐ場合は名義変更、手放す場合は廃車などの手続きをします。軽自動車は窓口が違います。",
+      "stage": "transfer",
+      "category": "契約",
+      "submitTo": "運輸支局（軽自動車は軽自動車検査協会）",
+      "evidenceRequired": false,
+      "assetDisposal": true,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "no",
+        "rules": [
+          {
+            "when": {
+              "field": "car",
+              "in": [
+                "YES"
+              ]
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "mortgage-insurance-check",
+      "title": "住宅ローンの団体信用生命保険を確かめる",
+      "summary": "住宅ローンに団体信用生命保険が付いていれば、残りのローンが保険で返済されることがあります。ローンを組んでいる金融機関に連絡します。",
+      "stage": "transfer",
+      "category": "金融機関",
+      "submitTo": "住宅ローンを組んでいる金融機関",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "no",
+        "rules": [
+          {
+            "when": {
+              "field": "mortgage",
+              "in": [
+                "YES"
+              ]
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "employer-procedures",
+      "title": "勤務先の手続きをする",
+      "summary": "勤務先に亡くなったことを伝え、最後の給与・死亡退職金・社員証や保険証の返却などを確かめます。未払いの給与は故人の財産にあたるため、相続放棄を考えている場合は受け取る前に確かめてください。",
+      "stage": "transfer",
+      "category": "その他",
+      "submitTo": "勤務先",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "no",
+        "rules": [
+          {
+            "when": {
+              "field": "occupation",
+              "in": [
+                "EMPLOYEE"
+              ]
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "self-employed-notification",
+      "title": "個人事業の届出をする",
+      "summary": "個人事業をしていた場合、相続人が税務署に「個人事業の開業・廃業等届出書」を出します。消費税を納めていた場合は「個人事業者の死亡届出書」も出します。事業を引き継ぐ場合は、別の届出（青色申告の承認申請など）が必要なことがあります。",
+      "stage": "tax",
+      "category": "税務",
+      "submitTo": "故人の住所地を管轄する税務署",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "no",
+        "rules": [
+          {
+            "when": {
+              "field": "occupation",
+              "in": [
+                "SELF_EMPLOYED"
+              ]
+            },
+            "include": "yes"
+          }
+        ]
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "life-insurance-check",
+      "title": "生命保険・共済に入っていたか確かめる",
+      "summary": "保険証券や通帳の引き落としから、保険や共済を探します。受取人が決まっている死亡保険金は受取人のものなので、相続放棄をしても受け取れます（相続税がかかることはあります）。保険金の請求には期限（多くは3年の時効）があります。",
+      "stage": "transfer",
+      "category": "年金・保険",
+      "submitTo": "保険会社・共済",
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "utilities-contracts",
+      "title": "公共料金・携帯電話・カードなどの契約を整理する",
+      "summary": "電気・ガス・水道・携帯電話・インターネット・NHK・クレジットカード・サブスク（定額サービス）・賃貸住宅などの契約を、名義変更か解約します。相続放棄を考えている場合、賃貸住宅の解約や、故人の預金から未払い分を払うことは、放棄できなくなるおそれがあるため、先に専門家へ確かめてください。",
+      "stage": "contracts",
+      "category": "契約",
+      "submitTo": null,
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
+    },
+    {
+      "id": "id-returns",
+      "title": "運転免許証・パスポートなどを返す",
+      "summary": "パスポートは、失効の手続きのため旅券の窓口へ返します。運転免許証・障害者手帳なども返します。マイナンバーカードは死亡届で使えなくなるため、返さなくてよい自治体もあります。期限の決まりが無いものも多いので、落ち着いてからで構いません。",
+      "stage": "closing",
+      "category": "役所手続き",
+      "submitTo": null,
+      "evidenceRequired": false,
+      "assetDisposal": false,
+      "requiredDocuments": [],
+      "deadlineRuleId": null,
+      "applicability": {
+        "default": "yes",
+        "rules": []
+      },
+      "variants": [],
+      "targetDate": null
     }
   ],
-  "deliberationDeadlineRuleId": "inheritance-choice"
+  "deliberationDeadlineRuleId": "inheritance-choice",
+  "reviewedBy": null,
+  "reviewedAt": null
 }

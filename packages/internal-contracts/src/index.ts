@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 export const INTERNAL_LIMITS = { bodyBytes: 131072, timeoutMs: 10000, authorizationSeconds: 300, requestSeconds: 60 } as const
 export const internalId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
+/** ルールのバージョン（例 "1.0.0", "0.0.0-draft"）。internalId と違い "." を許す。 */
+export const internalRuleVersion = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/)
 export const operationSchema = z.enum(['case_planning', 'task_guidance', 'chat_reply', 'document_analysis'])
 export const scopeSchema = z.enum(['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'proposals', 'wait-requests'])
 export type InternalScope = z.infer<typeof scopeSchema>
@@ -58,7 +60,7 @@ const insightTaskSchema = z.object({ id: internalId, version: z.number().int().p
 const insightEventBase = z.object({ id: internalId, caseId: internalId, caseVersion: z.number().int().positive(), expiresAt: z.string().datetime(), task: insightTaskSchema })
 /** Issued by an authenticated Backend detector, not by a model or public request. */
 export const insightEventSchema = z.discriminatedUnion('kind', [
-  insightEventBase.extend({ kind: z.literal('DEADLINE_REVIEW'), deadline: z.object({ id: internalId, version: z.number().int().positive(), dueDate: z.iso.date(), confirmation: z.literal('CONFIRMED'), ruleId: internalId, ruleVersion: internalId }).strict() }).strict(),
+  insightEventBase.extend({ kind: z.literal('DEADLINE_REVIEW'), deadline: z.object({ id: internalId, version: z.number().int().positive(), dueDate: z.iso.date(), confirmation: z.literal('CONFIRMED'), ruleId: internalId, ruleVersion: internalRuleVersion }).strict() }).strict(),
   insightEventBase.extend({ kind: z.literal('DOCUMENTS_MISSING'), documents: z.array(z.object({ id: internalId, label: z.string().min(1).max(120) }).strict()).min(1).max(20) }).strict(),
   insightEventBase.extend({ kind: z.literal('PROFESSIONAL_REVIEW'), reason: z.string().min(1).max(1000) }).strict(),
   insightEventBase.extend({ kind: z.literal('CASE_CHANGED') }).strict(),

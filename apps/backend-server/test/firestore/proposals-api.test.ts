@@ -118,12 +118,15 @@ describeFirestore('Proposalの不変履歴と案件版', () => {
     const approval = await requestApproval(app, caseId, proposal)
     const changed = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { ...taskPayload, title: '別の業務変更' }))
     assert.equal(changed.status, 201, JSON.stringify(changed.body))
+    // 既定カタログで Case 作成時に同期生成された手続きの分も含めた、承認前の件数を基準にする。
+    const beforeApprove = await call(app, `/cases/${caseId}/tasks?limit=50`)
     const result = await call(app, `/cases/${caseId}/approvals/${approval.id}/approve`, jsonRequest('POST', {
       expectedVersion: approval.version, proposalVersion: approval.proposalVersion, payloadHash: approval.payloadHash,
     }))
     assert.equal(result.status, 409)
     assert.equal(result.body.error.details.reason, 'STALE_PROPOSAL')
-    assert.equal((await call(app, `/cases/${caseId}/tasks`)).body.data.length, 1)
+    const afterApprove = await call(app, `/cases/${caseId}/tasks?limit=50`)
+    assert.equal(afterApprove.body.data.length, beforeApprove.body.data.length, '拒否された提案でTaskが増えない')
   })
 })
 

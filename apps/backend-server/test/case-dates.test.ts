@@ -56,6 +56,25 @@ describe('findCaseDateIssues', () => {
     assert.deepEqual(findCaseDateIssues({ dateOfDeath: today, knownAt: today }, today), [])
     assert.deepEqual(findCaseDateIssues({ dateOfDeath: '2026-04-01', knownAt: '2026-04-01' }, today), [])
   })
+
+  it('死亡日より後の生年月日を検出する', () => {
+    const issues = findCaseDateIssues({ dateOfDeath: '2026-04-01', knownAt: null, dateOfBirth: '2026-04-02' }, today)
+    assert.equal(issues.length, 1)
+    assert.equal(issues[0]?.path, 'dateOfBirth')
+    assert.equal(issues[0]?.code, 'DATE_OF_BIRTH_AFTER_DATE_OF_DEATH')
+  })
+
+  it('生年月日が死亡日と同じ日は有効（等号は許容）', () => {
+    assert.deepEqual(findCaseDateIssues({ dateOfDeath: '2026-04-01', knownAt: null, dateOfBirth: '2026-04-01' }, today), [])
+  })
+
+  it('生年月日が null なら検査しない', () => {
+    assert.deepEqual(findCaseDateIssues({ dateOfDeath: '2026-04-01', knownAt: null, dateOfBirth: null }, today), [])
+  })
+
+  it('生年月日を省略した既存の呼び出し（dateOfBirth 無し）は検査しない', () => {
+    assert.deepEqual(findCaseDateIssues({ dateOfDeath: '2026-04-01', knownAt: null }, today), [])
+  })
 })
 
 describe('assertCaseDatesValid（Application: route と同じ details 形に整形する）', () => {

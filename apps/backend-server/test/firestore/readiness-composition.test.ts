@@ -6,6 +6,7 @@ import path from 'node:path'
 import { it } from 'node:test'
 import { createServer } from '../../src/composition.js'
 import { describeFirestore } from './helpers/emulator.js'
+import { PRODUCTION_MIN_CATALOG } from '../helpers/production-catalog-fixture.js'
 
 const TOKEN = 'ops-readiness-token-emulator-0123456789'
 const AI_TOKEN = 'ai-execution-service-token-emulator-0123456789'
@@ -30,7 +31,7 @@ describeFirestore('composition: readinessの各checkの判定（Emulator込み�
       }),
     )
     const rulesPath = path.join(dir, 'rules.json')
-    writeFileSync(rulesPath, JSON.stringify({ placeholder: false, deadlineRules: [], initialProcedures: [], deliberationDeadlineRuleId: null }))
+    writeFileSync(rulesPath, JSON.stringify(PRODUCTION_MIN_CATALOG))
 
     const app = createServer({
       ...process.env,
@@ -88,7 +89,7 @@ describeFirestore('composition: readinessの各checkの判定（Emulator込み�
       }),
     )
     const rulesPath = path.join(dir, 'rules.json')
-    writeFileSync(rulesPath, JSON.stringify({ placeholder: false, deadlineRules: [], initialProcedures: [], deliberationDeadlineRuleId: null }))
+    writeFileSync(rulesPath, JSON.stringify(PRODUCTION_MIN_CATALOG))
 
     const aiServer = createHttpServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })

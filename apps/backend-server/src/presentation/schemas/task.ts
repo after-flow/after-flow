@@ -98,6 +98,9 @@ export const taskResourceSchema = z.object({
   completionReportedBy: z.string().nullable(),
   completionReportedAt: isoDateTimeSchema.nullable(),
   deadline: deadlineResourceSchema.nullable(),
+  conditional: z.boolean(),
+  submitToSource: z.enum(['RULE', 'RESEARCH', 'MANUAL']).nullable(),
+  targetDate: deadlineResourceSchema.nullable(),
   evidences: z.array(
     z.object({
       id: z.string(),

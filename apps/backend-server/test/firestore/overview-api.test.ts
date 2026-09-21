@@ -63,6 +63,7 @@ const FIXTURE_DEADLINE_RULES: RuleCatalog['deadlineRules'] = [
     basis: 'KNOWN_AT',
     period: { unit: 'DAY', count: 7, includeFirstDay: false },
     basisLabel: '相続の開始を知った日の翌日から数えて7日以内',
+    knownAtLabel: '相続の開始を知った日',
     legalNature: 'JURISDICTIONAL',
     jurisdiction: '架空市',
     reviewed: true,
@@ -70,6 +71,7 @@ const FIXTURE_DEADLINE_RULES: RuleCatalog['deadlineRules'] = [
     sourceCheckedAt: '2026-09-20T00:00:00+09:00',
     extendable: false,
     critical: true,
+    reviewedBy: { name: 'テスト 司法書士', qualification: 'JUDICIAL_SCRIVENER' },
   },
   {
     id: 'fixture-unreviewed',
@@ -78,6 +80,7 @@ const FIXTURE_DEADLINE_RULES: RuleCatalog['deadlineRules'] = [
     basis: 'KNOWN_AT',
     period: { unit: 'DAY', count: 14, includeFirstDay: false },
     basisLabel: '相続の開始を知った日の翌日から数えて14日以内',
+    knownAtLabel: '相続の開始を知った日',
     legalNature: 'JURISDICTIONAL',
     jurisdiction: '架空市',
     reviewed: false,
@@ -85,8 +88,11 @@ const FIXTURE_DEADLINE_RULES: RuleCatalog['deadlineRules'] = [
     sourceCheckedAt: null,
     extendable: null,
     critical: false,
+    reviewedBy: null,
   },
 ]
+
+const FIXTURE_ALWAYS: RuleCatalog['initialProcedures'][number]['applicability'] = { default: 'yes', rules: [] }
 
 const FIXTURE_INITIAL_PROCEDURES: RuleCatalog['initialProcedures'] = [
   {
@@ -100,6 +106,9 @@ const FIXTURE_INITIAL_PROCEDURES: RuleCatalog['initialProcedures'] = [
     assetDisposal: false,
     requiredDocuments: [],
     deadlineRuleId: 'fixture-confirmed',
+    applicability: FIXTURE_ALWAYS,
+    variants: [],
+    targetDate: null,
   },
   {
     id: 'fixture-b',
@@ -112,6 +121,9 @@ const FIXTURE_INITIAL_PROCEDURES: RuleCatalog['initialProcedures'] = [
     assetDisposal: false,
     requiredDocuments: [],
     deadlineRuleId: 'fixture-unreviewed',
+    applicability: FIXTURE_ALWAYS,
+    variants: [],
+    targetDate: null,
   },
   {
     id: 'fixture-c',
@@ -124,14 +136,22 @@ const FIXTURE_INITIAL_PROCEDURES: RuleCatalog['initialProcedures'] = [
     assetDisposal: false,
     requiredDocuments: [],
     deadlineRuleId: null,
+    applicability: FIXTURE_ALWAYS,
+    variants: [],
+    targetDate: null,
   },
 ]
+
+const FIXTURE_REVIEWER = { name: 'テスト 司法書士', qualification: 'JUDICIAL_SCRIVENER' } as const
+const FIXTURE_REVIEWED_AT = '2026-09-20T00:00:00+09:00'
 
 const REVIEWED_CATALOG: RuleCatalog = {
   placeholder: false,
   deadlineRules: FIXTURE_DEADLINE_RULES,
   initialProcedures: FIXTURE_INITIAL_PROCEDURES,
   deliberationDeadlineRuleId: 'fixture-confirmed',
+  reviewedBy: FIXTURE_REVIEWER,
+  reviewedAt: FIXTURE_REVIEWED_AT,
 }
 
 /** 熟慮期間のルールが業務レビュー未了である場合の架空カタログ。 */
@@ -140,6 +160,8 @@ const UNCONFIRMED_DELIBERATION_CATALOG: RuleCatalog = {
   deadlineRules: FIXTURE_DEADLINE_RULES,
   initialProcedures: FIXTURE_INITIAL_PROCEDURES,
   deliberationDeadlineRuleId: 'fixture-unreviewed',
+  reviewedBy: FIXTURE_REVIEWER,
+  reviewedAt: FIXTURE_REVIEWED_AT,
 }
 
 let keyCounter = 0
@@ -198,18 +220,22 @@ async function setRunStatus(
 }
 
 describeFirestore('案件の概要', () => {
-  it('作成直後は手続きが無く、段階を完了にしない', async () => {
+  it('作成直後から手続きが同期生成され、段階を完了にしない', async () => {
     const { app, caseId } = await setup()
     const response = await call(app, `/cases/${caseId}/overview`)
 
     assert.equal(response.status, 200)
-    assert.equal(response.body.data.totalTasks, 0)
+    // Case 作成のトランザクション内で初期手続きが同期生成される（フィクスチャ3件は
+    // すべて applicability.default:'yes' なので、初回応答から totalTasks に出る）。
+    assert.equal(response.body.data.totalTasks, FIXTURE_INITIAL_PROCEDURES.length)
     assert.equal(response.body.data.flowStages.length, 10)
-    // 手続きが 0 件の段階を完了にしない。
+    const stagesWithFixtures = new Set(FIXTURE_INITIAL_PROCEDURES.map((p) => p.stage))
     for (const stage of response.body.data.flowStages) {
-      assert.equal(stage.state, 'NO_TASKS', `${stage.id} が完了扱いになっている`)
+      const expected = stagesWithFixtures.has(stage.id) ? 'NOT_STARTED' : 'NO_TASKS'
+      assert.equal(stage.state, expected, `${stage.id} が想定と違う状態になっている`)
     }
     assert.ok(response.body.data.aggregatedAt)
+    // 同期生成は作成 Transaction 内でのみ起き caseVersion を進めない。
     assert.equal(response.body.data.caseVersion, 1)
   })
 
@@ -258,9 +284,12 @@ describeFirestore('案件の概要', () => {
     }
 
     const response = await call(app, `/cases/${caseId}/overview`)
-    assert.equal(response.body.data.totalTasks, 12)
-    assert.equal(response.body.data.taskCounts.NOT_STARTED, 12)
+    // 12件を手動追加した Case でも、同期生成されたフィクスチャ3件が加わる。
+    const total = 12 + FIXTURE_INITIAL_PROCEDURES.length
+    assert.equal(response.body.data.totalTasks, total)
+    assert.equal(response.body.data.taskCounts.NOT_STARTED, total)
 
+    // フィクスチャの手続きは contracts 段階に無いので、この段階の件数は手動分だけ。
     const contracts = response.body.data.flowStages.find((stage: Json) => stage.id === 'contracts')
     assert.equal(contracts.totalTasks, 12)
   })
@@ -278,7 +307,7 @@ describeFirestore('案件の概要', () => {
     assert.equal(response.body.data.unresolvedDeadlineCount, 1)
   })
 
-  it('熟慮期間の残日数をTask生成前から返す（申し送り3-4）', async () => {
+  it('熟慮期間の残日数を返す（申し送り3-4）', async () => {
     const tenantId = newTenantId()
     const userId = 'user-owner'
     await seedTenantMember(tenantId, userId)
@@ -290,7 +319,8 @@ describeFirestore('案件の概要', () => {
     const created = await call(app, '/cases', jsonRequest('POST', caseBody, nextKey('idem-case')))
     const caseId = created.body.data.id as string
 
-    // tasks/initialize を呼んでいない ＝ 永続 Deadline がまだ無い状態でも熟慮期間は出る。
+    // Case 作成 tx で初期手続き・期限が同期生成される。熟慮期間はそれとは別に、
+    // Case の日付からその場算定される（永続 Deadline の集計に含まれない）。
     const response = await call(app, `/cases/${caseId}/overview`)
     const deliberation = response.body.data.inheritanceDecision.deliberationDeadline
     assert.ok(deliberation)
@@ -302,9 +332,9 @@ describeFirestore('案件の概要', () => {
     assert.equal(deliberation.severity, 'SOON')
     assert.equal(deliberation.confirmation, 'CONFIRMED')
     // upcomingDeadlines / unresolvedDeadlineCount は永続 Deadline の集計のまま。
-    // 熟慮期間を二重に数えない（永続 Deadline がまだ無いので 0 件）。
-    assert.equal(response.body.data.upcomingDeadlines.length, 0)
-    assert.equal(response.body.data.unresolvedDeadlineCount, 0)
+    // 熟慮期間を二重に数えない（同期生成された fixture-a/b の期限が1件ずつ数えられる）。
+    assert.equal(response.body.data.upcomingDeadlines.length, 1)
+    assert.equal(response.body.data.unresolvedDeadlineCount, 1)
   })
 
   it('熟慮期間のルールが業務レビュー未了なら未確定として返す', async () => {
@@ -523,7 +553,9 @@ describeFirestore('案件の概要', () => {
     const another = await call(app, '/cases', jsonRequest('POST', caseBody, nextKey('idem-case')))
     const response = await call(app, `/cases/${another.body.data.id}/overview`)
 
-    assert.equal(response.body.data.totalTasks, 0)
-    assert.equal(response.body.data.upcomingDeadlines.length, 0)
+    // 同じフィクスチャカタログから作成した別 Case でも、自分の同期生成分（3件・期限1件）
+    // だけを持つ。最初の Case（同じく3件・期限1件）と合算されていれば値がずれて壊れる。
+    assert.equal(response.body.data.totalTasks, FIXTURE_INITIAL_PROCEDURES.length)
+    assert.equal(response.body.data.upcomingDeadlines.length, 1)
   })
 })

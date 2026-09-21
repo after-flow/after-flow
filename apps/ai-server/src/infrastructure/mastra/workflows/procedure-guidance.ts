@@ -8,7 +8,7 @@ import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildResearchBrief, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
 import { guidanceDraftSchema, guidanceResult } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
-import { researchEvidenceSchema } from '../../../orchestration/research/contracts.js'
+import { finalizeResearchSynthesis, researchEvidenceSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { createGuidanceAgents } from '../agents/guidance-agents.js'
 import { createResearchTools } from '../tools/research.js'
 import type { ResearchProvider } from '../tools/research.js'
@@ -69,16 +69,50 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
           await deps.beforeTool(kind)
         },
       })
-      const { coreAgent, researchEvidence } = createGuidanceAgents({
+      const { coreAgent, researchAgent } = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [selection.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
       })
+      const query = selection.brief.questions.map(question => question.text).join(' ').slice(0, 240)
+      const candidates = await tools.execute.search(selection.brief.briefId, query)
+      const selectedCandidates = candidates.slice(0, 3)
+      if (!selectedCandidates.length) return {
+        ...inputData,
+        draft: { status: 'needs_input' as const, where: null, bring: [], steps: [], missing: ['確認できる公式資料が見つかりませんでした。'] },
+        sources: [],
+        research: researchEvidenceSchema.parse({ briefs: [selection.brief], outcomes: [{ briefId: selection.brief.briefId,
+          findings: { status: 'needs_input', answers: [], missing: ['確認できる公式資料が見つかりませんでした。'], conflicts: [] } }] }),
+      }
+      for (const candidate of selectedCandidates) await tools.execute.read(selection.brief.briefId, candidate.id)
+      const sources = tools.sources(selection.brief.briefId)
+      await deps.budget?.charge({ research: 1 })
+      const researchResponse = await researchAgent.generate(JSON.stringify({
+        goal: '各questionに公式資料だけで回答し、回答ごとに取得済みsourceIdを付けてください。すべて確認できた場合だけstatusをcompleteにし、確認できない項目はmissingに残してください。',
+        brief: selection.brief,
+        sources,
+      }), {
+        maxSteps: 1, toolChoice: 'none', abortSignal: deps.signal,
+        structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'strict' },
+      })
+      const findings = finalizeResearchSynthesis(researchResponse.object, selection.brief, tools.retrievedSourceIds(selection.brief.briefId))
+      const research = researchEvidenceSchema.parse({ briefs: [selection.brief], outcomes: [{ briefId: selection.brief.briefId, findings }] })
       const response = await coreAgent.generate(JSON.stringify({
-        goal: '対象手続きの提出先、必要書類、手順を案内してください。各記述に取得済みsourceIdを対応させ、未確認ならmissingに残してください。',
+        goal: `対象手続きの案内を次の区分で作成してください。
+- where: 提出先を1件。根拠のsourceIdを付ける。
+- bring: 主な必要書類と条件付き追加書類を、書類ごとの配列にする。stepsへまとめず、必ず1件以上を入れる。
+- steps: 申請手順、申請期限、注意点を項目ごとの配列にする。
+- missing: 公式資料で確認できない事項だけを入れる。
+where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcompleteにする。それ以外はpartialまたはneeds_inputにする。`,
         context: context.modelInput,
-      }), { structuredOutput: { schema: guidanceDraftSchema, errorStrategy: 'strict' }, abortSignal: deps.signal })
+        verifiedResearch: research,
+        sources: sources.map(({ id, title, issuer, url, fetchedAt, updatedAt, location }) => ({ id, title, issuer, url, fetchedAt, updatedAt, location })),
+        constraint: '調査はハーネスが完了しています。Research Agentへ再委譲せず、verifiedResearchだけを根拠に案内してください。',
+      }), {
+        maxSteps: 1, toolChoice: 'none',
+        structuredOutput: { schema: guidanceDraftSchema, errorStrategy: 'strict' }, abortSignal: deps.signal,
+      })
       deps.signal.throwIfAborted()
-      return { ...inputData, draft: guidanceDraftSchema.parse(response.object), sources: tools.sources(selection.brief.briefId), research: researchEvidence() }
+      return { ...inputData, draft: guidanceDraftSchema.parse(response.object), sources, research }
     },
   })
   const report = createStep({

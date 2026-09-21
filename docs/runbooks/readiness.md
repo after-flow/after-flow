@@ -72,7 +72,7 @@ architecture.md 6.3に記載の`GET /internal/v1/health/ready`はAI Server側の
 - `session_revocation`は「未実装であること」を常時報告する固定fail。ADR 0001 §4の7日上限（`auth_time`検証）は`JwtTokenVerifier`/`FirebaseEmulatorTokenVerifier`で実装済みだが、§5の失効・停止確認（Admin SDKでの明示的なrevoke確認）は未実装のため区別している。
 - `consent_catalog` / `deadline_rules`は`placeholder`フラグの検出に加えて、`NODE_ENV=production`では読込自体が失敗する（`readConsentCatalog` / `readRuleCatalog`が`CONSENT_CATALOG_PATH` / `DEADLINE_RULES_PATH`未設定または`placeholder:true`を例外で拒否する）。readinessはこの例外も同じ`NOT_CONFIGURED`に丸め込む。正式カタログ・正式ルールの内容そのものの正しさは[#128](https://github.com/after-flow/after-flow/issues/128)・[#129](https://github.com/after-flow/after-flow/issues/129)の決定事項で、この検査の対象外。
 - **運用上の帰結**: `readRuleCatalog`は`composition.ts`（`createServer`）と`worker-main.ts`の両方が起動時に呼ぶ。`NODE_ENV=production`かつ正式カタログ（`placeholder:false`）が無ければ、readinessが`not_ready`を返すだけでなく、**Backend/Workerプロセス自体が起動しない**（起動時に例外で落ちる）。[#129](https://github.com/after-flow/after-flow/issues/129)の業務レビューが完了して正式カタログを`DEADLINE_RULES_PATH`に設定するまで、本番デプロイはこのガードで止まる。これは意図した挙動（未承認の法定期限を本番で表示しない）であり、暫定回避としてカタログを丸ごと`reviewed:false`にする、`placeholder:false`だけ偽装する等は行わないこと。
-- 期限ルールのカタログ（`DEADLINE_RULES_PATH`の指すファイル）を差し替えても、既に保存済みの`DeadlineEntity`は自動で再計算されない。反映するには対象Caseごとに`POST /cases/:caseId/deadlines/reevaluate`を呼ぶ必要がある（`ruleVersion`の差分で更新対象を検出する。カタログ変更をトリガーに全Caseを自動再評価する経路は無い）。
+- 期限ルールのカタログ（`DEADLINE_RULES_PATH`の指すファイル）を差し替えても、既に保存済みの`DeadlineEntity`・`TaskEntity`は自動で再計算されない。反映するには対象Caseごとに`POST /cases/:caseId/deadlines/reevaluate`を呼ぶ必要がある（`ruleVersion`の差分で更新対象を検出する。カタログ変更をトリガーに全Caseを自動再評価する経路は無い）。このAPIは期限の再算定だけでなく、`applicability`の再評価による手続きの追加・削除（あてはまらなくなった未着手Taskの物理削除）も行う。
 - Mastra/Orchの機能的な準備完了はこのreadinessでは確認しない（#123対象外、architecture.mdの将来API一覧とは区別する）。
 
 ## 試験範囲

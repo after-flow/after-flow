@@ -21,6 +21,7 @@ import { taskProposalApplier } from './application/proposal/task-applier.js'
 import { entityProposalAppliers } from './application/proposal/entity-appliers.js'
 import { taskActionProposalAppliers } from './application/proposal/task-action-appliers.js'
 import { TaskService } from './application/task/task-service.js'
+import { ProcedureSyncService } from './application/task/procedure-sync-service.js'
 import {
   notConfiguredCheck,
   objectStorageReadinessCheck,
@@ -90,6 +91,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   }
 
   const ruleCatalog = readRuleCatalog(env)
+  const procedureSync = new ProcedureSyncService(ruleCatalog, database.read)
   const enabledOperations = connectedOperations(env)
   if (enabledOperations.size > 0 && !consentCatalog.documents.some((document) => document.kind === 'CROSS_BORDER_AI')) {
     // 接続済みのふりをしない、と対にする検査。AI へ渡す操作を接続していながら
@@ -118,7 +120,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   const routes = createPublicV1Routes({
     registrationService,
     ...createBusinessServices(access, database.read, database.uow),
-    caseService: new CaseService(access, database.read, database.uow),
+    caseService: new CaseService(access, database.read, database.uow, undefined, procedureSync),
     consentService,
     documentService: documentStorage ? new DocumentService(
       access,
@@ -137,6 +139,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       access,
       database.read,
       database.uow,
+      procedureSync,
       new StoredInheritanceDecisionReader(database.read),
     ),
     // 接続済みの業務操作は設定で管理する。AI Server が未設定なら空集合で、
@@ -225,7 +228,13 @@ export function createOutboxDispatcher(
   const read = new FirestoreReadRepository(dependencies.firestore)
   const uow = new ContextVersionUnitOfWork(new FirestoreUnitOfWork(dependencies.firestore))
   const execution = new InternalExecutionService(read, uow, dependencies.consent, new AgentResultIntake(read, uow))
-  return new OutboxDispatcher(dependencies.firestore, new ScopedHttpAgentJobClient(config, execution, authorization), dependencies.consent)
+  return new OutboxDispatcher(dependencies.firestore, new ScopedHttpAgentJobClient(config, execution, authorization), dependencies.consent, undefined, undefined, {
+    deliveryTimeoutMs: Number(env.OUTBOX_DELIVERY_TIMEOUT_MS || 15 * 60_000),
+    onGiveUp: async (event, reason) => {
+      if (!event.type.startsWith('agent.') || event.type === 'agent.cancel' || !event.caseId || typeof event.payload.runId !== 'string') return
+      await execution.abandonDispatch(event.tenantId, event.caseId, event.payload.runId, event.id, reason)
+    },
+  })
 }
 
 /** 設定で有効にした業務操作だけを受け付ける。 */

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { detectInsightEvents } from './insight-events.js'
 import { saveInsightResults } from './insight-results.js'
 import { planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema } from '@aftercare/internal-contracts'
@@ -23,7 +24,9 @@ import type { ConsentService } from '../consent/consent-service.js'
 import type { ReadRepository, SnapshotReader, Tx, UnitOfWork } from '../ports/persistence.js'
 import type { ProposalService } from '../proposal/proposal-service.js'
 import { acquireLease, assertLease, leaseLocation, releaseLease } from './lease-service.js'
+import { terminateQueuedRun } from './run-termination.js'
 import { createPendingWait, recordWaiting, validateWaitCondition } from './wait-requests.js'
+import { recordRunTransitionEvent } from './agent-run-events.js'
 import type { ProposalEntity } from '../../domain/proposal/proposal.js'
 import type { WaitRequestEntity } from '../../domain/agent/wait-request.js'
 
@@ -49,7 +52,7 @@ function pick(entity: EntityBase, fields: readonly string[]): Record<string, unk
   const values = entity as unknown as Record<string, unknown>
   return Object.fromEntries(['id', 'version', ...fields].filter(key => values[key] !== undefined).map(key => [key, values[key]]))
 }
-const taskFields = ['title', 'summary', 'status', 'stage', 'category', 'submitTo', 'source', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal']
+const taskFields = ['title', 'summary', 'status', 'stage', 'category', 'submitTo', 'source', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal', 'conditional']
 const contextCollections: [CollectionDescriptor, string[]][] = [
   [collections.persons, ['name', 'relationshipLabel', 'role', 'isHeir', 'specialCircumstance', 'excludedAt']],
   [collections.relationships, ['fromPersonId', 'toPersonId', 'kind', 'excludedAt']],
@@ -81,10 +84,26 @@ export class InternalExecutionService {
       await this.assertAccess(tx, run)
       this.assertActive(run)
       if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
-      return { tenantId, caseId, runId, jobId, executionAttempt: run.currentAttemptId,
+      const executionAttempt = run.status === 'QUEUED' ? await this.rebaseIfStale(tx, caseId, run) : run.currentAttemptId
+      return { tenantId, caseId, runId, jobId, executionAttempt,
         operation: run.operation, scopes: ['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'wait-requests',
           ...(run.operation === 'case_planning' ? ['proposals' as const] : [])] }
     })
+  }
+
+  /**
+   * 未開始のRunは、受付後にCaseが進んでいても現在の版で実行を始められる。
+   * 受付時の版のまま配送すると control が STALE_CONTEXT を返し続け、同じJobが
+   * 一時障害として無期限に再送される。試行IDは配送前に取り直す。
+   */
+  private async rebaseIfStale(tx: Tx, caseId: string, run: AgentRunEntity): Promise<string> {
+    const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
+    if (entity.caseVersion === run.caseVersionAtAccept) return run.currentAttemptId
+    const executionAttempt = randomUUID()
+    tx.update<AgentRunEntity>(runLocation(caseId, run.id), run.version, { caseVersionAtAccept: entity.caseVersion, currentAttemptId: executionAttempt })
+    tx.audit({ caseId, type: 'agent_run.context_rebased', target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 },
+      detail: { from: run.caseVersionAtAccept, to: entity.caseVersion } })
+    return executionAttempt
   }
 
   async assertAccess(tx: Tx, run: AgentRunEntity): Promise<void> {
@@ -95,6 +114,16 @@ export class InternalExecutionService {
     if (!member?.active || member.userId !== user.userId || !caseMember?.active
       || caseMember.userId !== user.userId || !roleAllows(caseMember.role, 'case.write')) throw errors.forbidden()
     await this.consent.assertExternalAiAllowed(user, tx)
+  }
+
+  /** 配送を打ち切ったJobのRunを失敗として確定する。既に進んだRunは触らない。 */
+  async abandonDispatch(tenantId: string, caseId: string, runId: string, jobId: string, reason: string): Promise<boolean> {
+    return this.uow.run({ tenantId, actor: { type: 'SYSTEM', userId: null, agentRunId: runId }, requestId: null }, async tx => {
+      const run = await tx.require<AgentRunEntity>(runLocation(caseId, runId))
+      if (run.status !== 'QUEUED' || run.currentJobId !== jobId) return false
+      await terminateQueuedRun(tx, caseId, run, { status: 'FAILED', failureReason: reason, auditType: 'agent_run.delivery_abandoned' })
+      return true
+    })
   }
 
   /** callbackの永続記録は、失われた配送ACKより強い受領証明。旧jobも再実行しない。 */
@@ -245,6 +274,14 @@ export class InternalExecutionService {
         fencingToken: grant.fencingToken,
         contentHash: fingerprintOf(snapshot.content), expiresAt: new Date(Date.now() + 300_000).toISOString() }
       tx.create<RunArtifactEntity>(location, { id, runId: run.id, jobId: claims.jobId, executionAttempt: claims.executionAttempt, artifact })
+      // QUEUED→RUNNINGはイベントとして記録しない(Issue #125レビュー指摘への対応)。
+      // AI側から明示のPROGRESS（`event()`）が送られない限り、公開履歴上は
+      // ACCEPTED→RESULTの間に「処理中」stageが現れない。既存テスト
+      // (internal-execution.test.tsの「dispatch→context→artifact→heartbeat→
+      // progress→result」)がAI側PROGRESSの個数・順序・detailを厳密に検証して
+      // おり、ここでBackend発のPROGRESSを自動追加すると重複してその契約を壊す。
+      // 将来Backend起点の処理中イベントを追加するなら、AI起点のPROGRESSと
+      // 区別できるdetail（"source": "BACKEND"等）を契約に含めてから行う。
       tx.update<AgentRunEntity>(runLocation(claims.caseId, run.id), run.version, {
         status: 'RUNNING', fencingToken: grant.fencingToken, startedAt: run.startedAt ?? new Date().toISOString(),
       })
@@ -319,11 +356,13 @@ export class InternalExecutionService {
 
   event(call: InternalCall, input: ProgressEvent) {
     return this.execute(call, async (tx, run) => {
-      if ('type' in input) return recordWaiting(tx, run, input.waitRequestId, input.snapshotId)
+      if ('type' in input) return recordWaiting(tx, run, input.waitRequestId, input.snapshotId, input.eventId)
       if (!run.fencingToken) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_REQUIRED' } })
       await assertLease(tx, call.claims.caseId, run.id, run.fencingToken)
       if (input.sequence <= (run.progressSequence ?? -1)) return { applied: false, reason: 'OLD_PROGRESS' }
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { progressSequence: input.sequence })
+      // 公開可能な進捗履歴。原文・prompt・非公開の思考は含めない。
+      await recordRunTransitionEvent(tx, run, 'PROGRESS', run.status, { eventId: input.eventId, detail: { phase: input.phase } })
       tx.audit({ caseId: call.claims.caseId, type: 'agent_run.progress',
         target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { phase: input.phase, sequence: input.sequence } })
       return { applied: true, reason: null }
@@ -342,9 +381,21 @@ export class InternalExecutionService {
       const envelope = { runId: run.id, attemptId: run.currentAttemptId }
       if (input.kind === 'task_guidance') return this.intake.applyGuidanceResult(tx, call.claims.caseId, { ...input, ...envelope })
       if (input.kind === 'chat_reply') return this.intake.applyChatReply(tx, call.claims.caseId, { ...input, ...envelope })
+      if (input.kind === 'execution_interrupted' && run.operation === 'task_guidance') {
+        return this.intake.applyGuidanceInterruption(tx, call.claims.caseId, { ...envelope, resultId: input.resultId,
+          failureReason: input.failureReason, output: input.output, caseVersion: input.caseVersion })
+      }
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString(),
         failureReason: input.kind === 'execution_interrupted' ? input.failureReason : null,
         outcome: input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
+      // 公開可能な完了履歴。narrative本文・questionsは含めない（別途GET agent-runsで確認する）。
+      await recordRunTransitionEvent(tx, run, 'RESULT', input.status, {
+        eventId: input.resultId,
+        detail: {
+          operation: input.kind === 'execution_interrupted' ? input.operation : input.kind,
+          ...(input.kind === 'execution_interrupted' ? { failureReason: input.failureReason } : {}),
+        },
+      })
       tx.audit({ caseId: call.claims.caseId, type: 'agent_run.result',
         target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { resultId: input.resultId, status: input.status } })
       return { applied: true, reason: null }

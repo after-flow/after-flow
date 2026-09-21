@@ -13,6 +13,7 @@ function deliberationRule(overrides: Partial<DeadlineRule> = {}): DeadlineRule {
     basis: 'KNOWN_AT',
     period: { unit: 'MONTH', count: 3, includeFirstDay: false },
     basisLabel: '自分のために相続が始まったと知った日の翌日から数えて3か月以内',
+    knownAtLabel: '自分のために相続が始まったと知った日',
     legalNature: 'STATUTORY',
     jurisdiction: '全国',
     reviewed: true,
@@ -20,6 +21,7 @@ function deliberationRule(overrides: Partial<DeadlineRule> = {}): DeadlineRule {
     sourceCheckedAt: '2026-09-20T00:00:00+09:00',
     extendable: true,
     critical: true,
+    reviewedBy: { name: 'テスト 司法書士', qualification: 'JUDICIAL_SCRIVENER' },
     ...overrides,
   }
 }
@@ -30,6 +32,8 @@ function catalogOf(rule: DeadlineRule, deliberationDeadlineRuleId: string | null
     deadlineRules: [rule],
     initialProcedures: [],
     deliberationDeadlineRuleId,
+    reviewedBy: { name: 'テスト 司法書士', qualification: 'JUDICIAL_SCRIVENER' },
+    reviewedAt: '2026-09-20T00:00:00+09:00',
   }
 }
 

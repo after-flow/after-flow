@@ -7,24 +7,31 @@ import { Button } from '@/kit/kit'
 
 type Kind = 'image' | 'pdf' | 'unsupported'
 
+interface Detected {
+  kind: Kind
+  /**
+   * 表示に使う MIME タイプ。サーバーが付けてきた種類は使わず、中身から決めたものに付け直す。
+   * text/html などのまま Blob URL を新しいタブで開くと、アプリと同じオリジンでスクリプトが動いてしまうため。
+   */
+  type: string
+}
+
 /**
  * 原本の種類を見分ける。
- * Backend は application/octet-stream で返すため、Content-Type だけでは決められない。
- * 先頭のバイト（PDF・PNG・JPEG の印）を見て、無理ならファイル名の拡張子で判断する。
+ * Backend は application/octet-stream で返すため、Content-Type では決められない。
+ * 先頭のバイト（PDF・PNG・JPEG の印）だけで判断する。拡張子や Content-Type は信用しない
+ * （中身が HTML の「.pdf」を PDF として開かせないため）。
  */
-async function detectKind(blob: Blob, fileName: string): Promise<Kind> {
-  if (blob.type === 'application/pdf') return 'pdf'
-  if (/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(blob.type)) return 'image'
+async function detectKind(blob: Blob): Promise<Detected> {
   const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer())
   const text = String.fromCharCode(...head)
-  if (text.startsWith('%PDF')) return 'pdf'
-  if (head[0] === 0x89 && text.slice(1, 4) === 'PNG') return 'image'
-  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image'
-  // HEIC（iPhone の写真）はブラウザで表示できないことが多い
-  if (text.slice(4, 8) === 'ftyp') return 'unsupported'
-  if (/\.pdf$/i.test(fileName)) return 'pdf'
-  if (/\.(png|jpe?g)$/i.test(fileName)) return 'image'
-  return 'unsupported'
+  if (text.startsWith('%PDF')) return { kind: 'pdf', type: 'application/pdf' }
+  if (head[0] === 0x89 && text.slice(1, 4) === 'PNG') return { kind: 'image', type: 'image/png' }
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return { kind: 'image', type: 'image/jpeg' }
+  // モックの見本の紙面（SVG）。<img> で出す分にはスクリプトは動かないが、新しいタブでは開かせない
+  if (blob.type === 'image/svg+xml') return { kind: 'image', type: 'image/svg+xml' }
+  // HEIC（iPhone の写真）など、ブラウザで表示できないもの
+  return { kind: 'unsupported', type: 'application/octet-stream' }
 }
 
 export interface SourceBoxRow {
@@ -58,7 +65,7 @@ export function DocumentView({
   heightClass?: string
 }) {
   const content = useDocumentContent(caseId, documentId)
-  const [view, setView] = useState<{ url: string; kind: Kind } | null>(null)
+  const [view, setView] = useState<{ url: string; kind: Kind; openable: boolean } | null>(null)
   const activeRef = useRef<HTMLSpanElement>(null)
   const frameRef = useRef<HTMLDivElement>(null)
 
@@ -66,16 +73,18 @@ export function DocumentView({
     const blob = content.data
     if (!blob) return
     let cancelled = false
-    const url = URL.createObjectURL(blob)
-    void detectKind(blob, fileName).then((kind) => {
-      if (!cancelled) setView({ url, kind })
+    let url: string | null = null
+    void detectKind(blob).then(({ kind, type }) => {
+      if (cancelled) return
+      url = URL.createObjectURL(new Blob([blob], { type }))
+      setView({ url, kind, openable: type !== 'image/svg+xml' })
     })
     return () => {
       cancelled = true
-      URL.revokeObjectURL(url)
+      if (url) URL.revokeObjectURL(url)
       setView(null)
     }
-  }, [content.data, fileName])
+  }, [content.data])
 
   /*
     項目を選んだら、その枠が見える位置まで「表示枠の中だけ」をスクロールする。
@@ -168,9 +177,11 @@ export function DocumentView({
           })}
         </div>
       </div>
-      <a href={view.url} target="_blank" rel="noreferrer" className="self-end text-[0.86rem] font-bold text-rd-primary-text hover:underline">
-        大きく表示する
-      </a>
+      {view.openable && (
+        <a href={view.url} target="_blank" rel="noreferrer" className="self-end text-[0.86rem] font-bold text-rd-primary-text hover:underline">
+          大きく表示する
+        </a>
+      )}
     </div>
   )
 }

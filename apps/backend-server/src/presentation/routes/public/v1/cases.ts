@@ -33,7 +33,8 @@ export const caseSpecs = {
     description:
       '作成者を OWNER として membership を同じ Transaction で確定する。`ownerPerson` を指定すると本人を ' +
       'Person として同時登録し `ownerPersonId` に紐付ける（省略時は従来どおり後から POST /cases/:caseId/persons ' +
-      'で登録する）。未来の死亡日、死亡日より前または未来の「知った日」は 400。初期手続きと期限の生成は別の処理が行う。',
+      'で登録する）。未来の死亡日、死亡日より前または未来の「知った日」、死亡日より後の生年月日は 400。' +
+      '初期手続きと期限は同じ Transaction で生成され、201 応答直後の GET /cases/:caseId/tasks・overview に載る。',
     tags: ['cases'],
     auth: 'user',
     request: { body: createCaseBodySchema },
@@ -82,7 +83,9 @@ export const caseSpecs = {
     summary: '案件の基本情報を訂正する',
     description:
       'status は変更できない。死亡日と「知った日」は別の事実として保持し、未入力を補完しない。' +
-      '死亡日・「知った日」を変更する場合、未来の死亡日、死亡日より前または未来の「知った日」は 400。' +
+      '死亡日・「知った日」・生年月日を変更する場合、未来の死亡日、死亡日より前または未来の「知った日」、' +
+      '死亡日より後の生年月日は 400。`profile` は丸ごと置換（省略項目は UNKNOWN、`null` で未回答に戻す）。' +
+      'profile / 生年月日 / 死亡日 / 知った日の変更で、手続きと期限を同じ Transaction で洗い出し直す。' +
       'ownerPersonId は含められない（変更したい場合は別途対応する）。',
     tags: ['cases'],
     auth: 'user',
