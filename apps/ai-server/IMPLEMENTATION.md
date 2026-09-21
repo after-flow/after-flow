@@ -64,3 +64,5 @@ Devinは着手許可を意味するラベルではない。共有PRの契約・�
 公開取消APIはBackendのRunをCANCELLEDにし、旧job/attemptと取消Outboxを同じトランザクションで保存する。`POST /internal/v1/runs/:runId/cancel`へサービス認証付きで配送し、同意撤回後も停止通知は配送する。AIは取消を永続化して未到着のdispatchも拒否し、同一プロセスの実行をAbortする。別Workerでも次の共有所有権検査で停止する。既に完了した正式変更は戻さない。
 
 取消記録を削除すると遅延dispatchの復活防止を失うため、execution_cancellationsに自動TTLは設定しない。取消payloadは業務本文・ユーザー認証・モデル設定を含まない。
+
+最新の追加PRと未接続部分は[実装状況](IMPLEMENTATION_STATUS.md)を参照。
