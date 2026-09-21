@@ -16,7 +16,7 @@ const envSchema = z.object({
   AI_ORCA_FALLBACK_MODEL: z.string().min(1).max(200),
 })
 
-const REVIEW_REFERENCE = 'hackathon-demo-2026-09-21; OrcaRouter gateway and public provider terms must be reviewed before production'
+const REVIEW_REFERENCE = 'https://docs.orcarouter.ai/operations/data-handling reviewed for hackathon demo 2026-09-21; upstream provider terms require separate production review'
 const CATALOG_ID = 'kyoukaikenpo-burial-benefit'
 const CATALOG_VERSION = '2026-09-21'
 const POLICY_IDS = ['orca-core-primary', 'orca-core-fallback'] as const

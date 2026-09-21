@@ -1,6 +1,6 @@
 import { mkdir, writeFile, rename } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { Mastra } from '@mastra/core/mastra'
 import { DatasetsInMemory, ExperimentsInMemory, InMemoryDB, MastraCompositeStore } from '@mastra/core/storage'
 import { dataset, datasetVersion, expectationSchema, fixtureInputSchema } from './dataset.js'
@@ -14,6 +14,12 @@ if (!['development', 'holdout'].includes(split) || process.argv.length > 3) thro
 const selected = dataset.filter(item => item.split === split)
 const reportPath = resolve('../../reports', `ai-eval-${split}.json`)
 const db = new InMemoryDB()
+const git = (args: string[]) => {
+  const result = spawnSync('git', args, { encoding: 'utf8' })
+  return result.error || result.status !== 0 ? null : result.stdout.trim()
+}
+const revision = git(['rev-parse', 'HEAD']) ?? process.env.GITHUB_SHA?.trim() ?? 'unavailable'
+const worktree = git(['status', '--porcelain'])
 // Ephemeral synthetic evaluation state only; production Workflow persistence remains dedicated Firestore.
 const storage = new MastraCompositeStore({ id: 'synthetic-eval', domains: { datasets: new DatasetsInMemory({ db }), experiments: new ExperimentsInMemory({ db }) } })
 const mastra = new Mastra({ storage })
@@ -22,8 +28,8 @@ const nativeDataset = await mastra.datasets.create({ id: `after-flow-${split}`, 
 await nativeDataset.addItems({ items: selected.map(item => ({ id: item.id, input: item.input, groundTruth: item.expected, metadata: { caseId: item.id, severity: item.severity, split } })) })
 const report = {
   schemaVersion: 1, mode: 'harness-fixture', realProvider: false, realOrch: false, web: 'fixed-synthetic',
-  commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-  dirtyWorktree: execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0,
+  commit: revision,
+  dirtyWorktree: worktree === null ? null : worktree.length > 0,
   datasetVersion, scorerVersion, split, caseCount: selected.length, repetitions: 3,
   skills: skillCatalog.map(item => ({ id: item.id, version: item.version, hash: item.hash })),
   playbooks: playbooks.map(item => ({ id: item.id, version: item.version, hash: item.hash })),

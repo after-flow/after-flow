@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
-import { GuidanceOutputContractError, guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
+import { guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { boundResearchSynthesis, finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { completeGuidanceAction, createGuidanceWorkingState, guidancePlanDecisionSchema, guidanceResearchPlanDecisionSchema, guidanceWorkingStateSchema } from '../../../orchestration/working-state.js'
@@ -169,7 +169,10 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
           abortSignal: deps.signal,
           structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'warn' },
         })
-        findings = finalizeResearchSynthesis(boundResearchSynthesis(repaired.object), inputData.brief, sources)
+        const repairedOutput = researchSynthesisSchema.safeParse(boundResearchSynthesis(repaired.object))
+        findings = repairedOutput.success
+          ? finalizeResearchSynthesis(repairedOutput.data, inputData.brief, sources)
+          : { status: 'partial' as const, answers: [], missing: ['調査結果を表示可能な形式へ整えられませんでした。'], conflicts: [] }
         research = researchEvidenceSchema.parse({ briefs: [inputData.brief], outcomes: [{ briefId: inputData.brief.briefId, findings }] })
       }
       if (!findings) throw new Error('Research Agent did not return validated findings')
@@ -246,7 +249,45 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
         if (parsed.success) { draft = parsed.data; break }
         validationIssues = parsed.error.issues.map(issue => ({ path: issue.path, code: issue.code, message: issue.message }))
       }
-      if (!draft) throw new GuidanceOutputContractError()
+      if (!draft) {
+        // The Provider response is unusable, but the harness still has verified
+        // quote-level evidence. Report those quotes as a conservative partial
+        // guide instead of losing the whole Run after successful research.
+        const claims = findings.answers.flatMap(answer => (answer.evidence ?? []).slice(0, 1).map(item => ({
+          text: item.quote, questionIds: [answer.questionId],
+        })))
+        const byQuestion = (ids: readonly string[]) => claims.filter(item => ids.includes(item.questionIds[0]!))
+        draft = guidanceDraftSchema.parse({ status: 'partial',
+          where: byQuestion(['submission'])[0] ?? null,
+          bring: byQuestion(['documents']),
+          steps: claims.filter(item => !['submission', 'documents'].includes(item.questionIds[0]!)),
+          missing: ['案内文を公式資料の引用で表示しています。案件への適用条件を確認してください。'],
+        })
+      }
+      if (findings.status !== 'complete' && draft.status === 'complete') {
+        draft = guidanceDraftSchema.parse({ ...draft, status: 'partial',
+          missing: ['公式資料から確認できなかった項目があります。追加確認してください。'] })
+      }
+      if (findings.status !== 'complete') {
+        // Researchの未確認事項はCoreの要約から消えても、利用者に必ず残す。
+        // 表示契約の上限内へ収め、同じ文言は重複させない。
+        const missing = [...new Set([...draft.missing, ...findings.missing])]
+          .map(item => item.slice(0, GUIDANCE_LIMITS.missingItem))
+          .slice(0, GUIDANCE_LIMITS.items)
+        draft = guidanceDraftSchema.parse({ ...draft, status: 'partial', missing })
+      }
+      const covered = new Set([...(draft.where?.questionIds ?? []), ...draft.bring.flatMap(item => item.questionIds), ...draft.steps.flatMap(item => item.questionIds)])
+      const omittedClaims = findings.answers.filter(answer => !covered.has(answer.questionId)).flatMap(answer =>
+        (answer.evidence ?? []).slice(0, 1).map(item => ({ text: item.quote, questionIds: [answer.questionId] })))
+      if (omittedClaims.length) {
+        const submission = omittedClaims.find(item => item.questionIds[0] === 'submission')
+        draft = guidanceDraftSchema.parse({ ...draft,
+          where: draft.where ?? submission ?? null,
+          bring: [...draft.bring, ...omittedClaims.filter(item => item.questionIds[0] === 'documents')],
+          steps: [...draft.steps, ...omittedClaims.filter(item => item.questionIds[0] !== 'documents' &&
+            (item.questionIds[0] !== 'submission' || draft!.where !== null))],
+        })
+      }
       deps.signal.throwIfAborted()
       return { ...inputData, draft, workingState: completeGuidanceAction(inputData.workingState, 'GENERATE_GUIDANCE', 'REPORT', undefined,
         agents.skillRefs.core.map(skill => ({ ...skill, phase: 'generate' as const }))) }

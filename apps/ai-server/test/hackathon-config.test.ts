@@ -40,12 +40,14 @@ test('hackathon composition binds two model families, fixed official sources and
   assert.deepEqual(grant.providerPolicyIds, ['orca-core-primary', 'orca-core-fallback'])
   assert.deepEqual(grant.dataClasses, ['minimized_case', 'public_research'])
   assert.equal(grant.maxRetentionDays, 0)
-  await config.recordMetric({ policyId: 'orca-core-primary', policyRevision: 'hackathon-v1', routeEvidenceId: null,
-    role: 'core', status: 'success', durationMs: 1, inputTokens: 2, outputTokens: 3, failure: null },
+  await config.recordMetric({ attemptId: 'provider-attempt', policyId: 'orca-core-primary', policyRevision: 'hackathon-v1', modelId: 'openai/gpt-4o-mini', routeEvidenceId: null,
+    role: 'core', fallbackFromPolicyId: null, status: 'success', durationMs: 1, inputTokens: 2, outputTokens: 3,
+    estimatedCostUsd: 0.00008, gatewayReportedCostUsd: null, failure: null },
   { runId: 'run', jobId: 'job', executionAttempt: 'attempt' })
   assert.deepEqual(metrics, [{ event: 'ai_provider_attempt', runId: 'run', jobId: 'job', executionAttempt: 'attempt',
-    policyId: 'orca-core-primary', policyRevision: 'hackathon-v1', routeEvidenceId: null,
-    role: 'core', status: 'success', durationMs: 1, inputTokens: 2, outputTokens: 3, failure: null }])
+    attemptId: 'provider-attempt', policyId: 'orca-core-primary', policyRevision: 'hackathon-v1', modelId: 'openai/gpt-4o-mini', routeEvidenceId: null,
+    role: 'core', fallbackFromPolicyId: null, status: 'success', durationMs: 1, inputTokens: 2, outputTokens: 3,
+    estimatedCostUsd: 0.00008, gatewayReportedCostUsd: null, failure: null }])
 })
 
 test('hackathon composition rejects shared credentials and same-family fallback', () => {

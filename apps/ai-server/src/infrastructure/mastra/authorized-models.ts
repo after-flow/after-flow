@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { assertOrcaModel, orcaReceipt } from '../orcarouter/models.js'
 import type { OrcaReceipt } from '../orcarouter/models.js'
 import type { MastraModelConfig } from '@mastra/core/llm'
@@ -17,8 +17,11 @@ export function assertAuthorizedModelSet(models: unknown, expected: ModelBinding
     entry.maxRetries !== 0)) throw new Error('Physical provider budget adapter must match this execution')
 }
 export interface ProviderMetric {
-  policyId: string; policyRevision: string; routeEvidenceId: string | null; selectionId?: string; gateway?: OrcaReceipt; role: 'core' | 'research'
+  attemptId: string; policyId: string; policyRevision: string; modelId: string; routeEvidenceId: string | null; selectionId?: string; gateway?: OrcaReceipt; role: 'core' | 'research'
+  fallbackFromPolicyId: string | null
   status: 'success' | 'failure'; durationMs: number; inputTokens: number | null; outputTokens: number | null
+  /** Policy-price estimate and gateway response value are provisional until reconciled with billing. */
+  estimatedCostUsd: number | null; gatewayReportedCostUsd: number | null
   failure: 'TRANSIENT' | 'PERMANENT' | 'INTERRUPTED' | null
 }
 export class ProviderFailure extends Error {
@@ -27,6 +30,8 @@ export class ProviderFailure extends Error {
 function classify(error: unknown): ProviderFailure['classification'] {
   if (error && typeof error === 'object' && 'statusCode' in error &&
     (error.statusCode === 429 || (typeof error.statusCode === 'number' && error.statusCode >= 500 && error.statusCode <= 599))) return 'TRANSIENT'
+  if (error instanceof DOMException && error.name === 'TimeoutError') return 'TRANSIENT'
+  if (error instanceof Error && /transport interrupted or unavailable/i.test(error.message)) return 'TRANSIENT'
   return 'PERMANENT'
 }
 
@@ -84,7 +89,7 @@ function wrapSelectedModels(options: AuthorizedModelOptions, request: RouteReque
   if (new Set(selected.map(policy => policy.currency)).size !== 1 || new Set(selected.map(policy => policy.sdkProvider)).size !== selected.length) throw new Error('Fallback requires distinct providers in one budget currency')
   const stop = new AbortController()
   const signal = AbortSignal.any([options.signal, stop.signal])
-  const models = selected.map(policy => {
+  const models = selected.map((policy, index) => {
     const model = options.models.get(policy.id)
     if (!model || model.specificationVersion !== 'v2' || model.provider !== policy.sdkProvider || model.modelId !== policy.modelId) throw new Error('Approved SDK model is not registered')
     const reservation = inferenceReservation(policy)
@@ -99,9 +104,14 @@ function wrapSelectedModels(options: AuthorizedModelOptions, request: RouteReque
     }
     const metric = async (started: number, failure: ProviderFailure['classification'] | null, usage?: { inputTokens?: number; outputTokens?: number }, receipt?: OrcaReceipt) => {
       const safe = (value: number | undefined) => Number.isSafeInteger(value) && value! >= 0 ? value! : null
-      await options.record({ policyId: policy.id, policyRevision: policy.revision, routeEvidenceId: gateway ? null : decision.evidenceId, ...(gateway ? { selectionId: decision.evidenceId } : {}), ...(receipt ? { gateway: receipt } : {}), role: request.role,
+      const inputTokens = safe(usage?.inputTokens), outputTokens = safe(usage?.outputTokens)
+      const estimatedCostUsd = inputTokens === null || outputTokens === null ? null
+        : (inputTokens * policy.inputMicrosPerToken + outputTokens * policy.outputMicrosPerToken) / 1_000_000
+      await options.record({ attemptId: randomUUID(), policyId: policy.id, policyRevision: policy.revision, modelId: policy.modelId,
+        routeEvidenceId: gateway ? null : decision.evidenceId, ...(gateway ? { selectionId: decision.evidenceId } : {}), ...(receipt ? { gateway: receipt } : {}), role: request.role,
+        fallbackFromPolicyId: index > 0 ? selected[index - 1]!.id : null,
         status: failure ? 'failure' : 'success', durationMs: Math.max(0, Date.now() - started),
-        inputTokens: safe(usage?.inputTokens), outputTokens: safe(usage?.outputTokens), failure })
+        inputTokens, outputTokens, estimatedCostUsd, gatewayReportedCostUsd: receipt?.costUsd ?? null, failure })
     }
     const failed = async (error: unknown, started: number, partial = false) => {
       const failure = signal.aborted ? 'INTERRUPTED' : classify(error)
