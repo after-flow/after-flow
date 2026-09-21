@@ -286,11 +286,18 @@ export function dueTone(d: DeadlineResource) {
   return 'text-rd-text-2'
 }
 
-/** 残日数の文言。Rule Engine の daysRemaining をそのまま使い、再計算しない。 */
-export function dueWords(d: DeadlineResource): string {
+/**
+ * 残日数の文言。Rule Engine の daysRemaining をそのまま使い、再計算しない。
+ *
+ * 期限を出せないときの文言は、札や一覧の列に収まる短いものを既定にする（長い文だと枠からはみ出していた）。
+ * 理由まで伝える長い文は、手続きの詳細（long）でだけ使う。
+ * 「起算日」は法律の言葉で伝わりにくいので使わない（数えはじめる日は、亡くなった日か、亡くなったことを知った日）。
+ */
+export function dueWords(d: DeadlineResource, opts?: { long?: boolean }): string {
   if (d.daysRemaining == null) {
-    if (d.unresolvedReason === 'MISSING_BASIS_DATE') return '起算日が未入力のため期限を出せません'
-    return '期限を確認中です'
+    if (d.unresolvedReason === 'MISSING_BASIS_DATE')
+      return opts?.long ? '亡くなった日などの日付が未入力のため、期限を出せません' : '日付が未入力'
+    return opts?.long ? '期限を確認中です' : '期限は確認中'
   }
   if (d.daysRemaining < 0) return `${Math.abs(d.daysRemaining)}日過ぎています`
   if (d.daysRemaining === 0) return '今日まで'
@@ -325,7 +332,8 @@ export function Due({
       </span>
     )
   if (!deadline) return <span className="text-[0.9rem] text-rd-text-3">期限なし</span>
-  if (deadline.dueDate == null) return <span className="text-[0.9rem] text-rd-text-3">期限：要確認</span>
+  // 期限を出せない理由は、手続きの流れの札と同じ言い方にそろえる（日付が未入力・期限は確認中）
+  if (deadline.dueDate == null) return <span className="text-[0.9rem] text-rd-text-3">{dueWords(deadline)}</span>
   if (done)
     return <span className="text-[0.9rem] text-rd-text-3">{formatDate(deadline.dueDate)}</span>
   return (
