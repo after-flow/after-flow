@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { INFRASTRUCTURE_COLLECTIONS, collections } from '../../src/domain/shared/collections.js'
 import type { CaseMember } from '../../src/domain/authorization/case-role.js'
-import { seedHeir, agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
+import { seedHeir, agreeExternalAiConsent, agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
 import type { Json, TestAppOptions } from './helpers/app.js'
 import { describeFirestore, firestore, newTenantId, unitOfWork, workContext } from './helpers/emulator.js'
 
@@ -243,6 +243,7 @@ describeFirestore('Entity別Proposal適用', () => {
 describeFirestore('書類要求・根拠・専門家引継ぎのProposal', () => {
   async function prepare() {
     const env = await setup()
+    await agreeExternalAiConsent(env.app)
     const task = await call(env.app, `/cases/${env.caseId}/tasks`, jsonRequest('POST', {
       title: '架空手続き', category: '手動', stage: 'immediate', evidenceRequired: true,
     }))

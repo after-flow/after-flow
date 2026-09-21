@@ -9,6 +9,7 @@ import { errors } from '../../shared/app-error.js'
 import type { AgentRunService } from '../agent/agent-run-service.js'
 import type { AccessService } from '../authorization/case-access.js'
 import type { CommandMeta } from '../case/case-service.js'
+import type { ConsentService } from '../consent/consent-service.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
 import type { DocLocation, Page, ReadRepository, UnitOfWork } from '../ports/persistence.js'
 
@@ -101,6 +102,7 @@ export class MessageService {
     private readonly read: ReadRepository,
     private readonly uow: UnitOfWork,
     private readonly runs: AgentRunService,
+    private readonly consent: ConsentService,
   ) {}
 
   async list(
@@ -123,6 +125,12 @@ export class MessageService {
    *
    * 発言の保存と実行の受付を分けると、送信は成功したのに回答が
    * 始まらない状態や、その逆が起きる。同じ経路で扱う。
+   *
+   * 外部AI（回答の生成）へ渡す前提の発言のため、保存より前に同意を
+   * 検査する。同意が無い利用者の発言を先に保存してしまうと、拒否は
+   * 副作用の後になる。`accept()` 内でも同じ検査をもう一度行うため
+   * 同意記録を二度読むが、意図的な二重化である。ここでの検査と
+   * `accept()` の検査の間に撤回が割り込む競合窓を狭める。
    */
   async post(
     user: AuthenticatedUser,
@@ -131,6 +139,7 @@ export class MessageService {
     meta: CommandMeta,
   ): Promise<{ message: MessageView; runId: string | null; runAccepted: boolean; reason: string | null }> {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
+    await this.consent.assertExternalAiAllowed(user)
     const generatedId = randomUUID()
 
     const messageId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
@@ -168,7 +177,10 @@ export class MessageService {
       runId = run.id
       await this.attachReplyRun(user, caseId, messageId, run.id, meta)
     } catch (cause) {
-      // 未接続・同意不足は失敗ではなく、回答が始まらない理由として返す。
+      // 未接続は失敗ではなく、回答が始まらない理由として返す。同意は
+      // 保存前に検査済みなので、ここで CONSENT_REQUIRED になるのは
+      // 検査後・保存前に撤回された競合時だけで、その場合も Run は
+      // 作られず配送も止まる。
       reason = (cause as { code?: string } | null)?.code ?? 'UNAVAILABLE'
     }
 

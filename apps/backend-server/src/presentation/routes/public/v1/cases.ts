@@ -31,7 +31,9 @@ export const caseSpecs = {
     path: '/cases',
     summary: '案件を作成する',
     description:
-      '作成者を OWNER として membership を同じ Transaction で確定する。初期手続きと期限の生成は別の処理が行う。',
+      '作成者を OWNER として membership を同じ Transaction で確定する。`ownerPerson` を指定すると本人を ' +
+      'Person として同時登録し `ownerPersonId` に紐付ける（省略時は従来どおり後から POST /cases/:caseId/persons ' +
+      'で登録する）。未来の死亡日、死亡日より前または未来の「知った日」は 400。初期手続きと期限の生成は別の処理が行う。',
     tags: ['cases'],
     auth: 'user',
     request: { body: createCaseBodySchema },
@@ -79,7 +81,9 @@ export const caseSpecs = {
     path: '/cases/:caseId',
     summary: '案件の基本情報を訂正する',
     description:
-      'status は変更できない。死亡日と「知った日」は別の事実として保持し、未入力を補完しない。',
+      'status は変更できない。死亡日と「知った日」は別の事実として保持し、未入力を補完しない。' +
+      '死亡日・「知った日」を変更する場合、未来の死亡日、死亡日より前または未来の「知った日」は 400。' +
+      'ownerPersonId は含められない（変更したい場合は別途対応する）。',
     tags: ['cases'],
     auth: 'user',
     request: { params: caseIdParamsSchema, body: updateCaseBodySchema },

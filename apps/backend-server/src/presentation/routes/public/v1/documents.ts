@@ -31,7 +31,7 @@ export const documentSpecs = {
     path: '/cases/:caseId/documents',
     summary: '原本を登録する',
     description:
-      'PDF・JPEG・PNG、1ファイル10 MiBまで。Content-Typeの申告だけでなく実体を検査する。保存完了と解析受付は別の状態で、検査に合格していない書類は解析対象にしない。',
+      'PDF・JPEG・PNG、1ファイル10 MiBまで。Content-Typeの申告だけでなく実体を検査する。保存完了と解析受付は別の状態で、検査に合格していない書類は解析対象にしない。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は保存前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。',
     tags: ['documents'],
     auth: 'user',
     request: {

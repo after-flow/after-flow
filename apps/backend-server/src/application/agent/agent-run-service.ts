@@ -119,6 +119,14 @@ export class AgentRunService {
   ): Promise<AgentRunView> {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
 
+    // 同意の検査を接続状況より先に行う。順序を逆にすると、同じ未同意の
+    // 利用者でも環境（AI 未接続なら 501、接続済みなら 403）によって
+    // 案内が割れ、画面の出し分けができない。この結果、AI 未接続の環境
+    // では「移転が起きない操作」のためだけに外部AI同意を求めることに
+    // なるが、そのような環境は `overviewService`（connectedOperations が
+    // 空）が AI 導線自体を隠す前提で許容する。
+    await this.consent.assertExternalAiAllowed(user)
+
     if (!this.connectedOperations.has(input.operation)) {
       throw errors.featureNotConnected({
         details: {
@@ -127,8 +135,6 @@ export class AgentRunService {
         },
       })
     }
-    // 外部 AI へデータを渡す処理は、同意が無ければ受け付けない。
-    await this.consent.assertExternalAiAllowed(user)
 
     const runId = randomUUID()
     const jobId = randomUUID()

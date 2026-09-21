@@ -6,6 +6,7 @@ import { MAX_DOCUMENT_BYTES } from '../../src/domain/document/content-type.js'
 import { INFRASTRUCTURE_COLLECTIONS } from '../../src/domain/shared/collections.js'
 import type { createApp } from '../../src/app.js'
 import {
+  agreeExternalAiConsent,
   agreeRequiredConsents,
   buildApp,
   call,
@@ -71,6 +72,7 @@ async function setup(options: TestAppOptions = {}) {
   await seedTenantMember(tenantId, userId)
   const app = buildApp(tenantId, userId, options)
   await agreeRequiredConsents(app)
+  await agreeExternalAiConsent(app, options.catalog)
   const created = await call(app, '/cases', jsonRequest('POST', caseBody, `idem-case-${userId}-1`))
   assert.equal(created.status, 201)
   return { tenantId, userId, app, caseId: created.body.data.id as string }
@@ -151,9 +153,9 @@ describeFirestore('原本の登録', () => {
     assert.equal(response.body.data.analysis.state, 'NOT_REQUESTED')
     assert.equal(response.body.data.analysis.canRequest, false)
     // 「解析開始」「マスキング済み」に見える応答を返さない。
+    // 外部AI同意は setup() で済ませているので、残る理由はこの2つ。
     assert.deepEqual(response.body.data.analysis.blockedReasons.sort(), [
       'AI_NOT_CONNECTED',
-      'CONSENT_REQUIRED',
       'INSPECTION_NOT_PASSED',
     ])
   })
@@ -341,8 +343,14 @@ describeFirestore('検査の結果', () => {
     )
     assert.equal(response.body.data.inspection.status, 'PASSED')
     assert.equal(response.body.data.inspection.completed, true)
-    // 外部AI同意がまだ無いので、それだけが残る理由になる。
-    assert.deepEqual(response.body.data.analysis.blockedReasons, ['CONSENT_REQUIRED'])
+    assert.deepEqual(response.body.data.analysis.blockedReasons, [])
+    assert.equal(response.body.data.analysis.canRequest, true)
+
+    // 撤回すると、既存書類の解析前提も改めて満たさなくなる。
+    await call(app, '/consents/revocations', jsonRequest('POST', { kind: 'CROSS_BORDER_AI' }))
+    const after = await call(app, `/cases/${caseId}/documents/${response.body.data.id}`)
+    assert.deepEqual(after.body.data.analysis.blockedReasons, ['CONSENT_REQUIRED'])
+    assert.equal(after.body.data.analysis.canRequest, false)
   })
 
   it('拒否された書類は原本を保持せず、理由を残す', async () => {
