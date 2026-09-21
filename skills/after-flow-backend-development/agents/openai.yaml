@@ -1,0 +1,4 @@
+interface:
+  display_name: "After Flow Backend Development"
+  short_description: "After Flow Backendの調査・実装・検証を安全に進める"
+  default_prompt: "Use $after-flow-backend-development to inspect the current Backend status and implement the next approved Backend issue."
