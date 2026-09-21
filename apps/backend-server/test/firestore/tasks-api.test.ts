@@ -23,7 +23,9 @@ const REVIEWED_CATALOG: RuleCatalog = {
       version: '1.0.0',
       label: '架空の届出期限',
       basis: 'KNOWN_AT',
-      offsetDays: 7,
+      period: { unit: 'DAY', count: 7, includeFirstDay: false },
+      basisLabel: '相続の開始を知った日の翌日から数えて7日以内',
+      legalNature: 'JURISDICTIONAL',
       jurisdiction: '架空市',
       reviewed: true,
       sourceUrl: 'https://example.test/fixture',
@@ -58,6 +60,44 @@ const REVIEWED_CATALOG: RuleCatalog = {
       deadlineRuleId: null,
     },
   ],
+  deliberationDeadlineRuleId: null,
+}
+
+/** 業務レビュー未了(reviewed:false)のルールだけを持つ架空カタログ。 */
+const UNREVIEWED_CATALOG: RuleCatalog = {
+  placeholder: true,
+  deadlineRules: [
+    {
+      id: 'fixture-unreviewed',
+      version: '0.0.0-draft',
+      label: '架空の未レビュー期限',
+      basis: 'KNOWN_AT',
+      period: { unit: 'DAY', count: 14, includeFirstDay: false },
+      basisLabel: '相続の開始を知った日の翌日から数えて14日以内',
+      legalNature: 'JURISDICTIONAL',
+      jurisdiction: '架空市',
+      reviewed: false,
+      sourceUrl: null,
+      sourceCheckedAt: null,
+      extendable: null,
+      critical: false,
+    },
+  ],
+  initialProcedures: [
+    {
+      id: 'fixture-unreviewed',
+      title: '架空の未レビュー手続き',
+      summary: '',
+      stage: 'immediate',
+      category: '行政手続き',
+      submitTo: null,
+      evidenceRequired: false,
+      assetDisposal: false,
+      requiredDocuments: [],
+      deadlineRuleId: 'fixture-unreviewed',
+    },
+  ],
+  deliberationDeadlineRuleId: null,
 }
 
 const caseBody = {
@@ -231,7 +271,9 @@ describeFirestore('初期手続きの生成', () => {
   })
 
   it('業務レビュー未了のルールでは日付を返さない', async () => {
-    const { app, caseId } = await setup({ ruleCatalog: PLACEHOLDER_RULE_CATALOG })
+    // PLACEHOLDER_RULE_CATALOG は STATUTORY な2ルールを reviewed:true にしてある
+    // ため、未レビューの挙動はローカルの UNREVIEWED_CATALOG で確認する。
+    const { app, caseId } = await setup({ ruleCatalog: UNREVIEWED_CATALOG })
     await initialize(app, caseId)
 
     const deadlines = await call(app, `/cases/${caseId}/deadlines?limit=50`)
@@ -248,14 +290,82 @@ describeFirestore('初期手続きの生成', () => {
     }
   })
 
-  it('起算日が未入力なら理由を示して期限を出さない', async () => {
+  it('placeholderカタログでもSTATUTORYなルールは確定した期限を出す（死亡届・相続方法の選択）', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: PLACEHOLDER_RULE_CATALOG })
+    await initialize(app, caseId)
+
+    const deadlines = await call(app, `/cases/${caseId}/deadlines?limit=50`)
+    const notification = deadlines.body.data.find((d: Json) => d.ruleId === 'death-notification')
+    const choice = deadlines.body.data.find((d: Json) => d.ruleId === 'inheritance-choice')
+    assert.ok(notification)
+    assert.ok(choice)
+    assert.equal(notification.confirmation, 'CONFIRMED')
+    // 知った日 2026-04-03 を含めて7日（戸籍法43条の初日算入）
+    assert.equal(notification.dueDate, '2026-04-09')
+    assert.equal(choice.confirmation, 'CONFIRMED')
+    // 知った日 2026-04-03 の翌日から3か月（民法143条）
+    assert.equal(choice.dueDate, '2026-07-03')
+  })
+
+  it('知った日が未入力なら死亡日から数え、入力後は知った日で数え直す', async () => {
     const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG }, { knownAt: undefined })
     await initialize(app, caseId)
 
-    const deadlines = await call(app, `/cases/${caseId}/deadlines`)
-    const deadline = deadlines.body.data[0]
-    assert.equal(deadline.dueDate, null)
-    assert.equal(deadline.unresolvedReason, 'MISSING_BASIS_DATE')
+    const before = await call(app, `/cases/${caseId}/deadlines`)
+    const beforeDeadline = before.body.data[0]
+    // 死亡日 2026-04-01 + 7日。以前はここを死亡日で補完せず「要確認」にしていたが、
+    // 申し送り3-3で「知った日」を起算日にしつつ未入力時は死亡日で代替する方針に変わった。
+    assert.equal(beforeDeadline.startDate, '2026-04-01')
+    assert.equal(beforeDeadline.dueDate, '2026-04-08')
+    assert.equal(beforeDeadline.unresolvedReason, null)
+    assert.match(beforeDeadline.basisLabel, /知った日が未入力のため/)
+
+    const current = await call(app, `/cases/${caseId}`)
+    await call(
+      app,
+      `/cases/${caseId}`,
+      jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-03' }),
+    )
+    const reevaluated = await call(
+      app,
+      `/cases/${caseId}/deadlines/reevaluate`,
+      jsonRequest('POST', {}, nextKey('idem-reeval')),
+    )
+    // basisLabel の付記が消えるだけでも再評価は1件の更新として数える。
+    assert.equal(reevaluated.body.data.updated.length, 1)
+
+    const after = await call(app, `/cases/${caseId}/deadlines`)
+    const afterDeadline = after.body.data[0]
+    assert.equal(afterDeadline.startDate, '2026-04-03')
+    assert.equal(afterDeadline.dueDate, '2026-04-10')
+    assert.doesNotMatch(afterDeadline.basisLabel, /知った日が未入力のため/)
+  })
+
+  it('知った日を後入力しても死亡日と同じ日付ならbasisLabelの付記が消えたことを再評価が検出する', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: REVIEWED_CATALOG }, { knownAt: undefined })
+    await initialize(app, caseId)
+
+    const before = await call(app, `/cases/${caseId}/deadlines`)
+    assert.match(before.body.data[0].basisLabel, /知った日が未入力のため/)
+
+    const current = await call(app, `/cases/${caseId}`)
+    // 死亡日と同じ日付を「知った日」として入力する。dueDate 自体は変わらない。
+    await call(
+      app,
+      `/cases/${caseId}`,
+      jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-01' }),
+    )
+    const reevaluated = await call(
+      app,
+      `/cases/${caseId}/deadlines/reevaluate`,
+      jsonRequest('POST', {}, nextKey('idem-reeval')),
+    )
+    // dueDate/startDateは変わらないが、basisLabelの付記が消えるため更新扱いになる。
+    assert.equal(reevaluated.body.data.updated.length, 1)
+
+    const after = await call(app, `/cases/${caseId}/deadlines`)
+    assert.equal(after.body.data[0].dueDate, '2026-04-08')
+    assert.doesNotMatch(after.body.data[0].basisLabel, /知った日が未入力のため/)
   })
 
   it('起算日を訂正すると期限を作り直す', async () => {

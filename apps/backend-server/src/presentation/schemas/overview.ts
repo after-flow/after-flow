@@ -38,6 +38,7 @@ export const caseOverviewResourceSchema = z.object({
     decided: z.boolean(),
     unknown: z.boolean(),
     perHeir: z.array(decisionSummarySchema),
+    deliberationDeadline: deadlineResourceSchema.nullable(),
   }),
   recentAgentRuns: z.array(agentRunResourceSchema),
   aiConnected: z.boolean(),

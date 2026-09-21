@@ -3,14 +3,16 @@ import type { Person } from '../../domain/person/person.js'
 import type { EntityBase } from '../../domain/shared/entity.js'
 import type { DocumentEntity } from '../../domain/document/document.js'
 import type { CaseEntity } from '../../domain/case/case.js'
+import { businessToday } from '../../domain/case/case-dates.js'
 import type {
   DeadlineEntity,
+  DeadlineFacts,
   DeadlineSeverity,
   DeadlineUnresolvedReason,
 } from '../../domain/task/deadline.js'
 import type { EvidenceEntity, EvidenceKind } from '../../domain/task/evidence.js'
 import type { BasisDates, RuleCatalog } from '../../domain/task/rule-engine.js'
-import { RULE_TIMEZONE, computeDeadline, daysRemaining, severityOf } from '../../domain/task/rule-engine.js'
+import { buildDeadlineFacts, computeDeadline, daysRemaining, severityOf } from '../../domain/task/rule-engine.js'
 import type { FlowStageId, TaskEntity, TaskStatus } from '../../domain/task/task.js'
 import type { TaskCommand } from '../../domain/task/transitions.js'
 import { ALL_TASK_COMMANDS, isAllowedTransition, targetStatus } from '../../domain/task/transitions.js'
@@ -142,7 +144,7 @@ function initialTaskId(caseId: string, procedureId: string): string {
 
 function todayInRuleTimezone(): string {
   // 算定と表示の基準を実行環境の時間帯に依存させない。
-  return new Intl.DateTimeFormat('en-CA', { timeZone: RULE_TIMEZONE }).format(new Date())
+  return businessToday(new Date())
 }
 
 export class TaskService {
@@ -234,29 +236,10 @@ export class TaskService {
     if (!rule) {
       throw errors.internal({ internal: { reason: 'unknown deadline rule', ruleId } })
     }
-    const computed = computeDeadline(rule, dates)
     const deadlineId = initialTaskId(caseId, `deadline:${ruleId}:${taskId}`)
+    const facts = buildDeadlineFacts(rule, dates, { id: deadlineId, taskId })
 
-    tx.create<DeadlineEntity>(deadlineLocation(caseId, deadlineId), {
-      id: deadlineId,
-      taskId,
-      label: rule.label,
-      basis: rule.basis,
-      startDate: computed.startDate,
-      dueDate: computed.dueDate,
-      basisLabel: computed.basisLabel,
-      jurisdiction: rule.jurisdiction,
-      timezone: RULE_TIMEZONE,
-      ruleId: rule.id,
-      ruleVersion: rule.version,
-      // レビュー未了のルールから算定した値を確定扱いにしない。
-      confirmation: rule.reviewed ? 'CONFIRMED' : 'UNCONFIRMED',
-      unresolvedReason: computed.unresolvedReason,
-      sourceUrl: rule.sourceUrl,
-      sourceCheckedAt: rule.sourceCheckedAt,
-      extendable: rule.extendable,
-      critical: rule.critical,
-    })
+    tx.create<DeadlineEntity>(deadlineLocation(caseId, deadlineId), facts)
   }
 
   /**
@@ -293,6 +276,7 @@ export class TaskService {
           const computed = computeDeadline(rule, dates)
           const current = await tx.require<DeadlineEntity>(deadlineLocation(caseId, stored.id))
           if (computed.dueDate === current.dueDate && computed.startDate === current.startDate
+            && computed.basisLabel === current.basisLabel && computed.unresolvedReason === current.unresolvedReason
             && rule.version === current.ruleVersion && current.confirmation === (rule.reviewed ? 'CONFIRMED' : 'UNCONFIRMED')) continue
           tx.update<DeadlineEntity>(deadlineLocation(caseId, stored.id), current.version, {
             startDate: computed.startDate,
@@ -744,7 +728,7 @@ export class TaskService {
  * 算定できていない期限に残日数や重大度を付けない。0 日を返すと
  * 画面は「今日が期限」と表示する。
  */
-export function toDeadlineView(entity: DeadlineEntity, today: string): DeadlineView {
+export function toDeadlineView(entity: DeadlineFacts, today: string): DeadlineView {
   const remaining = entity.confirmation === 'CONFIRMED' ? daysRemaining(entity.dueDate, today) : null
   return {
     id: entity.id,
