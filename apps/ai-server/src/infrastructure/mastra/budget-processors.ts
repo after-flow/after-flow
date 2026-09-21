@@ -3,6 +3,8 @@ import type { BudgetCharge } from '../../application/execution/contracts.js'
 import { ExecutionRejected } from '../../application/execution/contracts.js'
 
 export interface AgentBudget {
+  /** Preserve the trusted budget cause when a native workflow wraps its error. */
+  onLimit?: () => never
   /** Only with createAuthorizedModels: it charges each physical provider attempt. */
   inferenceChargedByProviderAdapter?: true
   /** Shared durable Run reservation, including Backend control/ownership verification. */
@@ -32,7 +34,7 @@ export function createBudgetProcessors(budget: AgentBudget) {
       processOutputStep: async ({ toolCalls, messages }) => {
         const count = toolCalls?.length ?? 0
         tools += count
-        if (tools > 20) throw new ExecutionRejected('BUDGET_EXCEEDED')
+        if (tools > 20) { budget.onLimit?.(); throw new ExecutionRejected('BUDGET_EXCEEDED') }
         await budget.charge({ tools: count })
         return messages
       },

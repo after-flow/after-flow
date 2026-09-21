@@ -18,6 +18,7 @@ export interface ExecutionSession {
   receipt: Receipt; context: ContextArtifact; signal: AbortSignal; backend: ExecutionBackend
   /** Use immediately before every external action, including subagents and model retries. */
   guard(charge?: BudgetCharge): Promise<void>
+  exhaust(): never
   /** Save only validated progress, never raw model output or unconfirmed formal changes. */
   checkpoint(caseVersion: number, output: RunSummary): Promise<void>
   /** Call after Backend wait registration, before Mastra suspend. */
@@ -134,6 +135,7 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
       const handler = this.deps.handlers[receipt.operation]
       if (!handler || handler.workflowName !== receipt.workflowName) throw new Error('Workflow version is not connected')
       const result = await handler.execute({ receipt, context, signal, guard, backend,
+        exhaust: () => { rejected = new ExecutionRejected('BUDGET_EXCEEDED'); controller.abort(rejected); throw rejected },
         checkpoint: (caseVersion, output) => this.deps.store.checkpoint(receipt.jobId, owner, caseVersion, output),
         registerWait: waitRequestId => this.deps.store.registerWait(receipt.jobId, owner, waitRequestId) })
       signal.throwIfAborted()

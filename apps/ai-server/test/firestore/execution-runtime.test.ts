@@ -141,6 +141,7 @@ test('budget interruption persists progress and retries only result delivery aft
     sectionTimeoutMs: 30000, handlers: { task_guidance: { workflowName: 'interrupted-fixture', execute: async (session: import('../../src/infrastructure/execution/runtime.js').ExecutionSession): Promise<'COMPLETED'> => {
       executions++
       await session.checkpoint(1, { summary: '', completed: ['取得済みの資料を確認'], questions: ['追加情報'], remaining: ['案内文の生成'] })
+      if (executions > 1) session.exhaust()
       try { await session.guard({ tools: 1000 }) } catch { throw new Error('Workflow wrapped the budget error') }
       throw new Error('must not reach')
     } } } }
@@ -158,6 +159,10 @@ test('budget interruption persists progress and retries only result delivery aft
     assert.equal(executions, 1); assert.equal(reports, 2)
     assert.equal((await store.get(dispatch.jobId))!.state, 'FAILED')
     assert.equal((await store.get(dispatch.jobId))!.encryptedDispatch, 'erased')
+    const secondDispatch = { ...dispatch, runId: randomUUID(), jobId: randomUUID(), executionAttempt: randomUUID() }
+    await runtime.accept(secondDispatch, 'dispatch'); await runtime.runOnce(signal)
+    assert.equal((await store.get(secondDispatch.jobId))!.failure, 'BUDGET_EXCEEDED')
+    assert.equal(executions, 2); assert.equal(reports, 3)
   } finally { await db.terminate() }
 })
 
