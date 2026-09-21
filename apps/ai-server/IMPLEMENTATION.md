@@ -23,7 +23,7 @@ P-03は1 Runで1件の正式提案を処理する。承認で案件が変わる�
 
 ## 現在の起動状態と残る依存
 
-既定の`main.ts`はHonoを起動するが、実Orch/Provider等を組み込んだRuntimeは設定していない。healthは生存確認だけで、実行受付は503。実モデルによるサービス提供やMVP全体の完成を示さない。成功固定やFakeへ切り替える本番経路は用意していない。
+既定の`main.ts`は非productionでOrcaRouterキーがある場合、ハッカソン用Provider Policy、Catalog、AI専用RuntimeとWorkerを接続する。キーが無ければhealthだけを提供して実行受付は503。`ready`の200は接続済みを示すが、実モデル品質、Backend worker、画面E2E、本番提供可能性までは示さない。成功固定やFakeへ切り替える本番経路は用意していない。
 
 | 残る依存 | 必要な作業/情報 |
 |---|---|

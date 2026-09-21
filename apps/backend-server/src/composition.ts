@@ -21,13 +21,22 @@ import { taskProposalApplier } from './application/proposal/task-applier.js'
 import { entityProposalAppliers } from './application/proposal/entity-appliers.js'
 import { taskActionProposalAppliers } from './application/proposal/task-action-appliers.js'
 import { TaskService } from './application/task/task-service.js'
+import {
+  notConfiguredCheck,
+  objectStorageReadinessCheck,
+  ReadinessService,
+  syncCheck,
+} from './application/operations/readiness-service.js'
+import type { ReadinessCheck } from './application/operations/readiness-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
 import { readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
 import { ScopedHttpAgentJobClient } from './infrastructure/agent/scoped-http-agent-client.js'
-import { readExecutionAuthorization } from './infrastructure/identity/execution-authorization.js'
+import { createAiConnectivityReadinessCheck } from './infrastructure/agent/readiness-check.js'
+import { matchesServiceCredential, readExecutionAuthorization } from './infrastructure/identity/execution-authorization.js'
 import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
 import { createDocumentStorage } from './infrastructure/storage/cloud-object-storage.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
+import { createFirestoreReadinessCheck } from './infrastructure/firestore/readiness-check.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
 import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
 import { ContextVersionUnitOfWork } from './application/case/context-version-unit-of-work.js'
@@ -36,6 +45,7 @@ import { authentication } from './presentation/http/authentication.js'
 import type { AppEnv } from './presentation/http/context.js'
 import { logger } from './presentation/http/logger.js'
 import { createExecutionApp } from './presentation/routes/internal/v1/execution.js'
+import { createReadinessApp } from './presentation/routes/internal/v1/readiness.js'
 import { createPublicV1Routes } from './presentation/routes/public/v1/index.js'
 
 /**
@@ -49,13 +59,16 @@ import { createPublicV1Routes } from './presentation/routes/public/v1/index.js'
 export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv> {
   const database = createDatabase(env)
   const apiDocs = apiDocsEnabled(env)
+  // readinessはFirestore/認証などの接続状況に関わらず必ず組み立てる。
+  // 「未接続」を readiness 未搭載ではなく readiness 失敗として報告するため。
+  const readinessApp = createReadinessAppFor(env, database)
 
   if (!database) {
     logger.warn('business database is not configured', {
       effect: 'business APIs reject every request with FEATURE_NOT_CONNECTED',
       required: ['FIRESTORE_PROJECT_ID'],
     })
-    return createApp({ routes: createPublicV1Routes(null), apiDocs })
+    return createApp({ routes: createPublicV1Routes(null), apiDocs, ...(readinessApp ? { readinessApp } : {}) })
   }
 
   const access = new AccessService(database.read)
@@ -146,7 +159,13 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       effect: 'routes that require a user reject every request with 401',
       required: ['AUTH_ISSUER', 'AUTH_AUDIENCE', 'AUTH_JWKS_URI'],
     })
-    return createApp({ routes, consentGate, apiDocs, ...(internalApp ? { internalApp } : {}) })
+    return createApp({
+      routes,
+      consentGate,
+      apiDocs,
+      ...(internalApp ? { internalApp } : {}),
+      ...(readinessApp ? { readinessApp } : {}),
+    })
   }
 
   return createApp({
@@ -154,6 +173,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     consentGate,
     apiDocs,
     ...(internalApp ? { internalApp } : {}),
+    ...(readinessApp ? { readinessApp } : {}),
     authentication: authentication(createTokenVerifier(readAuthConfig(env)), access),
   })
 }
@@ -201,7 +221,134 @@ function createDatabase(env: NodeJS.ProcessEnv) {
   if (!env.FIRESTORE_PROJECT_ID && !env.GOOGLE_CLOUD_PROJECT) return null
   const firestore = createFirestore(readFirestoreConfig(env))
   return {
+    firestore,
     read: new FirestoreReadRepository(firestore),
     uow: new ContextVersionUnitOfWork(new FirestoreUnitOfWork(firestore)),
   }
+}
+
+/**
+ * readiness の検査一覧を組み立てる。
+ *
+ * `database` が無い（Firestore未設定）場合も、readiness自体は必ず組み立てる。
+ * 設定不足を「readiness未接続」ではなく「readiness失敗」として報告するため。
+ * 詳細は `docs/runbooks/readiness.md`。
+ */
+function readinessChecks(
+  env: NodeJS.ProcessEnv,
+  database: ReturnType<typeof createDatabase>,
+): ReadinessCheck[] {
+  const checks: ReadinessCheck[] = [
+    database ? createFirestoreReadinessCheck(database.firestore) : notConfiguredCheck('firestore'),
+  ]
+
+  // storageも他の検査と同じく遅延評価にする。設定を都度読むことで、
+  // readinessの組み立て自体（起動時）が設定不備で丸ごと落ちないようにする。
+  // 実際の疎通確認（`exists`）は readinessService.evaluate() 呼び出し時だけ行う。
+  checks.push({
+    name: 'storage',
+    async run() {
+      const storage = createDocumentStorage(env)
+      if (!storage) return { ok: false, reason: 'NOT_CONFIGURED' }
+      return objectStorageReadinessCheck('storage', storage).run()
+    },
+  })
+
+  checks.push(
+    syncCheck('auth', () => {
+      let config
+      try {
+        config = readAuthConfig(env)
+      } catch {
+        return { ok: false, reason: 'NOT_CONFIGURED' }
+      }
+      // static-jwksは試験・ローカル専用（readAuthConfigもNODE_ENV=productionでは拒否する）。
+      // readinessはNODE_ENVに関係なく、本番相当の設定でなければ ready を返さない。
+      if (config.mode === 'static-jwks') return { ok: false, reason: 'STATIC_JWKS_NOT_PRODUCTION_GRADE' }
+      return { ok: true }
+    }),
+  )
+
+  checks.push(
+    syncCheck('consent_catalog', () => {
+      let catalog
+      try {
+        catalog = readConsentCatalog(env)
+      } catch {
+        return { ok: false, reason: 'NOT_CONFIGURED' }
+      }
+      // #128で正式カタログが確定するまで、placeholder:trueは仮文面のまま。
+      return catalog.placeholder ? { ok: false, reason: 'PLACEHOLDER_CATALOG' } : { ok: true }
+    }),
+  )
+
+  checks.push(
+    syncCheck('deadline_rules', () => {
+      let catalog
+      try {
+        catalog = readRuleCatalog(env)
+      } catch {
+        // consent_catalog と同じ扱い。DEADLINE_RULES_PATH が壊れたJSON/矛盾した
+        // ルールを指していても、汎用の CHECK_FAILED ではなく設定不備として報告する。
+        return { ok: false, reason: 'NOT_CONFIGURED' }
+      }
+      // #129で正式ルールが確定するまで、placeholder:trueは業務レビュー未了のまま。
+      return catalog.placeholder ? { ok: false, reason: 'PLACEHOLDER_CATALOG' } : { ok: true }
+    }),
+  )
+
+  // AI操作が有効化されている場合だけ、AI関連の検査を追加する（#123実装範囲）。
+  if (connectedOperations(env).size > 0) {
+    checks.push(
+      // 呼び出し時点では connectedOperations(env).size > 0 が
+      // BACKEND_EXECUTION_SIGNING_KEY / BACKEND_INTERNAL_SERVICE_TOKEN / readAgentClientConfig(env)
+      // をすでに要求しているため、NOT_CONFIGURED分岐は現状到達しない。また
+      // Firestoreが設定されている経路ではcreateServerが不正な署名鍵を起動時に
+      // 例外で落とすため、INVALID_SIGNING_KEY分岐も現状到達しない。それでも
+      // readinessが「checkの入力を毎回自分で検証する」という前提を保つため、
+      // connectedOperations の内部実装に依存せず残してある（防御的）。
+      syncCheck('ai_internal_auth', () => {
+        if (!env.BACKEND_INTERNAL_SERVICE_TOKEN) return { ok: false, reason: 'NOT_CONFIGURED' }
+        try {
+          if (!readExecutionAuthorization(env)) return { ok: false, reason: 'NOT_CONFIGURED' }
+        } catch {
+          return { ok: false, reason: 'INVALID_SIGNING_KEY' }
+        }
+        return { ok: true }
+      }),
+    )
+    const agentConfig = readAgentClientConfig(env)
+    checks.push(
+      agentConfig ? createAiConnectivityReadinessCheck(agentConfig) : notConfiguredCheck('ai_connectivity'),
+    )
+  }
+
+  return checks
+}
+
+/**
+ * 内部readiness endpointを組み立てる。
+ *
+ * `READINESS_ACCESS_TOKEN` が無ければ mount しない（他の任意機能と同じ方針）。
+ * AI向け資格情報（`AI_SERVICE_TOKEN` / `BACKEND_INTERNAL_SERVICE_TOKEN`）とは
+ * 必ず別の値にする。AIにreadinessへのアクセスを渡さないため。
+ */
+function createReadinessAppFor(env: NodeJS.ProcessEnv, database: ReturnType<typeof createDatabase>) {
+  const accessToken = env.READINESS_ACCESS_TOKEN
+  if (!accessToken) {
+    logger.warn('readiness endpoint is not configured', {
+      effect: 'GET /internal/v1/health/ready is not mounted',
+      required: ['READINESS_ACCESS_TOKEN'],
+    })
+    return undefined
+  }
+  for (const other of [env.AI_SERVICE_TOKEN, env.BACKEND_INTERNAL_SERVICE_TOKEN]) {
+    if (other && matchesServiceCredential(`Bearer ${accessToken}`, `Bearer ${other}`)) {
+      throw new Error('READINESS_ACCESS_TOKEN must differ from the AI-facing service credentials')
+    }
+  }
+  return createReadinessApp({
+    service: new ReadinessService(readinessChecks(env, database)),
+    accessToken,
+  })
 }

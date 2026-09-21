@@ -6,3 +6,9 @@ onlyBuiltDependencies:
   - '@tailwindcss/oxide'
   - esbuild
   - msw
+
+# AI SDK v2 utilities request undici 5; keep this path on the patched 6.x API.
+# https://github.com/advisories/GHSA-vxpw-j846-p89q
+# Remove when provider-utils 3.x ships a patched dependency range.
+overrides:
+  '@ai-sdk/provider-utils@3.0.37>undici': 6.28.1

@@ -1,173 +1,228 @@
-# after-flow — フロントエンド
+# Frontend (`apps/web`)
 
-遺族手続き支援AIエージェント「after-flow」の Web UI（React + TypeScript）。
-企画書および「フロントエンド仕様書」の画面仕様を実装したものです。
+after-flowのユーザー向けWebアプリです。React、Vite、TypeScript、TanStack Query、React Routerで構成されています。
 
-現行アーキテクチャは [docs/architecture.md](../../docs/architecture.md)、起動手順は [ルートREADME](../../README.md) を参照してください。
-以下には旧設計時のUI要件も残しています。公開APIの新契約への移行は今後の作業です。
-公開リソース型は `packages/public-contracts/src/dto/resources.ts`（リポジトリルート基準）にあります。
+[ルートREADME](../../README.md) / [全体アーキテクチャ](../../docs/architecture.md) / [FrontendとAPIの対応表](../../docs/api/frontend-backend-mapping.md) / [Backendへの引き継ぎ](../../docs/backend-handoff-2026-09-21.md)
 
-## 前提と設計方針
+## 責務
 
-仕様書の前提をコードレベルで守っています。
+* ケース、書類、タスク、財産・債務、家族、承認、チャットを画面に表示する
+* 利用者の入力をBackend Public APIへ送る
+* 読み込み中、AI処理中、失敗、未接続などの状態を正確に表示する
+* Backendが算定した期限、状態、権限制御を再解釈せずに表示する
+* MSWを使い、Backend未接続でも主要な利用フローを確認できるようにする
 
-- **Public API のみを呼ぶ。** Mastra への直接通信は行いません。API 呼び出しは `src/lib/api/` に集約しています。
-- **期限は再計算しない。** `DeadlineSummary`（期限日・起算日・根拠文言・残日数・重大度）は Backend の Rule Engine が返した値をそのまま表示します。フロントエンドに期限計算ロジックはありません。
-- **承認は「反映してよいか」の確認であり、外部行為の実行許可ではない。** 承認画面・一覧・ダッシュボードすべてにその旨の説明を表示し、「提出する」「送信する」「解約する」といった、行為が完了したように読めるボタン文言は使っていません。
-- **放棄前ロック。** 相続方法が未確定（`inheritanceDecision.decided === false`）の間は、財産処分・現金化にあたる導線を表示しません。判定は `useRenunciationLock()` に一本化しており、overview 取得前は安全側に倒してロック扱いにします。
-- **マイナンバー記載書類は取り込まない。** アップロード時にサーバー側の検知結果（`MY_NUMBER_DETECTED`）を受けて明確なエラーを表示します。
+## サービス境界
 
-## セットアップ
+```mermaid
+flowchart LR
+  U[Browser] --> W[React Web]
+  W -->|/api/v1| B[Backend Public API]
+  B --> D[(Business Firestore / Storage)]
+  B --> A[AI Server]
+```
+
+FrontendからAI Server、Firestore、Storageへ直接接続してはいけません。他ワークスペースからimportできるのは `@aftercare/public-contracts` だけです。
+
+## 起動
+
+リポジトリルートで依存関係をインストールします。
 
 ```bash
-cd ../..
 pnpm install --frozen-lockfile
 pnpm dev:web
 ```
 
-`http://127.0.0.1:5173` が開きます。ログイン画面では任意のメールアドレス・パスワードで先に進めます（モック時）。
+http://127.0.0.1:5173 を開きます。開発時は既定でMSWが有効です。
 
-## バックエンドとの接続
-
-TypeScript / Hono の Public API がまだ無い状態でも動くよう、開発時は [MSW](https://mswjs.io/) のモックAPIが有効になっています。
-
-| 環境変数 | 開発時の既定 | 本番ビルドの既定 | 説明 |
-| --- | --- | --- | --- |
-| `VITE_USE_MOCK` | 有効 | **無効** | 開発時は `false` で無効化。本番ビルドでモックを使うのはデモ用途のみで、`true` の明示が必要です |
-| `VITE_API_BASE_URL` | `/api/v1` | `/api/v1` | Public API のベースURL |
-| `VITE_API_PROXY` | なし | — | 設定すると dev server が `/api` をそのオリジンへプロキシします |
-
-**モックは本番ビルドに含まれません。** `pnpm --filter @aftercare/web build` すると MSW 本体はバンドルから除外され、`dist/mockServiceWorker.js` も削除されます。架空の期限・財産が本番で表示されると利用者が誤った判断をするため、既定を「無効」にしています。
-
-実APIへつなぐ例：
+Docker、Backend、Emulatorも含めて起動する場合:
 
 ```bash
-VITE_USE_MOCK=false VITE_API_PROXY=http://127.0.0.1:8080 pnpm dev:web
+make up
 ```
 
-モックの実装は `src/mocks/`（`db.ts` がシードデータ、`handlers.ts` がエンドポイント）にあり、本番コードからは参照されません。
+## API接続とMSW
+
+| 環境変数                | 開発時の既定    | 本番ビルドの既定  | 用途                               |
+| ------------------- | --------- | --------- | -------------------------------- |
+| `VITE_USE_MOCK`     | `true`    | `false`   | MSWの有効化。デモ以外の本番で有効にしないでください。     |
+| `VITE_API_BASE_URL` | `/api/v1` | `/api/v1` | Public APIのベースURL                |
+| `VITE_API_PROXY`    | 未設定       | —         | ViteからBackendへ `/api` をプロキシする接続先 |
+
+ローカルのBackendへ接続する例:
+
+```bash
+VITE_USE_MOCK=false \
+VITE_API_PROXY=http://127.0.0.1:8080 \
+pnpm dev:web
+```
+
+* API client: `src/lib/api/client.ts`
+* TanStack Query hooks: `src/lib/api/queries.ts`
+* MSW handlers: `src/mocks/handlers.ts`
+* モックデータ: `src/mocks/db.ts`
+* モックの期限・手続きルール: `src/mocks/rules.ts`
+* モックの書類解析: `src/mocks/analysis.ts`
+
+MSWのfixturesはUI仕様の一部です。構造変更時も既存の画面動作とfixturesを維持し、実APIとの意味のずれは[対応表](../../docs/api/frontend-backend-mapping.md)で確認します。
+
+## 画面ルート
+
+| ルート                                    | 画面                |
+| -------------------------------------- | ----------------- |
+| `/login`                               | ログイン              |
+| `/consent`                             | 必須同意              |
+| `/legal/:docId`                        | 同意文書              |
+| `/cases`                               | ケース一覧             |
+| `/cases/new`                           | ケース作成             |
+| `/cases/:caseId/setup`                 | 故人の状況に基づく手続きの洗い出し |
+| `/cases/:caseId`                       | ホーム               |
+| `/cases/:caseId/tasks`                 | タスク・期限一覧          |
+| `/cases/:caseId/tasks/:taskId`         | タスク詳細             |
+| `/cases/:caseId/approvals`             | AIからの確認・Insight   |
+| `/cases/:caseId/approvals/:approvalId` | 確認内容の詳細           |
+| `/cases/:caseId/documents`             | 書類一覧・アップロード       |
+| `/cases/:caseId/documents/:documentId` | 書類詳細              |
+| `/cases/:caseId/property`              | 財産・債務・契約・給付       |
+| `/cases/:caseId/family`                | 家族・相続人、相続方法       |
+| `/cases/:caseId/chat`                  | AI相談チャット          |
+
+`/cases/:caseId/insights` は承認画面のInsight tabへredirectします。
+
+## モックの書類フロー
+
+MSWでは「書類を追加 → AIが読み取る → AIからの確認に届く → 登録する」までを試せます。
+
+ファイル名に含まれる文字によってモックの結果が変わります。
+
+| ファイル名                                           | モック上の扱い                                                  |
+| ----------------------------------------------- | -------------------------------------------------------- |
+| `死亡診断書`                                         | 死亡診断書として読み取り。死亡届の必要書類「死亡診断書」がそろった扱いになる。「コピーをとっておく」の提案が届く |
+| `通帳` / `預金`                                     | 預金口座の登録（残高は「読み取りに自信なし」）と、解約の提案（財産の処分に関わる）が届く。AIの気づきも1件   |
+| `保険`                                            | 保険契約の登録と、保険金の請求の提案が届く                                    |
+| `戸籍`                                            | 戸籍として読み取り。「さらに前の戸籍」の書類のお願いが届く                            |
+| `遺言`                                            | 専門家への相談の提案と、専門家の確認が必要な気づきが届く                             |
+| `ローン` / `借入`                                    | 借金などの登録が届く                                               |
+| `契約` / `請求書`                                    | 契約の登録が届く                                                 |
+| 上のどれも含まない                                       | 読み取れなかった扱い（「内容の確認が必要」）。撮り直しの案内が出る                        |
+| `マスク`                                           | マイナンバーらしき記載を隠して保存した扱い                                    |
+| `マイナンバー` / `個人番号` / `住民票` / `源泉徴収`              | マイナンバー記載としてお断り（保存されない）                                   |
+| 拡張子が `pdf` / `jpg` / `jpeg` / `png` / `heic` 以外 | 対応していない形式としてお断り                                          |
+
+同じ種類の書類を2回追加すると、「よく似た書類がすでに追加されています」の注意が出ます。
+
+モックのデータはブラウザのメモリにあるだけなので、ページを再読み込みすると初期状態に戻ります。
+
+### 元の書類の表示
+
+追加したファイルは、そのまま原本として返します。手元の画像・PDFで表示を試せます。
+
+最初から入っている見本の書類は実物が無いため、読み取った内容を読み取った位置（`sourceBox`）に書き込んだ見本の紙面を返します。
+
+確認画面の枠が合っているかを、目で確かめられます。
+
+読み取りの結果はファイル名で決まるため、実際の画像の中身と枠の位置は一致しません。
+
+### 前回からの続き
+
+`src/mocks/watch.ts` では、気づきを取りに来たときに次の2つを調べて気づきを作ります。
+
+* **止まっている手続き**：初期データの「死亡届を提出する」は、4日前から動きがない見本です。
+* **前提の変化**：家族・相続人で相続人を増やす・減らす、または相続放棄を記録したときに作ります。
+
+## 書類の読み取りについて、API側で守っていただきたいこと
+
+フロントエンドは実物の書類で確かめられていないため、次の約束に頼って動いています。
+
+1. **`analysisStatus` は `ANALYZING` から `ANALYZED` か `NEEDS_REVIEW` に必ず変わること。**
+
+   フロントエンドは読み取り中の書類がある間だけ3秒ごとに書類一覧を取り直し、状態が変わった時点で「AIからの確認」などを取り直します。
+
+   `ANALYZING` のまま止まると、利用者は「読み取っています」を見続けることになります。
+
+   失敗した場合も `NEEDS_REVIEW` にしてください（撮り直しの案内が出ます）。
+
+2. **確認（Approval）・気づき（Insight）・必要書類の更新を保存し終えてから、`analysisStatus` を変えること。**
+
+   順番が逆だと、フロントエンドが取り直した時点ではまだ何も無く、次に取り直すまで件数が合いません。
+
+3. **エラーは `code` で返すこと。**
+
+   マイナンバー検知は `MY_NUMBER_DETECTED`、形式違いは `UNSUPPORTED_FILE_TYPE`、大きすぎるファイルは HTTP 413。
+
+   これ以外は「うまく送れませんでした」と出ます。
+
+4. **読み取った位置（`sourceBox`）は、原本の幅・高さに対する割合（0〜1）で返すこと。**
+
+   自信の無い値には `confidence: 'LOW'` を付けてください。
+
+5. **同じ書類の二重取り込みを検知したら `possibleDuplicate` を付けること。**
+
+6. **スマホの写真（HEIC）を受け付けるかどうかを決めてください。**
+
+   受け付けない場合は `UNSUPPORTED_FILE_TYPE` を返せば、利用者に案内が出ます。
+
+## UIで守る業務上の境界
+
+* 期限はFrontendで算定せず、Backendが返した期限日、根拠、残日数、重要度を表示する
+* 「承認」は提案を正式状態へ反映してよいかの確認であり、役所への提出や解約などの外部行為が完了したとは表示しない
+* ログイン中の本人が単純承認を選んだと記録されるまで、財産処分につながる操作を安全側でlockする
+* AI Insightは根拠が確認できる場合だけ表示し、`requiresProfessional` がある場合は専門家への確認を促す
+* 調査結果は出典、確認日時、信頼度、未確認項目を隠さず表示する
+* 書類は検査・解析状態を表示し、完了前に読み取り済みであるような表現をしない
+* 401を受けた場合は保持tokenと利用者データのcacheを破棄する
+
+## 実装時の確認事項
+
+Public APIへの移行では、画面ごとに次を確認します。
+
+1. `@aftercare/public-contracts` のDTOと実際のresponseが一致している
+2. `202 Accepted` などの非同期responseを即時完了として扱っていない
+3. `401`、`403`、`404`、`409`、`422`、`503` を利用者が次の行動を選べる状態で表示する
+4. 空配列や仮データで未接続を成功に見せていない
+5. MSWと実APIで同じ業務上の意味を保っている
 
 ## ディレクトリ構成
 
-```
+```text
 src/
-  app/          App.tsx（ルーティングと QueryClient）
-  components/
-    ui/         Button・Card・Banner・Modal・Term などの共通部品
-    domain/     状態バッジ、期限表示、放棄前ロック、書類アップローダ
-    layout/     ケース単位のヘッダー・サイドメニュー・ボトムナビ
-  lib/          labels.ts（enum → 日本語ラベル）, format.ts, terms.ts（用語集）
-    api/        client.ts, queries.ts（TanStack Query）
-  mocks/        開発用モックAPI
-  features/     auth, cases, documents, tasks, approvals, estate, family, chat, insights
+├── app/          # Router、QueryClient、認証・同意guard
+├── kit/          # UI primitives、domain表示、toast、画面用語
+├── shell/        # Sidebar、画面枠、AI解析状態の監視
+├── screens/      # 画面単位の機能
+├── lib/
+│   └── api/      # Public API clientとQuery hooks
+└── mocks/        # 開発用MSW、書類解析、期限・手続きルール
 ```
 
-## 画面
+## 検証
 
-| ルート | 画面 |
-| --- | --- |
-| `/login` | ログイン |
-| `/cases` | ケース一覧 |
-| `/cases/new` | ケース新規作成 |
-| `/cases/:caseId` | ケースダッシュボード |
-| `/cases/:caseId/documents` `/documents/:id` | 書類管理・詳細 |
-| `/cases/:caseId/tasks` `/tasks/:id` | タスク・期限一覧／詳細 |
-| `/cases/:caseId/property` | 財産・債務・契約・給付（タブ） |
-| `/cases/:caseId/approvals` `/approvals/:id` | 承認一覧・詳細 |
-| `/cases/:caseId/chat` | AI相談チャット |
-| `/cases/:caseId/family` | 家族・関係者管理、相続方法の判断 |
+```bash
+pnpm --filter @aftercare/web typecheck
+pnpm --filter @aftercare/web lint
+pnpm --filter @aftercare/web test
+pnpm --filter @aftercare/web build
+```
 
-## アクセシビリティ
+リポジトリ全体を確認する場合:
 
-- ルート `font-size: 17px`、本文は 16px 以上。コントラストは WCAG AA 相当を確保。
-- 状態バッジ・警告は色だけでなく記号と文言でも区別（色覚特性への配慮）。
-- 専門用語は `<Term>` で平易な言い換えを併記（`src/lib/terms.ts`）。
-- フォームは必須／任意を明示し、エラーは修正方法を含む文言で表示。
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+```
 
-## Insight（AIが気づいたこと）の法的な境界線
+## 現在の未完了範囲
 
-`GET /cases/:caseId/insights` で返す気づきは、**事実の指摘までに留めてください。**
+* 複数相続人が同一ケースへアクセスする場合の権限設計は未反映。
+* 専門家紹介の対価開示（「紹介料が発生する場合があります」等）は方針確定後に文言を追加する必要があります。
+* 主要画面はMSWで動作しますが、刷新後の画面をPublic APIへ接続する作業が残っています。
+* Firebase Authenticationの方針は決定済みですが、Client SDKとBackendの実接続は未完了です。
+* 通知方式、複数相続人の共同利用、専門家紹介の表示方針には未実装・未確定の範囲があります。
+* 文言は法務確認後に最終化する前提です。
+* 文言とアクセシビリティは本番公開前に、法務・業務・ユーザビリティのレビューが必要です。
 
-| 出してよい | 出してはいけない |
-| --- | --- |
-| 「通帳に毎月同額の引き落としがあります。未登録の契約かもしれません」 | 「この保険金は相続財産になります」（財産の法的性質の決定） |
-| 「3週間この手続きが動いていません」 | 「基礎控除を超えるので申告が必要です」（税務相談） |
-| 「相続人に未成年の方が含まれています」 | 「特別代理人の選任が必要です」（個別事案への法的当てはめ） |
-| 「戸籍の取り寄せには2〜3週間かかることがあります」 | 「あなたは相続放棄すべきです」（法律事件に関する鑑定） |
+## 決まっていること
 
-根拠となる条文は弁護士法第72条、税理士法第52条、司法書士法第73条、行政書士法第19条です。
-とくに**税理士法第52条は無償でも独占**で、弁護士法第72条の「報酬を得る目的」という限定がありません。
-課税標準の計算に関わる指摘は、報酬の有無にかかわらず避けてください。
-
-API 側で必ず守っていただきたいのは次の2点です。
-
-1. **`requiresProfessional`** — 法律・税務・登記・裁判所手続の判断を含む気づきには必ず立ててください。
-   フロントエンドは、このフラグが立っていると専門家への確認を促す注記を**消せない形で表示**します。
-   判断を含む気づきにフラグが落ちていると、この担保が効きません。
-2. **`evidence` を必ず入れる** — 根拠が空の気づきはフロントエンドが表示しません。
-   利用者が自分で確かめられない指摘は、かえって判断を誤らせるためです。
-
-## 自律調査（TaskGuidance の `research` と `sources`）
-
-エージェントが自治体のページ等を調べて窓口・持ち物を埋める機能の受け皿です。
-`POST /tasks/:taskId/guidance/research` で起動し、結果は `Task.guidance` に反映してください。
-フロントエンドは `research.status === 'RESEARCHING'` の間、対象タスクを2秒間隔でポーリングします。
-
-### 返していただきたいもの
-
-| フィールド | 用途 |
-| --- | --- |
-| `research.status` | `RESEARCHING` / `COMPLETED` / `PARTIAL` / `FAILED` を正確に。成功扱いで中身が空だと、利用者が誤った窓口へ向かいます |
-| `research.confidence` | `LOW` のとき、フロントは「そのまま信じず窓口で確認を」という警告を追加表示します |
-| `research.missing` | 調べきれなかった項目。隠さず列挙してください（例：宿直窓口の受付時間） |
-| `research.failureReason` | `FAILED` のとき利用者に見せる理由 |
-| `sources[].url` / `checkedAt` | **出典URLと確認日時は必須**。フロントは出典・ホスト名・確認日を表示します |
-
-確認日が90日を超えると、フロントが「調べてから時間が経っています」と表示して再調査を促します。
-
-### 守っていただきたいこと
-
-- **調べきれなかったことを、調べられたことのように返さない。** これは法規制ではなく品質責任の問題です。誤った窓口を出して遺族が無駄足を踏めば信頼が壊れます
-- **検索クエリに個人情報を含めない。** 調査に必要なのは `Case.municipality`（市区町村まで）だけです。番地・氏名は不要で、フロントも市区町村しか入力させません
-- **対象サイトの robots.txt と利用規約を尊重する**
-
-Run Type は既存の `task_execution` を想定しています（企画書セクション7の一覧に新しい種類を足さずに済みます）。
-
-## Rule Engine への依頼：熟慮期間にも残日数を付ける
-
-`CaseOverview.inheritanceDecision.deliberationDeadline` が日付文字列だけで、
-`DeadlineSummary` が持つ `daysRemaining` / `severity` / `basisLabel` がありません。
-
-このためフロントエンドが残日数を自前で計算しており、
-**「期限は Rule Engine の値をそのまま表示し、再計算しない」という方針が、ここだけ崩れています。**
-実際、日付のみの文字列が UTC として解釈されることで JST の残日数が1日ずれるバグが出ました（修正済み）。
-
-熟慮期間も `DeadlineSummary` と同じ形で返してください。期限の伸長（家庭裁判所への申立て）や
-起算日の違いを Rule Engine 側で反映しても、いまのままだとフロントの素朴な減算に取り残されます。
-
-## Rule Engine への依頼：Case 作成時に法定タスクを生成する
-
-利用シミュレーションで判明した、体験を左右する要件です。
-
-**ご逝去日が入力された時点で、死亡届7日・世帯主変更14日・健康保険の資格喪失14日・年金の受給停止・相続方法の判断3か月・準確定申告4か月・相続税10か月の期限は確定します。** 書類のアップロードや AI 解析を待つ必要はありません。
-
-Case 作成のレスポンス直後に `GET /cases/:id/overview` を呼んだ時点で、これらが `upcomingDeadlines` と `tasks` に載っている状態にしてください。ここが空だと、利用者は「死亡届まであと4日」という最も重要な情報を、書類を上げるまで知ることができません。
-
-モック（`src/mocks/db.ts` の `createStatutoryTasks`）に、期待する挙動と最低限そろえたいタスク定義を書いてあります。
-
-## バックエンドに必要な追加エンドポイント
-
-仕様書の API 一覧に明記がないもののうち、UI 上必要なため使用しているもの：
-
-- `POST /api/v1/auth/login` — 認証基盤は要選定（仕様書セクション13）
-- `POST /api/v1/cases/:caseId/inheritance-decisions` — 相続方法の記録。「確定」の判定は利用者の入力で持つ方針（企画書セクション5）に基づき、放棄前ロックの解除条件になります
-- `GET /api/v1/cases/:caseId/insights` / `PATCH /api/v1/insights/:id` — AIが気づいたこと。上記「法的な境界線」を参照
-- `PATCH /api/v1/cases/:caseId` — 市区町村の登録（自律調査の前提）
-- `POST /api/v1/tasks/:taskId/guidance/research` — 手順案内の自律調査の起動
-
-## 未確定事項（仕様書セクション13 に対応）
-
-- 通知方式（メール／プッシュ／SMS）は未実装。期限アラートは画面内表示のみ。
-- 複数相続人が同一ケースへアクセスする場合の権限設計は未反映。
-- 専門家紹介の対価開示（「紹介料が発生する場合があります」等）は方針確定後に文言を追加する必要があります。
-- 文言は法務確認後に最終化する前提です。
+* 期限のお知らせは画面の中だけで行います。メール・プッシュ・SMSでの通知は提供しません。

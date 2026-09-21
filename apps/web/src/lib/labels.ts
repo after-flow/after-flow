@@ -1,35 +1,30 @@
-import type { IconName } from '@/components/ui/Icon'
+import type { IconName } from '@/kit/Icon'
 import type {
-  ApprovalKind,
-  InsightKind,
-  ApprovalStatus,
-  ContractPolicy,
   ContractProgress,
-  DeadlineSeverity,
-  DocumentAnalysisStatus,
   DocumentKind,
   InheritanceMethod,
+  InsightKind,
   TaskStatus,
-  AgentRunType,
 } from '@aftercare/public-contracts'
 
 /**
- * 仕様書セクション9のタスク状態バッジ。
+ * 仕様書セクション9のタスク状態の記号。
  * 色覚特性に配慮し、色だけでなくアイコン（記号）でも区別する。
+ * 画面に出す言葉は kit/words.ts の TASK_STATUS_WORD を使う。
  */
 export const TASK_STATUS_META: Record<
   TaskStatus,
-  { label: string; icon: IconName; className: string }
+  { label: string; icon: IconName }
 > = {
-  NOT_STARTED: { label: '未着手', icon: 'circle', className: 'badge-gray' },
-  COLLECTING_INFORMATION: { label: '情報収集中', icon: 'progress', className: 'badge-blue' },
-  WAITING_DOCUMENTS: { label: '書類待ち', icon: 'document', className: 'badge-blue' },
-  READY: { label: '準備完了', icon: 'diamond', className: 'badge-green' },
-  SUBMITTED: { label: '提出済み', icon: 'check', className: 'badge-green' },
-  WAITING_EXTERNAL: { label: '先方処理待ち', icon: 'clock', className: 'badge-yellow' },
-  ACTION_REQUIRED: { label: '要対応', icon: 'alert', className: 'badge-red' },
-  COMPLETED: { label: '完了', icon: 'check-circle', className: 'badge-gray' },
-  ESCALATED: { label: '専門家対応中', icon: 'star', className: 'badge-purple' },
+  NOT_STARTED: { label: '未着手', icon: 'circle' },
+  COLLECTING_INFORMATION: { label: '情報収集中', icon: 'progress' },
+  WAITING_DOCUMENTS: { label: '書類待ち', icon: 'document' },
+  READY: { label: '準備完了', icon: 'diamond' },
+  SUBMITTED: { label: '提出済み', icon: 'check' },
+  WAITING_EXTERNAL: { label: '先方処理待ち', icon: 'clock' },
+  ACTION_REQUIRED: { label: '要対応', icon: 'alert' },
+  COMPLETED: { label: '完了', icon: 'check-circle' },
+  ESCALATED: { label: '専門家対応中', icon: 'star' },
 }
 
 export const TASK_STATUS_ORDER: TaskStatus[] = [
@@ -44,29 +39,6 @@ export const TASK_STATUS_ORDER: TaskStatus[] = [
   'ESCALATED',
 ]
 
-/** 仕様書セクション5のフィルタ（未着手／進行中／要対応／完了） */
-export const TASK_FILTER_GROUPS: { id: string; label: string; statuses: TaskStatus[] }[] = [
-  { id: 'all', label: 'すべて', statuses: TASK_STATUS_ORDER },
-  { id: 'not_started', label: '未着手', statuses: ['NOT_STARTED'] },
-  {
-    id: 'in_progress',
-    label: '進行中',
-    statuses: ['COLLECTING_INFORMATION', 'WAITING_DOCUMENTS', 'READY', 'SUBMITTED', 'WAITING_EXTERNAL'],
-  },
-  { id: 'action_required', label: '要対応', statuses: ['ACTION_REQUIRED', 'ESCALATED'] },
-  { id: 'completed', label: '完了', statuses: ['COMPLETED'] },
-]
-
-export const DEADLINE_SEVERITY_META: Record<
-  DeadlineSeverity,
-  { label: string; icon: IconName | null; className: string }
-> = {
-  NORMAL: { label: '期限まで余裕あり', icon: null, className: 'deadline-normal' },
-  SOON: { label: '期限が近づいています', icon: 'warning', className: 'deadline-soon' },
-  URGENT: { label: '本日が期限です', icon: 'warning', className: 'deadline-urgent' },
-  OVERDUE: { label: '期限を過ぎています', icon: 'warning', className: 'deadline-overdue' },
-}
-
 export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = {
   DEATH_CERTIFICATE: '死亡診断書',
   FAMILY_REGISTER: '戸籍',
@@ -77,62 +49,19 @@ export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = {
   OTHER: 'その他',
 }
 
-export const DOCUMENT_STATUS_META: Record<
-  DocumentAnalysisStatus,
-  { label: string; className: string }
-> = {
-  NOT_ANALYZED: { label: '未解析', className: 'badge-gray' },
-  ANALYZING: { label: '解析中', className: 'badge-blue' },
-  ANALYZED: { label: '解析完了', className: 'badge-green' },
-  NEEDS_REVIEW: { label: '要確認', className: 'badge-yellow' },
-}
-
-export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
-  TASK_PROPOSAL: 'タスクの提案',
-  ASSET_PROPOSAL: '財産の提案',
-  LIABILITY_PROPOSAL: '債務の提案',
-  CONTRACT_PROPOSAL: '契約の提案',
-  DOCUMENT_REQUEST: '書類の追加依頼',
-  ESCALATION_PROPOSAL: '専門家への相談の提案',
-  EVIDENCE_PROPOSAL: '完了証跡の提案',
-}
-
-export const APPROVAL_STATUS_META: Record<ApprovalStatus, { label: string; className: string }> = {
-  PENDING: { label: '未確認', className: 'badge-yellow' },
-  APPROVED: { label: '反映済み', className: 'badge-green' },
-  REJECTED: { label: '却下', className: 'badge-gray' },
-}
-
-export const CONTRACT_POLICY_LABEL: Record<ContractPolicy, string> = {
-  UNDECIDED: '未選択',
-  CONTINUE: '継続',
-  TRANSFER: '名義変更',
-  CANCEL: '解約',
-}
-
 export const CONTRACT_PROGRESS_META: Record<
   ContractProgress,
-  { label: string; className: string }
+  { label: string }
 > = {
-  NOT_STARTED: { label: '未対応', className: 'badge-gray' },
-  CONTACTED: { label: '連絡済み', className: 'badge-blue' },
-  COMPLETED: { label: '完了', className: 'badge-green' },
+  NOT_STARTED: { label: '未対応' },
+  CONTACTED: { label: '連絡済み' },
+  COMPLETED: { label: '完了' },
 }
 
 export const INHERITANCE_METHOD_LABEL: Record<InheritanceMethod, string> = {
   SIMPLE_ACCEPTANCE: '単純承認',
   LIMITED_ACCEPTANCE: '限定承認',
   RENUNCIATION: '相続放棄',
-}
-
-export const AGENT_RUN_TYPE_LABEL: Record<AgentRunType, string> = {
-  document_analysis: '書類の解析',
-  case_planning: '手続きの計画',
-  case_replanning: '手続きの再計画',
-  task_execution: 'タスクの準備',
-  task_monitoring: '進捗の確認',
-  professional_escalation: '専門家相談の検討',
-  guidance: 'ご案内',
 }
 
 export const ASSET_KIND_LABEL: Record<string, string> = {
@@ -313,7 +242,7 @@ export const INSIGHT_KIND_META: Record<
     bg: 'var(--color-state-blue-soft)',
   },
   INCONSISTENCY: {
-    label: '記載の食い違い',
+    label: '前提の変化・食い違い',
     icon: 'alert',
     fg: 'var(--color-state-yellow)',
     bg: 'var(--color-state-yellow-soft)',

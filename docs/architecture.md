@@ -1,5 +1,7 @@
 # 死亡後手続きAIエージェント：TypeScriptアーキテクチャ仕様
 
+> OrcaRouter接続の更新（2026-09-21）: 実製品は推論ゲートウェイ。本文の旧Orch業務Route APIの仮定に代わり、明示モデルへの実推論を接続する。詳細・検証範囲は [OrcaRouter接続](../apps/ai-server/ORCAROUTER.md) を参照。業務経路は引き続きWorkflow/Playbookで制限する。
+
 文書バージョン: 1.1  
 作成日: 2026-09-20 / Asia/Tokyo  
 対象: Codexによる新規実装・既存Go/Echo設計からの置き換え  
@@ -355,6 +357,8 @@ dispatch/resume本文は`jobId / runId / executionAttempt / operation / issuedAt
 | GET | `/internal/v1/runs/:runId/control` | cancel、現在version、実行可否をStep/Tool前に確認 |
 
 ContextとArtifactの応答には`caseVersion / contextSnapshotId / artifactVersion / contentHash / expiresAt`を含める。AI ServerはBackendから受け取ったContextをruntime処理に使えるが、正式状態として保存・更新しない。内部Artifact URLは短寿命・Run scope付きとし、別Runや別Caseで再利用できないようにする。
+
+Backendも同じ`GET /internal/v1/health/ready`のpathを自ら公開するが、上のAI Server向け表とは別contractである。AIサービス資格情報ではアクセスできない専用の`READINESS_ACCESS_TOKEN`を要求し、運用/デプロイツールだけが使う。詳細は[docs/runbooks/readiness.md](runbooks/readiness.md)。
 
 #### 認証・信頼境界
 
