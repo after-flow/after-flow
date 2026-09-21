@@ -8,18 +8,18 @@ import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
 import { GuidanceOutputContractError, guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
-import { finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
+import { finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { completeGuidanceAction, createGuidanceWorkingState, guidancePlanDecisionSchema, guidanceWorkingStateSchema } from '../../../orchestration/working-state.js'
 import { createGuidanceAgents } from '../agents/guidance-agents.js'
 import { createResearchTools } from '../tools/research.js'
 import type { ResearchProvider } from '../tools/research.js'
 
 const routeSchema = z.object({ routeId: z.literal('procedure-guidance/v1'), evidenceId: z.string().min(1).max(128) }).strict()
-export const PROCEDURE_GUIDANCE_WORKFLOW = 'procedure-guidance-v2'
+export const PROCEDURE_GUIDANCE_WORKFLOW = 'procedure-guidance-v3'
 const inputSchema = z.object({ resultId: internalId }).strict()
 const loadedSchema = inputSchema.extend({ artifact: artifactEnvelopeSchema, routing: routeSchema })
 const plannedSchema = loadedSchema.extend({ brief: researchBriefSchema.nullable(), workingState: guidanceWorkingStateSchema })
-const researchedSchema = plannedSchema.extend({ sources: z.array(sourceDocumentSchema).max(20), research: researchEvidenceSchema })
+const researchedSchema = plannedSchema.extend({ researchRequest: researchRequestSchema.nullable(), sources: z.array(sourceDocumentSchema).max(20), research: researchEvidenceSchema })
 const generatedSchema = researchedSchema.extend({ draft: guidanceDraftSchema })
 const outputSchema = z.object({ resultId: internalId, applied: z.boolean(), reason: z.string().nullable(), workingState: guidanceWorkingStateSchema })
 
@@ -116,7 +116,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
     execute: async ({ inputData }) => {
       await checkControl()
       if (inputData.workingState.nextAction === 'NEEDS_INPUT') {
-        return { ...inputData, sources: [], research: researchEvidenceSchema.parse({ briefs: [], outcomes: [] }) }
+        return { ...inputData, researchRequest: null, sources: [], research: researchEvidenceSchema.parse({ briefs: [], outcomes: [] }) }
       }
       if (inputData.workingState.nextAction !== 'REQUEST_RESEARCH' || !inputData.brief) throw new Error('Working state does not authorize research')
       const tools = createResearchTools({
@@ -128,45 +128,52 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
           await deps.beforeTool(kind)
         },
       })
-      const { researchAgent } = createGuidanceAgents({
+      const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [inputData.brief], signal: deps.signal,
-        researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
+        researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds, evidenceSources: tools.sources,
       })
-      const query = inputData.brief.questions.map(question => question.text).join(' ').slice(0, 240)
-      const candidates = await tools.execute.search(inputData.brief.briefId, query)
-      const selectedCandidates = candidates.slice(0, 3)
-      if (!selectedCandidates.length) {
-        const missing = '確認できる公式資料が見つかりませんでした。'
-        const research = researchEvidenceSchema.parse({ briefs: [inputData.brief], outcomes: [{ briefId: inputData.brief.briefId,
-          findings: { status: 'needs_input', answers: [], missing: [missing], conflicts: [] } }] })
+      const approvedResearchRequest = researchRequestSchema.parse({
+        briefId: inputData.brief.briefId,
+        questionIds: inputData.brief.questions.map(question => question.id),
+        sourceCatalogIds: inputData.brief.sourceCatalogIds,
+      })
+      await agents.coreAgent.generate(JSON.stringify({
+        action: 'REQUEST_RESEARCH',
+        instruction: '検索・資料取得・根拠抽出を検索Agentへ1回だけ委任してください。委任promptにはapprovedResearchRequestのJSONだけをそのまま渡し、説明、案件情報、個人情報を追加しません。検証済み結果を受け取ったら短く完了を返してください。',
+        approvedResearchRequest,
+      }), { maxSteps: 8, abortSignal: deps.signal })
+      const requests = agents.researchRequests()
+      if (requests.length !== 1) throw new Error('Core Agent did not produce exactly one approved research request')
+      const researchRequest = requests[0]!
+      const sources = tools.sources(inputData.brief.briefId)
+      let research = agents.researchEvidence()
+      let findings = research.outcomes[0]?.findings
+      if (!findings && sources.length && agents.researchOutputNeedsRepair()) {
+        // A schema-invalid synthesis gets one bounded repair using only the
+        // already retrieved official sections. Search and read tools are not
+        // repeated, and the same quote verifier still decides what is usable.
+        const repaired = await agents.researchAgent.generate(JSON.stringify({
+          instruction: '前回の調査出力は契約に適合しませんでした。検索や取得を繰り返さず、次の取得済み資料だけから正しいJSONを1回だけ再生成してください。',
+          brief: inputData.brief,
+          sources: sources.map(({ id, title, issuer, url, fetchedAt, sections }) => ({ id, title, issuer, url, fetchedAt, sections })),
+        }), {
+          maxSteps: 1,
+          toolChoice: 'none',
+          abortSignal: deps.signal,
+          structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'strict' },
+        })
+        findings = finalizeResearchSynthesis(repaired.object, inputData.brief, sources)
+        research = researchEvidenceSchema.parse({ briefs: [inputData.brief], outcomes: [{ briefId: inputData.brief.briefId, findings }] })
+      }
+      if (!findings) throw new Error('Research Agent did not return validated findings')
+      if (!sources.length) {
+        const missing = findings.missing[0] ?? '確認できる公式資料が見つかりませんでした。'
         const completed = completeGuidanceAction(inputData.workingState, 'REQUEST_RESEARCH', 'NEEDS_INPUT', research)
         const workingState = guidanceWorkingStateSchema.parse({ ...completed, unknowns: [...completed.unknowns, { id: 'official-source', question: missing }] })
-        return { ...inputData, sources: [], research, workingState }
+        return { ...inputData, researchRequest, sources, research, workingState }
       }
-      for (const candidate of selectedCandidates) await tools.execute.read(inputData.brief.briefId, candidate.id)
-      const sources = tools.sources(inputData.brief.briefId)
-      await deps.budget?.charge({ research: 1 })
-      const researchResponse = await generateStructured(() => researchAgent.generate(JSON.stringify({
-        goal: `各questionに、渡した公式資料の本文だけで回答してください。
-- 回答ごとにevidenceを1〜5件付ける。evidenceは根拠となる本文をsections[].textからそのまま写したquote（2〜200文字）と、そのsourceIdとsectionIdにする。
-- quoteは本文の連続した一部分を1文ずつ写す。語を足す・省く・言い換える・「など」で終える・別の文や見出しとつなぐことはしない。例えば本文が「ご加入の支部は」なら「加入の支部は」と書かない。
-- answersの各要素は questionId、text、evidence をすべて持つ。evidenceを別の要素にしない。
-- quoteに無い金額・期限・提出先・提出方法をtextに書かない。
-- 資料で確認できない問いはanswersに入れずmissingに残す。資料どうしの記載が食い違う場合はconflictsに書く。
-- すべての問いを確認できた場合だけstatusをcompleteにする。
-引用は本文と照合し、一致しない回答は採用しません。`,
-        brief: inputData.brief,
-        // 主要コンテンツを見出し単位で渡す。ナビゲーション等は抽出時に除いている（#165）。
-        sources: sources.map(({ id, title, issuer, url, fetchedAt, sections }) => ({ id, title, issuer, url, fetchedAt, sections })),
-      }), {
-        maxSteps: 1, toolChoice: 'none', abortSignal: deps.signal,
-        structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'strict' },
-      }), deps.signal)
-      // 引用が本文と一致しない回答はここで捨てる（#163）。
-      const findings = finalizeResearchSynthesis(researchResponse.object, inputData.brief, sources)
-      const research = researchEvidenceSchema.parse({ briefs: [inputData.brief], outcomes: [{ briefId: inputData.brief.briefId, findings }] })
       const workingState = completeGuidanceAction(inputData.workingState, 'REQUEST_RESEARCH', 'GENERATE_GUIDANCE', research)
-      return { ...inputData, sources, research, workingState }
+      return { ...inputData, researchRequest, sources, research, workingState }
     },
   })
   const generate = createStep({

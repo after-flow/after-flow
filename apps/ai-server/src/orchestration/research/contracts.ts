@@ -31,7 +31,40 @@ export const researchBriefSchema = z.object({
   }
 })
 export type ResearchBrief = z.infer<typeof researchBriefSchema>
-export const delegationSelectionSchema = z.object({ briefId: id }).strict()
+
+/**
+ * The Core Agent may select only identifiers that already exist in an
+ * application-approved brief. Free-form queries and Case data are deliberately
+ * absent so the harness can reconstruct the safe Research Agent prompt.
+ */
+export const researchRequestSchema = z.object({
+  briefId: id,
+  questionIds: z.array(id).min(1).max(12),
+  sourceCatalogIds: z.array(id).min(1).max(20),
+}).strict().superRefine((request, ctx) => {
+  if (new Set(request.questionIds).size !== request.questionIds.length) {
+    ctx.addIssue({ code: 'custom', message: 'Duplicate research question ID' })
+  }
+  if (new Set(request.sourceCatalogIds).size !== request.sourceCatalogIds.length) {
+    ctx.addIssue({ code: 'custom', message: 'Duplicate source catalog ID' })
+  }
+})
+export type ResearchRequest = z.infer<typeof researchRequestSchema>
+
+/** Backward-compatible name for the native skill boundary. */
+export const delegationSelectionSchema = researchRequestSchema
+
+export function validateResearchRequest(input: unknown, brief: ResearchBrief): ResearchRequest {
+  const request = researchRequestSchema.parse(input)
+  const exact = (actual: readonly string[], expected: readonly string[]) =>
+    actual.length === expected.length && actual.every(value => expected.includes(value))
+  if (request.briefId !== brief.briefId ||
+      !exact(request.questionIds, brief.questions.map(question => question.id)) ||
+      !exact(request.sourceCatalogIds, brief.sourceCatalogIds)) {
+    throw new Error('Research request exceeds the approved brief')
+  }
+  return request
+}
 
 // IDs, attempts, timestamps, context proof and cost are attached by the harness, never by the model.
 export const researchFindingsSchema = z.object({

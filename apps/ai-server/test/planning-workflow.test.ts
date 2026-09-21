@@ -24,7 +24,7 @@ const draft = { tasks: [{ templateId: 'template', sourceIds: ['source'], depende
 
 test('planner produces bounded template differences through two native Mastra agents', async () => {
   const signal = new AbortController().signal
-  const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief' }) } }, { text: JSON.stringify(draft) }])
+  const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief', questionIds: ['requirements'], sourceCatalogIds: ['catalog'] }) } }, { text: JSON.stringify(draft) }])
   const research = scriptedModel([{ tool: 'searchOfficialSources', input: { query: '必要資料' } }, { tool: 'readOfficialSource', input: { sourceId: 'source' } },
     { text: JSON.stringify({ status: 'complete', answers: [{ questionId: 'requirements', text: '合成資料', sourceIds: ['source'], applicability: '架空市' }], missing: [], conflicts: [] }) }])
   const brief = { briefId: 'brief', procedure: '合成手続き', institution: '架空機関', jurisdiction: '架空市', sourceCatalogIds: ['catalog'], questions: [{ id: 'requirements', text: '必要な資料' }] }
