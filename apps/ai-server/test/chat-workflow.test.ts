@@ -48,7 +48,7 @@ test('chat context change blocks delivery and factual paragraphs require complet
 test('grounded chat uses the research agent and renders citations without forwarding private messages', async () => {
   const { deps, reported } = setup()
   const source = { id: 'source', catalogId: 'catalog', title: '合成資料', issuer: '架空機関', url: 'https://official.example/source' }
-  const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief' }) } },
+  const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief', questionIds: ['where'], sourceCatalogIds: ['catalog'] }) } },
     { text: JSON.stringify({ paragraphs: [{ text: '合成資料の窓口へ確認してください。', sourceIds: ['source'] }], questions: [], professionalNotice: true }) }])
   const research = scriptedModel([{ tool: 'searchOfficialSources', input: { query: '窓口' } }, { tool: 'readOfficialSource', input: { sourceId: 'source' } },
     { text: JSON.stringify({ status: 'complete', answers: [{ questionId: 'where', text: '合成窓口', sourceIds: ['source'], applicability: '架空市' }], missing: [], conflicts: [] }) }])
