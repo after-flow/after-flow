@@ -42,6 +42,19 @@ export const researchFindingsSchema = z.object({
 })
 export type ResearchFindings = z.infer<typeof researchFindingsSchema>
 
+/**
+ * The model extracts claims and citations. Applicability is attached by the
+ * harness from the reviewed brief instead of trusting the model to restate it.
+ */
+export const researchSynthesisSchema = z.object({
+  status: z.enum(['complete', 'partial', 'needs_input', 'failed']),
+  answers: z.array(z.object({
+    questionId: id, text: z.string().min(1).max(2000), sourceIds: z.array(id).min(1).max(12),
+  }).strict()).max(12),
+  missing: z.array(z.string().min(1).max(500)).max(20),
+  conflicts: z.array(z.string().min(1).max(1000)).max(20),
+}).strict()
+
 /** Harness-owned evidence. Null means started but not successfully validated. */
 export const researchEvidenceSchema = z.object({
   briefs: z.array(researchBriefSchema).max(2),
@@ -80,4 +93,12 @@ export function validateFindings(input: unknown, brief: ResearchBrief, retrieved
     throw new Error('Research omitted required questions')
   }
   return result
+}
+
+export function finalizeResearchSynthesis(input: unknown, brief: ResearchBrief, retrievedSourceIds: ReadonlySet<string>): ResearchFindings {
+  const synthesized = researchSynthesisSchema.parse(input)
+  const applicability = `${brief.jurisdiction}の${brief.institution}が扱う${brief.procedure}`
+  return validateFindings({ ...synthesized,
+    answers: synthesized.answers.map(answer => ({ ...answer, applicability })),
+  }, brief, retrievedSourceIds)
 }

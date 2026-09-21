@@ -18,15 +18,15 @@ const brief = { briefId: scope.id, procedure: scope.procedure, institution: scop
   questions: scope.questions, sourceCatalogIds: scope.sourceCatalogIds }
 const claim = (text: string) => ({ text, sourceIds: ['source-1'] })
 const draft = { status: 'complete', where: claim('架空機関の窓口'), bring: [claim('架空書類A')], steps: [claim('窓口で確認する')], missing: [] }
-const findings = { status: 'complete', answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する', sourceIds: ['source-1'], applicability: '架空市の架空手続き' }], missing: [], conflicts: [] }
+const synthesizedFindings = { status: 'complete', answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する', sourceIds: ['source-1'] }], missing: [], conflicts: [] }
+const findings = { ...synthesizedFindings, answers: synthesizedFindings.answers.map(answer => ({ ...answer, applicability: '架空市の架空機関が扱う架空手続き' })) }
 
-function setup(researchFindings: unknown = findings) {
+function setup(researchFindings: unknown = synthesizedFindings) {
   const core = scriptedModel([
-    { tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief-1' }) } }, { text: JSON.stringify(draft) },
+    { text: JSON.stringify(draft) },
   ])
   const research = scriptedModel([
-    { tool: 'searchOfficialSources', input: { query: '必要書類' } },
-    { tool: 'readOfficialSource', input: { sourceId: 'source-1' } }, { text: JSON.stringify(researchFindings) },
+    { text: JSON.stringify(researchFindings) },
   ])
   const content = { operation: 'task_guidance', case: { id: 'case-1', version: 1, deceasedName: 'PRIVATE-NAME', municipality: '架空市', knownAt: null },
     task: { id: 'task-1', version: 1, title: '架空手続き', category: 'insurance', submitTo: '架空機関' }, documents: [] }
@@ -63,10 +63,26 @@ test('P-01 uses both real Mastra agents and tools, rechecks context, and reports
   assert.equal(reported[0].status, 'COMPLETED')
   assert.deepEqual(reported[0].bring, ['架空書類A'])
   assert.deepEqual(reported[0].sources.map(source => source.url), [candidate.url])
-  assert.equal(core.calls.length, 2)
-  assert.equal(research.calls.length, 3)
+  assert.equal(core.calls.length, 1)
+  assert.equal(research.calls.length, 1)
+  assert.deepEqual(core.calls[0]!.toolChoice, { type: 'none' })
+  assert.deepEqual(research.calls[0]!.toolChoice, { type: 'none' })
   assert.ok(!JSON.stringify(research.calls).includes('PRIVATE-NAME'))
   assert.ok(controls.includes('search') && controls.includes('read-source'))
+})
+
+test('no reviewed source returns a bounded partial result without invoking either model', async () => {
+  const { deps, reported, core, research } = setup()
+  deps.research.search = async () => []
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  const result = await run.start({ inputData: { resultId: 'result-1' } })
+  assert.equal(result.status, 'success', JSON.stringify(result))
+  assert.equal(core.calls.length, 0)
+  assert.equal(research.calls.length, 0)
+  assert.equal(reported[0]?.kind, 'task_guidance')
+  if (reported[0]?.kind !== 'task_guidance') assert.fail()
+  assert.equal(reported[0].status, 'PARTIAL')
+  assert.match(reported[0].missing.join(' '), /公式資料/)
 })
 
 test('changed case or revoked permission prevents result submission', async () => {
@@ -104,20 +120,20 @@ test('route gate must succeed before any model call', async () => {
 
 test('core cannot report COMPLETED after incomplete, failed or contradictory research with real retrieved citations', async () => {
   for (const unresolved of [
-    { ...findings, status: 'partial', missing: ['一部の書類が未確認'] },
-    { ...findings, status: 'needs_input', missing: ['適用条件が不明'] },
-    { ...findings, status: 'failed', missing: ['調査に失敗'] },
-    { ...findings, status: 'partial', conflicts: ['資料間で必要書類が異なる'] },
-    { ...findings, missing: ['完了という自己申告に反して不足あり'] },
-    { ...findings, conflicts: ['完了という自己申告に反して矛盾あり'] },
+    { ...synthesizedFindings, status: 'partial', missing: ['一部の書類が未確認'] },
+    { ...synthesizedFindings, status: 'needs_input', missing: ['適用条件が不明'] },
+    { ...synthesizedFindings, status: 'failed', missing: ['調査に失敗'] },
+    { ...synthesizedFindings, status: 'partial', conflicts: ['資料間で必要書類が異なる'] },
+    { ...synthesizedFindings, missing: ['完了という自己申告に反して不足あり'] },
+    { ...synthesizedFindings, conflicts: ['完了という自己申告に反して矛盾あり'] },
   ]) {
     const { deps, reported, core, research } = setup(unresolved)
     const run = await createProcedureGuidanceWorkflow(deps).createRun()
     const result = await run.start({ inputData: { resultId: 'result-1' } })
     assert.equal(result.status, 'failed', JSON.stringify(unresolved))
     assert.equal(reported.length, 0)
-    assert.equal(research.calls.length, 3, 'source was really retrieved before the incomplete findings')
-    assert.equal(core.calls.length, 2, 'core still attempted to claim complete')
+    assert.equal(research.calls.length, 1, 'source was really retrieved before the incomplete findings')
+    assert.ok(core.calls.length <= 1, 'research cannot trigger a synthesis retry loop')
   }
 })
 
@@ -126,7 +142,7 @@ test('missing required questions block completion even when core cites a retriev
   deps.scope = { ...scope, questions: [...scope.questions, { id: 'eligibility', text: '適用条件は何か' }] }
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
-  assert.equal(core.calls.length, 2)
+  assert.equal(core.calls.length, 0)
   assert.equal(reported.length, 0)
 })
 
