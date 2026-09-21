@@ -39,22 +39,13 @@ import { deadlineResourceSchema, taskResourceSchema } from './task.js'
  */
 type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
-/**
- * `Equals` の緩和版。`CaseResource.profile?` / `CaseOverviewResource
- * .inheritanceDecision.deliberationDeadline?` は BE ユニット3・4が実装するまで
- * Zod スキーマが返さない先行追加の optional フィールドで、Equals の
- * distributive な比較では常に不一致になる（optional の有無は無視されない）。
- * 相互代入可能性（実際の応答が契約を満たすか）だけを見る。
- */
-type Compatible<A, B> = A extends B ? (B extends A ? true : false) : false
-
 export type Assert<T extends true> = T
 
 export type ErrorCodeMatches = Assert<Equals<z.infer<typeof apiErrorCodeSchema>, ApiErrorCode>>
 export type ErrorBodyMatches = Assert<Equals<z.infer<typeof apiErrorBodySchema>, ApiErrorBody>>
 export type ResponseMetaMatches = Assert<Equals<z.infer<typeof responseMetaSchema>, ResponseMeta>>
 export type FailureMatches = Assert<Equals<z.infer<typeof apiFailureSchema>, ApiFailure>>
-export type CaseResourceMatches = Assert<Compatible<z.infer<typeof caseResourceSchema>, CaseResource>>
+export type CaseResourceMatches = Assert<Equals<z.infer<typeof caseResourceSchema>, CaseResource>>
 export type ConsentStatusMatches = Assert<
   Equals<z.infer<typeof consentStatusResourceSchema>, ConsentStatusResource>
 >
@@ -84,5 +75,5 @@ export type GuidanceResourceMatches = Assert<
   Equals<z.infer<typeof guidanceResourceSchema>, GuidanceResource>
 >
 export type CaseOverviewMatches = Assert<
-  Compatible<z.infer<typeof caseOverviewResourceSchema>, CaseOverviewResource>
+  Equals<z.infer<typeof caseOverviewResourceSchema>, CaseOverviewResource>
 >

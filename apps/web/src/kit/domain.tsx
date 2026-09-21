@@ -4,7 +4,14 @@
  */
 import type { ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import type { CaseOverviewResource, DeadlineResource, TaskResource, TaskStatusResource } from '@aftercare/public-contracts'
+import type {
+  CaseOverviewResource,
+  CaseProfile,
+  CaseResource,
+  DeadlineResource,
+  TaskResource,
+  TaskStatusResource,
+} from '@aftercare/public-contracts'
 import { useCaseOverview, useConsents } from '@/lib/api/queries'
 import { Icon, type IconName } from '@/kit/Icon'
 import { formatDate } from '@/lib/format'
@@ -16,6 +23,15 @@ import { TASK_STATUS_WORD } from './words'
 export function useCaseBase() {
   const { caseId = '' } = useParams()
   return { caseId, base: `/cases/${caseId}` }
+}
+
+/**
+ * 故人の状況（`Case.profile`）。契約に無い（BE ユニット4 が `CaseResource.profile`
+ * を追加するまで）ため、`CaseResource` の型には乗せず局所的な optional 読みにする。
+ * マージ後に型が揃ったら `caseResource.profile` に置き換えて、この関数は消せる。
+ */
+export function caseProfileOf(caseResource: CaseResource): CaseProfile | undefined {
+  return (caseResource as { profile?: CaseProfile }).profile
 }
 
 /* ---------- 放棄前ロック ---------- */

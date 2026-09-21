@@ -18,6 +18,7 @@ import {
   Due,
   LockNotice,
   byDeadlineIn,
+  caseProfileOf,
   prepDeadline,
   dueWords,
   taskGroup,
@@ -118,7 +119,7 @@ export function HomeScreen() {
 
       {carried.length > 0 && <CarriedOver caseId={caseId} base={base} items={carried} />}
 
-      {!overview.data.case.profile?.answeredAt && (
+      {!caseProfileOf(overview.data.case)?.answeredAt && (
         <Notice
           tone="info"
           title="いくつか質問に答えると、必要な手続きをもれなく洗い出せます"
