@@ -22,6 +22,7 @@ import {
 } from '@/kit/kit'
 import { useCaseBase } from '@/kit/domain'
 import { UploadDialog } from './parts/UploadDialog'
+import { DocumentView } from './parts/DocumentView'
 
 const STATUS: Record<DocumentAnalysisStatus, { label: string; tone: Tone }> = {
   NOT_ANALYZED: { label: '読み取り前', tone: 'gray' },
@@ -154,6 +155,10 @@ export function DocumentScreen() {
           読み取れなくても、書類はこのまま保存されています。
         </Notice>
       )}
+
+      <Panel title="元の書類">
+        <DocumentView caseId={caseId} documentId={doc.id} fileName={doc.fileName} />
+      </Panel>
 
       <Panel title="読み取った内容">
         {doc.analysisStatus === 'ANALYZING' ? (

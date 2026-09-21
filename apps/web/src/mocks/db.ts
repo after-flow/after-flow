@@ -230,7 +230,7 @@ export const db: Store = {
         days: 7,
         basisLabel: '死亡を知った日 ＋ 7日',
         critical: true,
-      }),
+    }),
       requiredDocuments: [
         { id: 'rd_1', label: '死亡診断書', collected: true, source: 'AI', documentId: 'doc_1' },
         { id: 'rd_2', label: '届出人の印鑑', collected: false, source: 'AI' },
@@ -248,7 +248,9 @@ export const db: Store = {
         // 自治体未登録の状態から始め、調査を依頼できることを示す
         research: { status: 'NOT_REQUESTED' },
       },
-      assigneeName: '山田 花子',
+      assigneeId: 'person_1',
+      // 準備ができたまま数日たっている（「止まっている手続き」の見本）
+      updatedAt: new Date(Date.now() - 4 * DAY).toISOString(),
     }),
     task({
       id: 'task_2',
@@ -716,6 +718,7 @@ export const db: Store = {
 function task(
   t: Omit<Task, 'caseId' | 'updatedAt' | 'assetDisposal' | 'evidences'> & {
     assetDisposal?: boolean
+    updatedAt?: string
   },
 ): Task {
   return {

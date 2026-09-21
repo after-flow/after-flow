@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useCreateTask, useTasks } from '@/lib/api/queries'
+import { useCreateTask, useInsights, useTasks } from '@/lib/api/queries'
 import type { Task } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
 import { DEADLINE_BUCKETS, TASK_CATEGORY_META, deadlineBucket } from '@/lib/labels'
 import {
+  Badge,
   Button,
   Confirm,
   Empty,
@@ -45,6 +46,7 @@ import {
 export function TasksScreen() {
   const { caseId, base } = useCaseBase()
   const tasks = useTasks(caseId)
+  const insights = useInsights(caseId)
   const { locked, reason } = useLock(caseId)
   const [params, setParams] = useSearchParams()
   const rawTab = params.get('tab')
@@ -57,8 +59,33 @@ export function TasksScreen() {
 
   const visible = tasks.data.items.filter((t) => !(locked && t.assetDisposal))
   const hiddenCount = tasks.data.items.length - visible.length
+
+  // 家族で手分けしているときは、担当で絞り込めるようにする（誰かが担当を決めたときだけ出す）
+  const assignees = [...new Map(visible.flatMap((t) => (t.assigneeId ? [[t.assigneeId, t.assigneeName ?? '']] : []))).entries()]
+  const rawWho = params.get('who')
+  const who = rawWho === 'none' || assignees.some(([id]) => id === rawWho) ? rawWho : null
+  const shown = who == null ? visible : visible.filter((t) => (who === 'none' ? !t.assigneeId : t.assigneeId === who))
+
+  // 止まっている手続き（AIの気づき）には印を付ける
+  const stalled = new Set(
+    (insights.data?.items ?? [])
+      .filter((i) => i.kind === 'STALLED_TASK' && i.status !== 'DISMISSED' && i.relatedTaskId)
+      .map((i) => i.relatedTaskId!),
+  )
+
+  const setParam = (key: string, value: string | null) =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p)
+        if (value == null) next.delete(key)
+        else next.set(key, value)
+        return next
+      },
+      { replace: true },
+    )
+
   const groups: Record<TaskGroup, Task[]> = { todo: [], waiting: [], done: [] }
-  for (const t of visible) groups[taskGroup(t.status)].push(t)
+  for (const t of shown) groups[taskGroup(t.status)].push(t)
   const order = byDeadlineIn(visible)
   groups.todo.sort(order)
   groups.waiting.sort(order)
@@ -89,7 +116,7 @@ export function TasksScreen() {
         <div className="px-4 pt-1">
           <Tabs
             value={tab}
-            onChange={(id) => setParams(id === 'todo' ? {} : { tab: id }, { replace: true })}
+            onChange={(id) => setParam('tab', id === 'todo' ? null : id)}
             items={[
               { id: 'todo', label: 'やること', count: groups.todo.length },
               { id: 'waiting', label: '結果待ち', count: groups.waiting.length },
@@ -98,18 +125,38 @@ export function TasksScreen() {
           />
         </div>
 
+        {assignees.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-rd-border-2 px-4 py-2">
+            <label htmlFor="who" className="text-[0.86rem] font-bold text-rd-text-2">担当</label>
+            <select
+              id="who"
+              className={`${inputClass} h-9 w-auto py-0`}
+              value={who ?? ''}
+              onChange={(e) => setParam('who', e.target.value || null)}
+            >
+              <option value="">全員</option>
+              {assignees.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+              <option value="none">未定</option>
+            </select>
+          </div>
+        )}
+
         {list.length === 0 ? (
           <Empty
             title={
-              tab === 'todo' ? 'やることはありません' : tab === 'waiting' ? '結果待ちの手続きはありません' : 'まだ済んだ手続きはありません'
+              who != null
+                ? 'この担当の手続きはありません'
+                : tab === 'todo' ? 'やることはありません' : tab === 'waiting' ? '結果待ちの手続きはありません' : 'まだ済んだ手続きはありません'
             }
           >
-            {tab === 'waiting' && '役所や金融機関に出し終えた手続きが、ここに並びます。'}
+            {who != null ? '「担当」を「全員」にすると、すべての手続きが表示されます。' : tab === 'waiting' && '役所や金融機関に出し終えた手続きが、ここに並びます。'}
           </Empty>
         ) : tab === 'todo' ? (
-          <BucketedList tasks={list} all={visible} base={base} />
+          <BucketedList tasks={list} all={visible} base={base} stalled={stalled} />
         ) : (
-          <TaskTable tasks={list} all={visible} base={base} />
+          <TaskTable tasks={list} all={visible} base={base} stalled={stalled} />
         )}
       </div>
 
@@ -133,7 +180,7 @@ export function TasksScreen() {
  */
 const PREP_BUCKET = { id: 'prep', label: '早めに始めたいこと（相続の方法を決める前に）', tone: 'warning' as const }
 
-function BucketedList({ tasks, all, base }: { tasks: Task[]; all: Task[]; base: string }) {
+function BucketedList({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[]; base: string; stalled: Set<string> }) {
   const bucketOf = (t: Task) => (prepDeadline(t, all) ? 'prep' : deadlineBucket(t.deadline?.daysRemaining))
   const buckets = DEADLINE_BUCKETS.flatMap((b) => (b.id === 'later' ? [PREP_BUCKET, b] : [b]))
   return (
@@ -160,7 +207,7 @@ function BucketedList({ tasks, all, base }: { tasks: Task[]; all: Task[]; base: 
                 法律上の期限はありませんが、相続の方法を決める前に済ませたい手続きです。戸籍の取り寄せには数週間かかることがあります。
               </p>
             )}
-            <TaskTable tasks={items} all={all} base={base} />
+            <TaskTable tasks={items} all={all} base={base} stalled={stalled} />
           </section>
         )
       })}
@@ -168,7 +215,7 @@ function BucketedList({ tasks, all, base }: { tasks: Task[]; all: Task[]; base: 
   )
 }
 
-function TaskTable({ tasks, all, base }: { tasks: Task[]; all: Task[]; base: string }) {
+function TaskTable({ tasks, all, base, stalled }: { tasks: Task[]; all: Task[]; base: string; stalled: Set<string> }) {
   return (
     <ul>
       {tasks.map((t) => {
@@ -183,10 +230,12 @@ function TaskTable({ tasks, all, base }: { tasks: Task[]; all: Task[]; base: str
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className={`text-[0.97rem] font-bold leading-snug ${done ? 'text-rd-text-2' : ''}`}>{t.title}</span>
                   <ConditionalBadge task={t} />
+                  {!done && stalled.has(t.id) && <Badge tone="yellow" icon="clock">止まっています</Badge>}
                 </span>
                 <span className="mt-0.5 flex flex-wrap gap-x-3 text-[0.82rem] leading-snug text-rd-text-2">
                   {t.submitTo && <span className="line-clamp-1 break-all sm:break-normal">{t.submitTo}</span>}
                   {!done && docsLeft > 0 && <span className="text-rd-warning-text">必要な書類があと{docsLeft}点</span>}
+                  {t.assigneeName && <span>担当：{t.assigneeName}</span>}
                 </span>
               </span>
               <span className="hidden sm:block">
