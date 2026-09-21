@@ -114,7 +114,8 @@ export function SignupScreen() {
       const port = await getAuthPort()
       await port.signUp(email, password)
       await port.sendEmailVerification()
-      navigate('/verify-email')
+      // メール確認が必要かは Backend が判定する（403 EMAIL_NOT_VERIFIED で /verify-email へ戻る）
+      navigate('/cases')
     } catch (err) {
       setError(authErrorMessage(err))
     } finally {
@@ -187,6 +188,7 @@ export function VerifyEmailScreen() {
               const port = await getAuthPort()
               await port.reload()
               await port.getToken(true)
+              navigate('/cases', { replace: true })
             } catch {
               setError('確認できませんでした。もう一度お試しください。')
             } finally {
