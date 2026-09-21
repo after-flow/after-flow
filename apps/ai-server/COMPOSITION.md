@@ -6,7 +6,7 @@
 
 Orcaモードは明示的なモデル設定から選択し、実推論をOrcaRouter経由で行う。各SDK試行の直前に提供許可と共有予算を再確認する。Coreの案件ContextとResearchの公開調査依頼を分離する。既存のModel Routerだけを指定OrchRouterの代わりにする実装や、本番用の合成Providerは同梱しない。
 
-起動時は設定の整合とAI専用ストアへの接続を確認する。Provider/Orchへの実要求はRunの認可後に行うため、起動成功は実モデル品質やハッカソン必須利用の証明ではない。既定の`main.ts`は業務設定が未提供のため未接続のまま起動する。実設定を用意したデプロイentrypointからこの関数を呼ぶ。
+起動時は設定の整合とAI専用ストアへの接続を確認する。Providerへの実要求はRunの認可後に行うため、起動成功は実モデル品質やハッカソン必須利用の証明ではない。既定の`main.ts`は非productionかつAPIキーがある場合だけ `hackathon-config.ts` を使って実Runtime/Workerを接続する。設定が無ければlivenessのみ、productionではレビュー済み設定を用意した別compositionが必要。
 
 `document_analysis` とP-04はまだWorkerへ登録しない。検査済み加工版のBackend配信・OCR/Field対応、生成Artifactの保存/承認・業務レビューが必要であり、Scope検証や判定Workflowだけで提供開始にしない。
 

@@ -30,7 +30,9 @@ pnpm smoke:orca --env-file /absolute/path/to/.env
 - Mastra標準fallbackを使用。429/5xxの場合だけ次の許可済みモデルへ進む。401/402/403、認可取消、部分出力後の障害は停止する。ネットワークエラー・timeoutも現在は停止し、無条件再送しない。
 - 接続先は `https://api.orcarouter.ai/v1/chat/completions` に固定。リダイレクトや任意のルーター/追加リクエスト設定を拒否する。ゲートウェイ側の追加fallbackや名前付きrouterは未対応。
 
-`grant(session)`、本文を保存しないメトリクス保存先、公式資料Catalog、Task Template、Research Scope、AI専用Runtimeストアは引き続き必要。既定の `main.ts` の実行受付は未接続のまま。APIキーだけで業務Runを自動的に受け付けることはない。
+開発Composeでは、APIキーがある場合に限り、ハッカソン用Policy、本文を含まないメトリクス、協会けんぽの公式資料Catalog、Task Template、Research Scope、AI専用Runtimeを既定の `main.ts` へ接続する。`/internal/v1/ready` で接続状態を確認できる。Backendのcontrolを各送信前に再確認するが、Provider Policyとgrantはハッカソン用のローカル仮定であり、本番同意の代替ではない。
+
+APIキーが無い場合や `AI_RUNTIME_MODE=disabled` の場合はlivenessだけで起動し、実行受付は503を維持する。Backend Outbox workerと `AI_CONNECTED_OPERATIONS` は既定で有効化しないため、APIキーだけで画面から業務Runが始まることはない。
 
 ## 利用証跡と費用
 
