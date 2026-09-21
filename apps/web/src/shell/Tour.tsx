@@ -7,28 +7,35 @@ import { Button } from '@/kit/kit'
  *
  * 利用者は急いでいることが多いので、次の約束を守る。
  *  - 勝手に始めない（初回はホームで「見ますか？」と尋ねるだけ）
- *  - 4ステップまで。1ステップ2行まで
+ *  - 5ステップまで。1ステップ2〜3行まで
  *  - いつでも抜けられる（「終わる」・Esc・枠の外を押す）
  *  - あとから「使い方を見る」でいつでも見返せる
+ *  - 説明の枠は、指し示す先に重ねない（重なると、何を指しているのか見えなくなる）
  *
  * 指し示す先は data-tour 属性で探す。広い画面ではサイドバー、狭い画面では上部のメニューを指す。
- * 見つからないとき（例：手続きが全部済んでいて「まずはこれ」が無い）は、画面中央に説明だけを出す。
+ * 見つからないとき（例：手続きが全部済んでいて「いまここ」が無い）は、画面中央に説明だけを出す。
  */
 type Step = {
   /** 候補を順に探し、画面に見えている最初のものを指す */
   targets: string[]
   title: string
   body: string
+  /**
+   * 指し示す先が「押すと記録が切り替わる」ボタン（aria-pressed を持つ）だったときの説明。
+   * いまの段階が「葬儀・火葬」のときは、押しても手続きの一覧は開かず、済んだかの記録が切り替わるため
+   */
+  toggleBody?: string
   /** 狭い画面でメニューの中にある場合の補足 */
   whenInMenu?: string
 }
 
-// 画面の上から順（サイドバーの並び：書類を追加 → やること → AIからの確認）に指す。行き来させない
+// 画面の上から順（いまの段階 → 書類を追加 → サイドバーのメニュー）に指す。行き来させない
 const STEPS: Step[] = [
   {
-    targets: ['first-task'],
-    title: 'まずはこれ',
-    body: 'いちばん急ぐ手続きがここに出ます。「やり方を見る」で、行き先と持ち物が分かります。',
+    targets: ['flow-here'],
+    title: 'いまの段階',
+    body: '相続の手続きは、上から順に進みます。いまの段階に「いまここ」が付き、いちばん近い期限も出ます。押すと、その段階の手続きが見られます。',
+    toggleBody: '相続の手続きは、上から順に進みます。いまの段階に「いまここ」が付きます。葬儀・火葬は、済んだらここを押して記録します。',
   },
   {
     targets: ['upload'],
@@ -38,13 +45,19 @@ const STEPS: Step[] = [
   {
     targets: ['nav-tasks', 'menu'],
     title: 'やること',
-    body: 'すべての手続きが、期限の近い順に並んでいます。「まずはこれ」は、この一番上の1件です。',
+    body: 'すべての手続きが、期限の近い順に並んでいます。行き先と持ち物も、ここから見られます。',
     whenInMenu: '左上のメニューの中にあります。',
   },
   {
     targets: ['nav-approvals', 'menu'],
     title: 'AIからの確認',
-    body: '書類を追加すると、AIが読み取った内容がここに届きます。合っていれば登録してください。迷ったら「AIに相談」で聞けます。',
+    body: '書類を追加すると、AIが読み取った内容がここに届きます。合っていれば登録してください。',
+    whenInMenu: '左上のメニューの中にあります。',
+  },
+  {
+    targets: ['nav-chat', 'menu'],
+    title: 'AIに相談',
+    body: '分からないことは、ここから聞けます。画面の横に開くので、手続きの案内を見ながら相談できます。',
     whenInMenu: '左上のメニューの中にあります。',
   },
 ]
@@ -82,32 +95,48 @@ function findVisible(names: string[]): { el: HTMLElement; name: string } | null 
 }
 
 type Box = { top: number; left: number; width: number; height: number }
+type Card = { top: number; left: number; width: number; sheet: boolean }
 
+/** 指し示す先のまわりに空ける幅 */
 const PAD = 6
-const CARD_W = 340
-const GAP = 12
+const CARD_W = 360
+const GAP = 14
+/** 画面の端から空ける幅 */
+const EDGE = 16
 /** 狭い画面の固定ヘッダー（56px）の下に少し余白を足した位置 */
 const HEADER_ROOM = 72
+/** これより狭い画面では、説明の枠を画面の下に固定する */
+const SHEET_BELOW = 640
 
-/** 説明の枠を、指し示す先の右・下・上のうち空いている場所に置く */
-function placeCard(box: Box | null, cardH: number) {
+const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), Math.max(min, max))
+
+/**
+ * 説明の枠の置き場所。指し示す先に重ならない場所を、右 → 下 → 上 → 左 の順に探す。
+ * どこにも入らなければ null（呼び出し側で指し示す先をスクロールしてから探し直す）。
+ * 狭い画面では横に置く余地が無いので、画面の下に固定する（指し示す先は、その上に見えるようにスクロールする）
+ */
+function placeCard(box: Box | null, cardH: number): Card | null {
   const vw = window.innerWidth
   const vh = window.innerHeight
-  const w = Math.min(CARD_W, vw - 32)
-  if (!box) return { top: Math.max(16, (vh - cardH) / 2), left: (vw - w) / 2, width: w }
-
-  const clampLeft = (l: number) => Math.min(Math.max(16, l), vw - w - 16)
-  const clampTop = (t: number) => Math.min(Math.max(16, t), vh - cardH - 16)
-
-  // 左端のサイドバーを指すときは右側に
-  if (box.left + box.width < vw * 0.3 && box.left + box.width + GAP + w < vw - 16) {
-    return { top: clampTop(box.top + box.height / 2 - cardH / 2), left: box.left + box.width + GAP, width: w }
+  if (vw < SHEET_BELOW) {
+    const sheet = { top: vh - cardH - 12, left: 12, width: vw - 24, sheet: true }
+    if (!box) return sheet
+    return box.top + box.height <= sheet.top - GAP ? sheet : null
   }
-  // 下に入るなら下、入らなければ上
-  if (box.top + box.height + GAP + cardH < vh - 16) {
-    return { top: box.top + box.height + GAP, left: clampLeft(box.left), width: w }
-  }
-  return { top: clampTop(box.top - GAP - cardH), left: clampLeft(box.left), width: w }
+  const w = Math.min(CARD_W, vw - EDGE * 2)
+  if (!box) return { top: Math.max(EDGE, (vh - cardH) / 2), left: (vw - w) / 2, width: w, sheet: false }
+
+  const midY = clamp(box.top + box.height / 2 - cardH / 2, EDGE, vh - cardH - EDGE)
+  const midX = clamp(box.left + box.width / 2 - w / 2, EDGE, vw - w - EDGE)
+  const right = box.left + box.width + GAP
+  const below = box.top + box.height + GAP
+  const above = box.top - GAP - cardH
+  const left = box.left - GAP - w
+  if (right + w <= vw - EDGE && cardH <= vh - EDGE * 2) return { top: midY, left: right, width: w, sheet: false }
+  if (below + cardH <= vh - EDGE) return { top: below, left: midX, width: w, sheet: false }
+  if (above >= EDGE) return { top: above, left: midX, width: w, sheet: false }
+  if (left >= EDGE && cardH <= vh - EDGE * 2) return { top: midY, left, width: w, sheet: false }
+  return null
 }
 
 /* ---------- 本体 ---------- */
@@ -116,7 +145,9 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
   const [i, setI] = useState(0)
   const [box, setBox] = useState<Box | null>(null)
   const [inMenu, setInMenu] = useState(false)
-  const [cardH, setCardH] = useState(160)
+  const [onToggle, setOnToggle] = useState(false)
+  // 説明の枠の高さ。描いてみるまで分からないので、ふつうの高さを仮に置く
+  const [cardH, setCardH] = useState(260)
   // 位置を測る処理から最新の高さを読むため（再計測のたびに作り直さない）
   const cardHRef = useRef(260)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -137,7 +168,11 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
     if (!open) return
     let tries = 0
     let timer: number | undefined
-    // scroll: ステップの始めだけ、指し示す先が画面の中央に来るよう動かす（その後は位置を測り直すだけ）
+    const boxOf = (el: HTMLElement): Box => {
+      const r = el.getBoundingClientRect()
+      return { top: r.top - PAD, left: r.left - PAD, width: r.width + PAD * 2, height: r.height + PAD * 2 }
+    }
+    // scroll: ステップの始めだけ、説明の枠を重ねずに置けるよう指し示す先を動かす（その後は測り直すだけ）
     const measure = (scroll: boolean) => {
       const found = findVisible(step.targets)
       if (!found && tries++ < 10) {
@@ -147,24 +182,26 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
       if (!found) {
         setBox(null)
         setInMenu(false)
+        setOnToggle(false)
         return
       }
       if (scroll) {
-        // 指し示す先が画面に収まっていない、または説明の枠と重なってしまうときだけ、
-        // 上端（狭い画面の固定ヘッダーの下）に寄せる。下に説明の枠を置く余地ができる
-        const r0 = found.el.getBoundingClientRect()
-        const b0 = { top: r0.top - PAD, left: r0.left - PAD, width: r0.width + PAD * 2, height: r0.height + PAD * 2 }
-        const c0 = placeCard(b0, cardHRef.current)
-        const overlaps =
-          c0.top < b0.top + b0.height && c0.top + cardHRef.current > b0.top && c0.left < b0.left + b0.width && c0.left + c0.width > b0.left
-        const visible = r0.top >= 0 && r0.bottom <= window.innerHeight
-        if (!visible || overlaps) window.scrollBy({ top: r0.top - HEADER_ROOM, behavior: 'instant' as ScrollBehavior })
+        const b = boxOf(found.el)
+        const fullyVisible = b.top >= 0 && b.top + b.height <= window.innerHeight
+        if (!fullyVisible || !placeCard(b, cardHRef.current)) {
+          // まず画面の中央へ。それでも置けなければ、上端（固定ヘッダーの下）へ寄せて、下に説明の場所を作る
+          found.el.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior })
+          if (!placeCard(boxOf(found.el), cardHRef.current)) {
+            window.scrollBy({ top: found.el.getBoundingClientRect().top - HEADER_ROOM, behavior: 'instant' as ScrollBehavior })
+          }
+        }
       }
-      const r = found.el.getBoundingClientRect()
-      setBox({ top: r.top - PAD, left: r.left - PAD, width: r.width + PAD * 2, height: r.height + PAD * 2 })
+      setBox(boxOf(found.el))
       setInMenu(found.name === 'menu')
+      setOnToggle(found.el.hasAttribute('aria-pressed'))
     }
     measure(true)
+    // 仮の高さで「置ける」と判断したあと、実際の高さでは置けないことがある。高さが分かったら（cardH が変わったら）判断し直す
     const onResize = () => {
       tries = 10
       measure(false)
@@ -176,7 +213,7 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
       window.removeEventListener('resize', onResize)
       window.removeEventListener('scroll', onResize, true)
     }
-  }, [open, step])
+  }, [open, step, cardH])
 
   // 説明の枠の高さに合わせて置き場所を決め直す
   useLayoutEffect(() => {
@@ -184,13 +221,13 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
       cardHRef.current = cardRef.current.offsetHeight
       setCardH(cardRef.current.offsetHeight)
     }
-  }, [open, i, box, inMenu])
+  }, [open, i, box, inMenu, onToggle])
 
   useEffect(() => {
     if (!open) return
     primaryRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
+      if (e.key === 'Escape' && !e.isComposing) close()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -199,7 +236,17 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
   if (!open) return null
 
   const last = i === STEPS.length - 1
-  const pos = placeCard(box, cardH)
+  /*
+    どうしても重ならずに置けないとき（指し示す先が画面より大きいなど）は、画面の下に寄せる。
+    指し示す先は上端に寄せてあるので、上の部分は見える
+  */
+  const cardW = Math.min(CARD_W, window.innerWidth - EDGE * 2)
+  const pos: Card = placeCard(box, cardH) ?? {
+    top: window.innerHeight - cardH - EDGE,
+    left: (window.innerWidth - cardW) / 2,
+    width: cardW,
+    sheet: false,
+  }
 
   return (
     <div className="fixed inset-0 z-[70]">
@@ -216,36 +263,50 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
         <div
           key="spot"
           aria-hidden
-          className="pointer-events-none absolute rounded-lg ring-4 ring-white/90 transition-all duration-200"
+          className="pointer-events-none absolute rounded-xl ring-4 ring-white/90 transition-all duration-300 ease-out"
           style={{ ...box, boxShadow: '0 0 0 9999px rgba(17, 24, 39, 0.55)' }}
         />
       ) : (
-        <div key="dim" aria-hidden className="pointer-events-none absolute inset-0 bg-black/55" />
+        <div key="dim" aria-hidden className="pointer-events-none absolute inset-0 animate-fade-in bg-black/55" />
       )}
 
       <div
+        // ステップが変わるたびに作り直し、短く浮き上がらせて切り替わったことを伝える
+        key={i}
         ref={cardRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="tour-title"
-        className="absolute rounded-xl bg-rd-card p-5 shadow-2xl"
+        aria-describedby="tour-body"
+        className={`absolute rounded-2xl bg-rd-card p-5 shadow-2xl ${pos.sheet ? 'animate-sheet-up' : 'animate-pop-in'}`}
         style={{ top: pos.top, left: pos.left, width: pos.width }}
       >
-        <p className="text-[0.86rem] font-bold text-rd-primary-text">
-          使い方 {i + 1} / {STEPS.length}
-        </p>
-        <h2 id="tour-title" className="mt-1 text-[1.15rem] font-bold">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[0.86rem] font-bold text-rd-primary-text">
+            使い方 {i + 1} / {STEPS.length}
+          </p>
+          {/* いまどこまで進んだかを、点でも見せる */}
+          <span aria-hidden className="flex gap-1.5">
+            {STEPS.map((_, k) => (
+              <span
+                key={k}
+                className={`h-1.5 rounded-full transition-all duration-300 ${k === i ? 'w-5 bg-rd-primary' : 'w-1.5 bg-rd-border'}`}
+              />
+            ))}
+          </span>
+        </div>
+        <h2 id="tour-title" className="mt-1.5 text-[1.15rem] font-bold">
           {step.title}
         </h2>
-        <p className="mt-1.5 text-[0.97rem] leading-relaxed">
-          {step.body}
-          {inMenu && step.whenInMenu && (
-            <span className="mt-1 flex items-center gap-1 font-bold">
-              <Icon name="menu" size={17} />
-              {step.whenInMenu}
-            </span>
-          )}
+        <p id="tour-body" className="mt-1.5 text-[0.97rem] leading-relaxed">
+          {onToggle && step.toggleBody ? step.toggleBody : step.body}
         </p>
+        {inMenu && step.whenInMenu && (
+          <p className="mt-1.5 flex items-center gap-1 text-[0.94rem] font-bold">
+            <Icon name="menu" size={17} />
+            {step.whenInMenu}
+          </p>
+        )}
 
         <div className="mt-4 flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={close}>
@@ -283,7 +344,7 @@ export function TourPrompt({ onStart, onLater }: { onStart: () => void; onLater:
   useEffect(() => {
     startRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onLaterRef.current()
+      if (e.key === 'Escape' && !e.isComposing) onLaterRef.current()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)

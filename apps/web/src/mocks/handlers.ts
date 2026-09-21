@@ -311,6 +311,7 @@ export const handlers = [
       deceasedNameKana: typeof body.deceasedNameKana === 'string' ? body.deceasedNameKana : null,
       dateOfDeath: String(body.dateOfDeath ?? ''),
       dateOfBirth: typeof body.dateOfBirth === 'string' ? body.dateOfBirth : null,
+      funeralCompletedAt: null,
       knownAt: typeof body.knownAt === 'string' ? body.knownAt : null,
       ownerName: String(body.ownerName ?? ''),
       relationshipToDeceased: String(body.relationshipToDeceased ?? ''),
@@ -364,6 +365,7 @@ export const handlers = [
     if ('municipality' in body) kase.municipality = typeof body.municipality === 'string' ? body.municipality : null
     if ('dateOfBirth' in body) kase.dateOfBirth = typeof body.dateOfBirth === 'string' ? body.dateOfBirth : null
     if ('knownAt' in body) kase.knownAt = typeof body.knownAt === 'string' ? body.knownAt : null
+    if ('funeralCompletedAt' in body) kase.funeralCompletedAt = typeof body.funeralCompletedAt === 'string' ? body.funeralCompletedAt : null
     kase.version += 1
     kase.caseVersion += 1
     kase.updatedAt = new Date().toISOString()

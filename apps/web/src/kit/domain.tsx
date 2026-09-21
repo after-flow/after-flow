@@ -279,7 +279,7 @@ export function CategoryIcon({ category, size = 36 }: { category: string; size?:
 
 /* ---------- 期限 ---------- */
 
-function dueTone(d: DeadlineResource) {
+export function dueTone(d: DeadlineResource) {
   if (d.daysRemaining == null) return 'text-rd-text-3'
   if (d.severity === 'OVERDUE' || d.severity === 'URGENT' || d.daysRemaining <= 3) return 'text-rd-danger-text'
   if (d.severity === 'SOON' || d.daysRemaining <= 7) return 'text-rd-warning-text'

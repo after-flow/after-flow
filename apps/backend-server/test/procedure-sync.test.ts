@@ -19,9 +19,9 @@ function emptySnapshot(): SyncSnapshot {
 }
 
 describe('planProcedureSync: 空スナップショットからの作成', () => {
-  it('profile未回答の新規Caseでは22件のTaskを作る（default no の5件は出ない）', () => {
+  it('profile未回答の新規Caseでは23件のTaskを作る（default no の5件は出ない）', () => {
     const plan = planProcedureSync(PLACEHOLDER_RULE_CATALOG, factsOf(), emptySnapshot())
-    assert.equal(plan.createTasks.length, 22)
+    assert.equal(plan.createTasks.length, 23)
     assert.equal(plan.updateTasks.length, 0)
     assert.equal(plan.deleteTasks.length, 0)
   })

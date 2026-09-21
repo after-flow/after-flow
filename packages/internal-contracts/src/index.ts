@@ -30,6 +30,18 @@ export const internalId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
 /** ルールのバージョン（例 "1.0.0", "0.0.0-draft"）。internalId と違い "." を許す。 */
 export const internalRuleVersion = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/)
 export const operationSchema = z.enum(['case_planning', 'task_guidance', 'chat_reply', 'document_analysis'])
+export const executionFailureReasonSchema = z.enum([
+  'OUTPUT_CONTRACT_REJECTED',
+  'EVIDENCE_INSUFFICIENT',
+  'RESEARCH_UNAVAILABLE',
+  'CONTEXT_CHANGED',
+  'BUDGET_EXCEEDED',
+  'TIME_LIMIT',
+  'PROVIDER_UNAVAILABLE',
+  'CANCELLED',
+  'EXECUTION_FAILED',
+])
+export type ExecutionFailureReason = z.infer<typeof executionFailureReasonSchema>
 export const scopeSchema = z.enum(['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'proposals', 'wait-requests'])
 export type InternalScope = z.infer<typeof scopeSchema>
 
@@ -110,7 +122,7 @@ export const insightDraftSchema = z.object({
 export type InsightDraft = z.infer<typeof insightDraftSchema>
 const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']), output: runSummarySchema.optional(), insights: z.array(insightDraftSchema).max(20).optional() }).strict()
 export const interruptedResultSchema = resultBase.extend({ kind: z.literal('execution_interrupted'), operation: operationSchema,
-  status: z.literal('NEEDS_ATTENTION'), failureReason: z.enum(['BUDGET_EXCEEDED', 'TIME_LIMIT', 'EXECUTION_FAILED']), output: runSummarySchema,
+  status: z.literal('NEEDS_ATTENTION'), failureReason: executionFailureReasonSchema, output: runSummarySchema,
 }).strict()
 export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema, interruptedResultSchema])
 export type InternalResult = z.infer<typeof internalResultSchema>

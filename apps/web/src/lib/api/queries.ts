@@ -155,14 +155,18 @@ export function useUpdateCase(caseId: string) {
   const qc = useQueryClient()
   return useMutation({
     // dateOfBirth は null で「消す」。undefined だと送られず、前の値が残ってしまう
+    // funeralCompletedAt も null で「まだ」に戻す
     mutationFn: (patch: {
       expectedVersion: number
       municipality?: string
       dateOfBirth?: string | null
       profile?: CaseProfileInput | null
+      funeralCompletedAt?: string | null
     }) => api.patch<CaseResource>(`/cases/${caseId}`, patch),
     onSuccess: (updated) => {
       qc.setQueryData(qk.case(caseId), updated)
+      // 故人の状況・日付が変わると、Backend が手続きを洗い出し直す
+      void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
       void qc.invalidateQueries({ queryKey: qk.overview(caseId) })
       void qc.invalidateQueries({ queryKey: qk.cases })
     },

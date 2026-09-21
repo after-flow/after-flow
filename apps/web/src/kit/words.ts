@@ -64,7 +64,8 @@ export const FLOW_STAGE_WORD: Record<FlowStageId, string> = {
   funeral: '葬儀・火葬',
   government: '役所の手続き',
   contracts: '契約の整理',
-  investigation: '財産などの調査',
+  // 戸籍を集めて相続人を確かめるのもこの段階。「財産」に限らないので、API の名前（相続の調査）にそろえる
+  investigation: '相続の調査',
   decision: '相続の方法を決める',
   division: '遺産の分け方',
   transfer: '名義変更・受け取り',

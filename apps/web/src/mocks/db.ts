@@ -109,6 +109,7 @@ export const db: Store = {
       municipality: '○○市',
       ownerPersonId: SELF_PERSON_ID,
       selfPersonId: SELF_PERSON_ID,
+      funeralCompletedAt: null,
       aiPlanningRestriction: null,
       status: 'ACTIVE',
       version: 1,

@@ -107,10 +107,13 @@ export function PropertyScreen() {
             ]}
           />
         </div>
-        {tab === 'assets' && (assets.data ? <AssetsTable caseId={caseId} items={a} onEdit={(item) => setEditing({ kind: 'assets', item })} /> : <Loading />)}
-        {tab === 'liabilities' && (liabilities.data ? <LiabilitiesTable caseId={caseId} items={l} onEdit={(item) => setEditing({ kind: 'liabilities', item })} /> : <Loading />)}
-        {tab === 'contracts' && (contracts.data ? <ContractsTable caseId={caseId} items={c} onEdit={(item) => setEditing({ kind: 'contracts', item })} /> : <Loading />)}
-        {tab === 'benefits' && (benefits.data ? <BenefitsTable caseId={caseId} /> : <Loading />)}
+        {/* タブを切り替えたら中身を短くふわっと出し、切り替わったことを伝える */}
+        <div key={tab} className="animate-fade-in">
+          {tab === 'assets' && (assets.data ? <AssetsTable caseId={caseId} items={a} onEdit={(item) => setEditing({ kind: 'assets', item })} /> : <Loading />)}
+          {tab === 'liabilities' && (liabilities.data ? <LiabilitiesTable caseId={caseId} items={l} onEdit={(item) => setEditing({ kind: 'liabilities', item })} /> : <Loading />)}
+          {tab === 'contracts' && (contracts.data ? <ContractsTable caseId={caseId} items={c} onEdit={(item) => setEditing({ kind: 'contracts', item })} /> : <Loading />)}
+          {tab === 'benefits' && (benefits.data ? <BenefitsTable caseId={caseId} /> : <Loading />)}
+        </div>
       </div>
 
       {adding && tab !== 'benefits' && <ItemDialog caseId={caseId} kind={tab} onClose={() => setAdding(false)} />}

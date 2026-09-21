@@ -1562,8 +1562,14 @@ paths:
                     failureReason:
                       type: string
                       enum:
+                        - OUTPUT_CONTRACT_REJECTED
+                        - EVIDENCE_INSUFFICIENT
+                        - RESEARCH_UNAVAILABLE
+                        - CONTEXT_CHANGED
                         - BUDGET_EXCEEDED
                         - TIME_LIMIT
+                        - PROVIDER_UNAVAILABLE
+                        - CANCELLED
                         - EXECUTION_FAILED
                     output:
                       type: object

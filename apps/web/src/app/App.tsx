@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import { ApiError, setEmailNotVerifiedHandler, setUnauthorizedHandler } from '@/lib/api/client'
 import { useConsents } from '@/lib/api/queries'
 import { useLogout } from '@/lib/useLogout'
@@ -18,7 +18,6 @@ import {
   VerifyEmailScreen,
 } from '@/screens/AuthScreens'
 import { CaseNewScreen, CasesScreen } from '@/screens/EntryScreens'
-import { HomeScreen } from '@/screens/HomeScreen'
 import { TasksScreen } from '@/screens/TasksScreen'
 import { TaskScreen } from '@/screens/TaskScreen'
 import { ApprovalsScreen } from '@/screens/ApprovalsScreen'
@@ -65,6 +64,23 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+/**
+ * 別の画面へ移ったら、いちばん上から見せる。
+ * 戻る・進む（POP）はブラウザに任せ、同じ画面の中の移動（?tab= の切り替え）では動かさない。
+ * useLayoutEffect にして、画面側の useEffect より先に動かす（開いた直後に自分でスクロールする画面の位置を上書きしないため）。
+ */
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  const type = useNavigationType()
+  const prev = useRef(pathname)
+  useLayoutEffect(() => {
+    if (prev.current === pathname) return
+    prev.current = pathname
+    if (type !== 'POP') window.scrollTo(0, 0)
+  }, [pathname, type])
+  return null
+}
 
 /**
  * サインイン状態のガード。
@@ -136,6 +152,7 @@ export function App() {
         <AuthProvider>
           <SessionExpiryHandler />
           <EmailVerificationHandler />
+          <ScrollToTop />
           <Toaster />
           <Routes>
             <Route path="/login" element={<LoginScreen />} />
@@ -154,10 +171,12 @@ export function App() {
                   <Route path="/cases/new" element={<CaseNewScreen />} />
 
                   <Route path="/cases/:caseId" element={<AppShell />}>
-                    <Route index element={<HomeScreen />} />
+                    {/* ホームは手続きの流れ。いまどの段階で、次に何が来るかを最初に見せる */}
+                    <Route index element={<FlowScreen />} />
                     <Route path="tasks" element={<TasksScreen />} />
                     <Route path="tasks/:taskId" element={<TaskScreen />} />
-                    <Route path="flow" element={<FlowScreen />} />
+                    {/* 以前の「手続きの流れ」の URL は、ホームへ送る */}
+                    <Route path="flow" element={<Navigate to=".." replace />} />
                     <Route path="approvals" element={<ApprovalsScreen />} />
                     <Route path="approvals/:approvalId" element={<ApprovalScreen />} />
                     <Route path="insights" element={<Navigate to="../approvals?tab=insights" replace />} />

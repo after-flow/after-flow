@@ -52,6 +52,7 @@ export const caseResourceSchema = z.object({
   ownerName: z.string(),
   relationshipToDeceased: z.string(),
   municipality: z.string().nullable(),
+  funeralCompletedAt: isoDateTimeSchema.nullable(),
   ownerPersonId: z.string().nullable(),
   selfPersonId: z.string().nullable(),
   aiPlanningRestriction: aiPlanningRestrictionSchema.nullable(),
@@ -114,6 +115,8 @@ export const updateCaseBodySchema = z
     ownerName: nameSchema.optional(),
     relationshipToDeceased: z.string().trim().min(1).max(50).optional(),
     municipality: municipalitySchema.nullish(),
+    /** 葬儀・火葬が済んだと記録した日時。null で「まだ」に戻す。 */
+    funeralCompletedAt: isoDateTimeSchema.nullish(),
   })
   // status を含めない。終了・再開は状態遷移を検証する別の操作にする。
   .strict()
