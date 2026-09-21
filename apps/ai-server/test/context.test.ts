@@ -236,12 +236,14 @@ test('research brief for chat and planning uses reviewed strings only, leaving c
   assert.ok(!serialized.includes('snapshot'))
   assert.equal(buildResearchBrief(context, { ...scope, municipality: '別の市' }).status, 'needs_input')
   assert.throws(() => buildResearchBrief(context, { ...scope, sourceCatalogIds: [] }))
-  const renamed = artifact('task_guidance')
-  if (!('task' in renamed.content)) assert.fail()
-  const renamedContent = { ...renamed.content, task: { ...renamed.content.task, title: '表示名を変更', category: '別カテゴリ', submitTo: '別表示' } }
-  assert.equal(buildResearchBrief(buildCoreContext({ ...renamed, content: renamedContent, contentHash: contentHash(renamedContent) }, 'task_guidance'), scope).status, 'ready')
-  const unknownContent = { ...renamed.content, task: { ...renamed.content.task, procedureId: 'unknown-procedure' } }
-  assert.equal(buildResearchBrief(buildCoreContext({ ...renamed, content: unknownContent, contentHash: contentHash(unknownContent) }, 'task_guidance'), scope).status, 'needs_input')
+  // task_guidance では Task の表示名・区分・提出先を照合しない。Definition と scope.procedureIds の一致だけで Brief を選ぶ。
+  const renamed = guidanceArtifact('kyoukaikenpo-burial-benefit', {
+    task: { id: 'task-1', version: 1, procedureId: 'kyoukaikenpo-burial-benefit', title: '表示名を変更', category: '別カテゴリ', submitTo: '別表示' },
+    contracts: [{ id: 'contract-1', version: 1, kind: 'HEALTH_INSURANCE', provider: '全国健康保険協会' }],
+    persons: [{ id: 'person-1', version: 1, relationshipLabel: '配偶者' }],
+  })
+  const guidanceScope = { ...scope, procedureIds: ['kyoukaikenpo-burial-benefit'], municipality: null }
+  assert.equal(buildProcedureResearchBrief(buildCoreContext(renamed, 'task_guidance'), { scope: guidanceScope, allowDraftDefinitions: false, configuredCatalogIds: new Set(['catalog-1']) }).status, 'ready')
 })
 
 test('canonical hash is independent of object key order but preserves array order', () => {

@@ -150,15 +150,18 @@ test('#162 invalid Core output is regenerated once without repeating research', 
   assert.match(JSON.stringify(core.calls[4]), /repair/)
 })
 
-test('#162 a second invalid Core output fails without silent truncation or reporting', async () => {
+test('#162 a second invalid Core output falls back to verified quotes without truncating model text', async () => {
   const longText = '長'.repeat(TASK_GUIDANCE_LIMITS.bringItemChars + 1)
   const invalid = { ...draft, bring: [claim(longText)] }
   const { deps, reported, core, research } = setup(synthesizedFindings, [invalid, invalid])
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
-  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
+  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
   assert.equal(core.calls.length, 5)
   assert.equal(research.calls.length, 3)
-  assert.equal(reported.length, 0)
+  assert.equal(reported.length, 1)
+  assert.equal(reported[0]?.kind === 'task_guidance' ? reported[0].status : null, 'PARTIAL')
+  assert.equal(JSON.stringify(reported).includes(longText), false)
+  assert.match(JSON.stringify(reported), /架空書類Aを架空機関の窓口で確認する/)
 })
 
 test('#162 general research stays PARTIAL until Case applicability is confirmed', async () => {
@@ -277,19 +280,20 @@ test('route gate must succeed before any model call', async () => {
 })
 
 test('core cannot report COMPLETED after incomplete, failed or contradictory research with real retrieved citations', async () => {
-  for (const unresolved of [
-    { ...synthesizedFindings, status: 'partial', missing: ['一部の書類が未確認'] },
-    { ...synthesizedFindings, status: 'needs_input', missing: ['適用条件が不明'] },
-    { ...synthesizedFindings, status: 'failed', missing: ['調査に失敗'] },
-    { ...synthesizedFindings, status: 'partial', conflicts: ['資料間で必要書類が異なる'] },
-    { ...synthesizedFindings, missing: ['完了という自己申告に反して不足あり'] },
-    { ...synthesizedFindings, conflicts: ['完了という自己申告に反して矛盾あり'] },
-  ]) {
+  for (const [unresolved, expected] of [
+    [{ ...synthesizedFindings, status: 'partial', missing: ['一部の書類が未確認'] }, 'success'],
+    [{ ...synthesizedFindings, status: 'needs_input', missing: ['適用条件が不明'] }, 'success'],
+    [{ ...synthesizedFindings, status: 'failed', missing: ['調査に失敗'] }, 'success'],
+    [{ ...synthesizedFindings, status: 'partial', conflicts: ['資料間で必要書類が異なる'] }, 'success'],
+    [{ ...synthesizedFindings, missing: ['完了という自己申告に反して不足あり'] }, 'failed'],
+    [{ ...synthesizedFindings, conflicts: ['完了という自己申告に反して矛盾あり'] }, 'failed'],
+  ] as const) {
     const { deps, reported, core, research } = setup(unresolved)
     const run = await createProcedureGuidanceWorkflow(deps).createRun()
     const result = await run.start({ inputData: { resultId: 'result-1' } })
-    assert.equal(result.status, 'failed', JSON.stringify(unresolved))
-    assert.equal(reported.length, 0)
+    assert.equal(result.status, expected, JSON.stringify(unresolved))
+    if (expected === 'success') assert.equal(reported[0]?.kind === 'task_guidance' ? reported[0].status : null, 'PARTIAL')
+    else assert.equal(reported.length, 0)
     assert.equal(research.calls.length, 3, 'source was really retrieved before the incomplete findings')
     assert.ok(core.calls.length <= 4, 'research cannot trigger a synthesis retry loop')
   }
@@ -405,7 +409,7 @@ test('#163 各項目の引用を出典URLと見出し付きで報告する', asy
   }
 })
 
-test('#164 構造化出力がスキーマに合わない場合だけ1回再生成し、2回目も合わなければ失敗する', async () => {
+test('#164 Research構造化出力を1回修復し、2回目も不正なら安全なPARTIALを返す', async () => {
   // 実モデルで見られた失敗: evidenceを別の要素として返す。
   const malformed = { status: 'complete', missing: [], conflicts: [],
     answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する' }, { evidence }] }
@@ -431,9 +435,13 @@ test('#164 構造化出力がスキーマに合わない場合だけ1回再生�
   const failing = setup()
   failing.deps.models = { ...failing.deps.models, research: twice.model }
   const failed = await createProcedureGuidanceWorkflow(failing.deps).createRun()
-  assert.equal((await failed.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
+  assert.equal((await failed.start({ inputData: { resultId: 'result-1' } })).status, 'success')
   assert.equal(twice.calls.length, 4, '再試行は1回まで')
-  assert.equal(failing.reported.length, 0)
+  const guidance = failing.reported[0]
+  if (guidance?.kind !== 'task_guidance') assert.fail()
+  assert.equal(guidance.status, 'PARTIAL')
+  assert.deepEqual([guidance.where, guidance.bring, guidance.steps], [null, [], []])
+  assert.ok(guidance.missing.includes('調査結果を表示可能な形式へ整えられませんでした。'))
 })
 
 test('#183 evidence件数超過を検証済み上限へ収め、Provider成功後のRunを失敗させない', async () => {
