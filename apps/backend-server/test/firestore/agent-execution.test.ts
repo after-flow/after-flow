@@ -119,6 +119,7 @@ describeFirestore('AI実行の受付', () => {
 
     assert.equal(response.status, 403)
     assert.equal(response.body.error.code, 'CONSENT_REQUIRED')
+    assert.equal(response.body.error.details.requiredConsent, 'CROSS_BORDER_AI')
     // 手動管理は引き続き使えることを伝える。
     assert.ok(response.body.error.details.availableFeatures.length > 0)
   })

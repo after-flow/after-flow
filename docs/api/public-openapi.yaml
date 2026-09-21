@@ -7357,7 +7357,7 @@ paths:
     post:
       operationId: registerDocument
       summary: 原本を登録する
-      description: PDF・JPEG・PNG、1ファイル10 MiBまで。Content-Typeの申告だけでなく実体を検査する。保存完了と解析受付は別の状態で、検査に合格していない書類は解析対象にしない。
+      description: PDF・JPEG・PNG、1ファイル10 MiBまで。Content-Typeの申告だけでなく実体を検査する。保存完了と解析受付は別の状態で、検査に合格していない書類は解析対象にしない。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は保存前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。
       tags:
         - documents
       security:
@@ -16477,7 +16477,7 @@ paths:
     post:
       operationId: postMessage
       summary: 発言して回答を依頼する
-      description: 202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を受け付けられない場合も発言は残し、理由を返す。
+      description: 202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を接続未了で受け付けられない場合も発言は残し、理由を返す。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は発言を保存する前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。
       tags:
         - chat
       security:
@@ -16827,7 +16827,7 @@ paths:
     post:
       operationId: requestTaskGuidance
       summary: 手続きの案内を依頼する
-      description: 公開された業務操作としてのみ受け付ける。任意のAgent・モデル・Prompt・URLは指定できない。
+      description: 公開された業務操作としてのみ受け付ける。任意のAgent・モデル・Prompt・URLは指定できない。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は保存前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。
       tags:
         - chat
       security:

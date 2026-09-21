@@ -7,7 +7,7 @@ import { DocumentService } from '../../src/application/document/document-service
 import type { ObjectStorage, StoredObject } from '../../src/application/ports/object-storage.js'
 import { PLACEHOLDER_CATALOG } from '../../src/domain/consent/catalog.js'
 import { collections } from '../../src/domain/shared/collections.js'
-import { agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
+import { agreeExternalAiConsent, agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
 import { describeFirestore, newTenantId, readRepository, unitOfWork, workContext } from './helpers/emulator.js'
 
 async function setup() {
@@ -16,6 +16,7 @@ async function setup() {
   await seedTenantMember(tenantId, user.userId)
   const app = buildApp(tenantId, user.userId)
   await agreeRequiredConsents(app)
+  await agreeExternalAiConsent(app)
   const created = await call(app, '/cases', jsonRequest('POST', {
     deceasedName: '架空 太郎', dateOfDeath: '2026-04-01',
     ownerName: '架空 花子', relationshipToDeceased: '配偶者',
