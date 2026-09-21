@@ -21,13 +21,18 @@ const brief = { briefId: scope.id, procedure: scope.procedure, institution: scop
   questions: scope.questions, sourceCatalogIds: scope.sourceCatalogIds }
 const claim = (text: string) => ({ text, questionIds: ['documents'] })
 const draft = { status: 'complete', where: claim('架空機関の窓口'), bring: [claim('架空書類A')], steps: [claim('窓口で確認する')], missing: [] }
+const planDecision = { plan: [
+  { action: 'REQUEST_RESEARCH', questionIds: ['documents'] },
+  { action: 'GENERATE_GUIDANCE', questionIds: [] },
+  { action: 'REPORT', questionIds: [] },
+], nextAction: 'REQUEST_RESEARCH' }
 const SOURCE_TEXT = '架空書類Aを架空機関の窓口で確認する。'
 const evidence = [{ sourceId: 'source-1', sectionId: 's1', quote: '架空書類Aを架空機関の窓口で確認する' }]
 const synthesizedFindings = { status: 'complete', answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する', evidence }], missing: [], conflicts: [] }
 const findings = { ...synthesizedFindings, answers: synthesizedFindings.answers.map(answer => ({ ...answer, sourceIds: ['source-1'], applicability: '架空市の架空機関が扱う架空手続き' })) }
 
 function setup(researchFindings: unknown = synthesizedFindings, coreDrafts: readonly unknown[] = [draft]) {
-  const core = scriptedModel(coreDrafts.map(value => ({ text: JSON.stringify(value) })))
+  const core = scriptedModel([planDecision, ...coreDrafts].map(value => ({ text: JSON.stringify(value) })))
   const research = scriptedModel([
     { text: JSON.stringify(researchFindings) },
   ])
@@ -62,13 +67,18 @@ test('P-01 uses both real Mastra agents and tools, rechecks context, and reports
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   const result = await run.start({ inputData: { resultId: 'result-1' } })
   assert.equal(result.status, 'success', JSON.stringify(result))
+  if (result.status !== 'success') assert.fail()
+  assert.equal(result.result.workingState.nextAction, 'DONE')
+  assert.deepEqual(result.result.workingState.completedActions, ['REQUEST_RESEARCH', 'GENERATE_GUIDANCE', 'REPORT'])
+  assert.equal(result.result.workingState.evidence[0]?.sourceId, 'source-1')
+  assert.ok(result.steps['execute-approved-research']?.status === 'success')
   assert.equal(reported.length, 1)
   assert.equal(reported[0].kind, 'task_guidance')
   if (reported[0].kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'COMPLETED')
   assert.deepEqual(reported[0].bring, ['架空書類A'])
   assert.deepEqual(reported[0].sources.map(source => source.url), [candidate.url])
-  assert.equal(core.calls.length, 1)
+  assert.equal(core.calls.length, 2)
   assert.equal(research.calls.length, 1)
   assert.deepEqual(core.calls[0]!.toolChoice, { type: 'none' })
   assert.deepEqual(research.calls[0]!.toolChoice, { type: 'none' })
@@ -101,10 +111,10 @@ test('#162 invalid Core output is regenerated once without repeating research', 
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   const result = await run.start({ inputData: { resultId: 'result-1' } })
   assert.equal(result.status, 'success', JSON.stringify(result))
-  assert.equal(core.calls.length, 2)
+  assert.equal(core.calls.length, 3)
   assert.equal(research.calls.length, 1)
   assert.deepEqual(reported[0]?.kind === 'task_guidance' ? reported[0].bring : [], ['架空書類A'])
-  assert.match(JSON.stringify(core.calls[1]), /repair/)
+  assert.match(JSON.stringify(core.calls[2]), /repair/)
 })
 
 test('#162 a second invalid Core output fails without silent truncation or reporting', async () => {
@@ -113,7 +123,7 @@ test('#162 a second invalid Core output fails without silent truncation or repor
   const { deps, reported, core, research } = setup(synthesizedFindings, [invalid, invalid])
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
-  assert.equal(core.calls.length, 2)
+  assert.equal(core.calls.length, 3)
   assert.equal(research.calls.length, 1)
   assert.equal(reported.length, 0)
 })
@@ -139,7 +149,7 @@ test('no reviewed source returns a bounded partial result without invoking eithe
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   const result = await run.start({ inputData: { resultId: 'result-1' } })
   assert.equal(result.status, 'success', JSON.stringify(result))
-  assert.equal(core.calls.length, 0)
+  assert.equal(core.calls.length, 1)
   assert.equal(research.calls.length, 0)
   assert.equal(reported[0]?.kind, 'task_guidance')
   if (reported[0]?.kind !== 'task_guidance') assert.fail()
@@ -195,7 +205,7 @@ test('core cannot report COMPLETED after incomplete, failed or contradictory res
     assert.equal(result.status, 'failed', JSON.stringify(unresolved))
     assert.equal(reported.length, 0)
     assert.equal(research.calls.length, 1, 'source was really retrieved before the incomplete findings')
-    assert.ok(core.calls.length <= 1, 'research cannot trigger a synthesis retry loop')
+    assert.ok(core.calls.length <= 2, 'research cannot trigger a synthesis retry loop')
   }
 })
 
@@ -204,7 +214,7 @@ test('missing required questions block completion even when core cites a retriev
   deps.scope = { ...scope, questions: [...scope.questions, { id: 'eligibility', text: '適用条件は何か' }] }
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
-  assert.equal(core.calls.length, 0)
+  assert.equal(core.calls.length, 1)
   assert.equal(reported.length, 0)
 })
 
@@ -266,7 +276,8 @@ test('#163 本文と一致しない引用の回答は採用せず、案内を完
   // 本文に無い「郵送」を引用と称して書いた回答。
   const fabricated = { ...synthesizedFindings, answers: [{ questionId: 'documents', text: '架空書類Aを郵送する',
     evidence: [{ sourceId: 'source-1', sectionId: 's1', quote: '架空書類Aを架空機関へ郵送する' }] }] }
-  const core = scriptedModel([{ text: JSON.stringify({ ...draft, status: 'partial', missing: ['提出方法'] }) }])
+  const core = scriptedModel([planDecision, { ...draft, status: 'partial', missing: ['提出方法'] }]
+    .map(value => ({ text: JSON.stringify(value) })))
   const { deps, reported } = setup(fabricated)
   deps.models = { ...deps.models, core: core.model }
   const run = await createProcedureGuidanceWorkflow(deps).createRun()

@@ -110,7 +110,7 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
     const runtime = new DurableExecutionRuntime({ store: new FirestoreExecutions(db, limits), snapshots, vault,
       client: dispatch => new BackendClient(config.backend, dispatch), sectionTimeoutMs: config.sectionTimeoutMs,
       handlers: {
-        task_guidance: createGuidanceHandler({ storage, prepare: async session => {
+        task_guidance: createGuidanceHandler({ storage, snapshots, prepare: async session => {
           const prepared = await prepare(session)
           return { ...prepared, authorizeRoute: async () => ({ routeId: 'procedure-guidance/v1' as const, evidenceId: prepared.evidenceId }) }
         } }),
