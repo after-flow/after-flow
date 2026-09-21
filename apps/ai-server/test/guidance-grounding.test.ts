@@ -38,10 +38,17 @@ const ground = (draft: Partial<{ where: ModelClaim | null; bring: ModelClaim[]; 
 const complete = { where: c('加入していた支部へ郵送するか、電子申請する。', 'submission'), bring: [c('申請書', 'submission')],
   steps: [c('埋葬料は50,000円。', 'amount'), c('埋葬料は死亡した日の翌日から2年以内に申請する。', 'deadline')] }
 
-test('#163 引用は本文と逐語で一致する場合だけ採用し、空白と全角半角の揺れだけを許す', () => {
+test('#163 引用は本文と逐語で一致する場合だけ採用し、表記の揺れだけを許す', () => {
   const sources = new Map([[source.id, source]])
   assert.ok(verifyQuote(quote('s2', '埋葬料は一律５０,０００円です'), sources))
   assert.ok(verifyQuote(quote('s1', '申請書は加入している 支部へ郵送'), sources))
+  // 実モデルで見られた写し間違い: 文末の「。」の追加、見出しと本文の連結、注記の印の欠落（#164）。
+  assert.ok(verifyQuote(quote('s1', '電子申請もご利用いただけます。'), sources))
+  assert.ok(verifyQuote(quote('s3', '申請期限、埋葬料は死亡した日の翌日から2年'), sources))
+  assert.ok(verifyQuote(quote('s2', '埋葬料は一律50,000円※1です'), sources))
+  // 語を足したり省いたりした引用は一致しない。
+  assert.ok(!verifyQuote(quote('s1', '加入の支部へ郵送してください'), sources))
+  assert.ok(!verifyQuote(quote('s1', '申請書は支部へ郵送してください'), sources))
   // 言い換え・別区分・未取得資料は一致しない。
   assert.ok(!verifyQuote(quote('s1', '申請書は支部の窓口へ提出してください'), sources))
   assert.ok(!verifyQuote(quote('s2', '申請書は加入している支部へ郵送'), sources))
@@ -55,10 +62,13 @@ test('#163 捏造した引用の回答は捨て、問いを未確認に戻して
   assert.equal(findings.status, 'partial')
   assert.deepEqual(findings.answers.map(answer => answer.questionId), ['submission', 'amount'])
   assert.match(findings.missing.join(' '), /申請期限と起算日.*照合できませんでした/)
-  // 正しい引用に捏造した引用を混ぜた回答も、回答ごと採用しない。
+  // 正しい引用に捏造した引用を混ぜた回答は、一致した引用だけを残し、完了にしない（#164）。
   const mixed = { ...synthesis, answers: [synthesis.answers[0]!, synthesis.answers[1]!, { ...synthesis.answers[2]!,
     evidence: [...synthesis.answers[2]!.evidence, quote('s3', '埋葬費は死亡した日の翌日から2年')] }] }
-  assert.deepEqual(research(mixed).outcomes[0]!.findings!.answers.map(answer => answer.questionId), ['submission', 'amount'])
+  const kept = research(mixed).outcomes[0]!.findings!
+  assert.deepEqual(kept.answers.map(answer => answer.questionId), ['submission', 'amount', 'deadline'])
+  assert.deepEqual(kept.answers[2]!.evidence, synthesis.answers[2]!.evidence)
+  assert.equal(kept.status, 'partial')
 })
 
 test('#163 根拠が揃った案内は何も除かず、全ての問いを扱える', () => {
@@ -80,7 +90,9 @@ test('#163 引用に無い「窓口」「市役所」を含む主張は表示し
 })
 
 test('#163 住所や都道府県から支部を推測した主張を除き、確認方法を示す', () => {
-  for (const text of ['東京支部へ郵送する。', '東京都支部へ郵送する。', 'お住まいの地域を管轄する支部へ郵送する。', '住民票の住所の支部へ郵送する。']) {
+  for (const text of ['東京支部へ郵送する。', '東京都支部へ郵送する。', 'お住まいの地域を管轄する支部へ郵送する。', '住民票の住所の支部へ郵送する。',
+    // 実モデルの出力で見られた表現（#164）。
+    '各地方に支部があるため、最寄りの支部へ郵送する。']) {
     const outcome = ground({ ...complete, where: c(text, 'submission') })
     assert.equal(outcome.where, null, text)
     assert.match(outcome.dropped[0]!.reason, /^PROHIBITED:(prefecture|residence)-branch$/, text)
