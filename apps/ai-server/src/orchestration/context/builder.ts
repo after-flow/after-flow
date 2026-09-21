@@ -221,6 +221,8 @@ export const reviewedResearchScopeSchema = z.object({
   taskCategories: z.array(z.string().min(1).max(100)).min(1).max(20),
   sourceCatalogIds: z.array(internalId).min(1).max(20),
   questions: z.array(z.object({ id: internalId, text: z.string().min(1).max(300) }).strict()).min(1).max(12),
+  /** Case facts that must be confirmed before general research can be marked applicable. */
+  caseApplicabilityQuestions: z.array(z.string().min(1).max(200)).max(10).optional(),
 }).strict()
 
 /** Scope comes from reviewed configuration; none of these strings are copied from user messages. */

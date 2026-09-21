@@ -1,6 +1,18 @@
 import { z } from 'zod'
 
 export const INTERNAL_LIMITS = { bodyBytes: 131072, timeoutMs: 10000, authorizationSeconds: 300, requestSeconds: 60 } as const
+/** Shared task-guidance limits used by both model output validation and Backend transport. */
+export const TASK_GUIDANCE_LIMITS = {
+  targetChars: 200,
+  whereChars: 500,
+  bringItemChars: 200,
+  stepChars: 500,
+  missingItemChars: 200,
+  bringItems: 50,
+  stepItems: 50,
+  missingItems: 50,
+  sources: 20,
+} as const
 export const internalId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
 export const operationSchema = z.enum(['case_planning', 'task_guidance', 'chat_reply', 'document_analysis'])
 export const scopeSchema = z.enum(['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'proposals', 'wait-requests'])
@@ -36,12 +48,13 @@ const basisSchema = z.object({ type: z.enum(['DOCUMENT', 'TASK', 'MESSAGE']), id
 const resultBase = contextProofSchema.extend({ resultId: internalId, basis: z.array(basisSchema).max(20).default([]) })
 const guidanceSchema = resultBase.extend({
   kind: z.literal('task_guidance'), status: z.enum(['COMPLETED', 'PARTIAL', 'FAILED']),
-  target: z.string().max(200).nullable().optional(), where: z.string().max(500).nullable().optional(),
-  bring: z.array(z.string().max(200)).max(50).default([]), steps: z.array(z.string().max(500)).max(50).default([]),
+  target: z.string().max(TASK_GUIDANCE_LIMITS.targetChars).nullable().optional(), where: z.string().max(TASK_GUIDANCE_LIMITS.whereChars).nullable().optional(),
+  bring: z.array(z.string().max(TASK_GUIDANCE_LIMITS.bringItemChars)).max(TASK_GUIDANCE_LIMITS.bringItems).default([]),
+  steps: z.array(z.string().max(TASK_GUIDANCE_LIMITS.stepChars)).max(TASK_GUIDANCE_LIMITS.stepItems).default([]),
   formExampleUrl: z.string().url().max(2000).nullable().optional(), formExampleLabel: z.string().max(120).nullable().optional(),
   note: z.string().max(2000).nullable().optional(),
-  sources: z.array(z.object({ label: z.string().min(1).max(120), url: z.string().url().max(2000), checkedAt: z.string().datetime() }).strict()).max(20).default([]),
-  missing: z.array(z.string().max(200)).max(50).default([]), failureReason: z.string().max(500).nullable().optional(),
+  sources: z.array(z.object({ label: z.string().min(1).max(120), url: z.string().url().max(2000), checkedAt: z.string().datetime() }).strict()).max(TASK_GUIDANCE_LIMITS.sources).default([]),
+  missing: z.array(z.string().max(TASK_GUIDANCE_LIMITS.missingItemChars)).max(TASK_GUIDANCE_LIMITS.missingItems).default([]), failureReason: z.string().max(500).nullable().optional(),
 }).strict()
 const chatSchema = resultBase.extend({ kind: z.literal('chat_reply'), body: z.string().min(1).max(10000), professionalNotice: z.boolean().default(false) }).strict()
 export const runSummarySchema = z.object({

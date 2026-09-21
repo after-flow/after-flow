@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
-import { guidanceDraftSchema, guidanceResult } from '../../../orchestration/playbooks/guidance-output.js'
+import { GuidanceOutputContractError, guidanceDraftSchema, guidanceResult, requireCaseApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { finalizeResearchSynthesis, researchEvidenceSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { createGuidanceAgents } from '../agents/guidance-agents.js'
@@ -96,7 +96,8 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       })
       const findings = finalizeResearchSynthesis(researchResponse.object, selection.brief, tools.retrievedSourceIds(selection.brief.briefId))
       const research = researchEvidenceSchema.parse({ briefs: [selection.brief], outcomes: [{ briefId: selection.brief.briefId, findings }] })
-      const response = await coreAgent.generate(JSON.stringify({
+      const applicabilityQuestions = scope.caseApplicabilityQuestions ?? []
+      const coreInput = {
         goal: `対象手続きの案内を次の区分で作成してください。
 - where: 提出先を1件。根拠のsourceIdを付ける。
 - bring: 主な必要書類と条件付き追加書類を、書類ごとの配列にする。stepsへまとめず、必ず1件以上を入れる。
@@ -108,12 +109,48 @@ where、bring、stepsがすべて揃いmissingが空の場合だけstatusをcomp
         verifiedResearch: research,
         sources: sources.map(({ id, title, issuer, url, fetchedAt, updatedAt, location }) => ({ id, title, issuer, url, fetchedAt, updatedAt, location })),
         constraint: '調査はハーネスが完了しています。Research Agentへ再委譲せず、verifiedResearchだけを根拠に案内してください。',
-      }), {
-        maxSteps: 1, toolChoice: 'none',
-        structuredOutput: { schema: guidanceDraftSchema, errorStrategy: 'strict' }, abortSignal: deps.signal,
-      })
+        caseApplicability: {
+          confirmed: applicabilityQuestions.length === 0,
+          instruction: applicabilityQuestions.length
+            ? '次の案件固有情報は未確認です。statusをpartialにしてmissingへ含め、一般制度がこの案件に適用できると断定しないでください。'
+            : '案件固有の追加確認事項はありません。',
+          missing: applicabilityQuestions,
+        },
+      }
+      let draft: z.infer<typeof guidanceDraftSchema> | undefined
+      let validationIssues: { path: PropertyKey[]; code: string; message: string }[] = []
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt) await checkControl()
+        const response = await coreAgent.generate(JSON.stringify({
+          ...coreInput,
+          ...(attempt ? {
+            repair: {
+              instruction: '前回の出力は契約に適合しませんでした。内容を省略せず、項目を分けて上限内のJSONを再生成してください。文字列を途中で切りません。',
+              validationIssues,
+            },
+          } : {}),
+        }), {
+          maxSteps: 1, toolChoice: 'none',
+          // Mastra validates against the exact transport limits. `warn` lets the
+          // harness distinguish invalid model output from provider I/O failure.
+          structuredOutput: { schema: guidanceDraftSchema, errorStrategy: 'warn' }, abortSignal: deps.signal,
+        })
+        const parsed = guidanceDraftSchema.safeParse(response.object)
+        if (parsed.success) {
+          try {
+            draft = requireCaseApplicability(parsed.data, applicabilityQuestions)
+            break
+          } catch (error) {
+            if (!(error instanceof z.ZodError)) throw error
+            validationIssues = error.issues.map(issue => ({ path: issue.path, code: issue.code, message: issue.message }))
+            continue
+          }
+        }
+        validationIssues = parsed.error.issues.map(issue => ({ path: issue.path, code: issue.code, message: issue.message }))
+      }
+      if (!draft) throw new GuidanceOutputContractError()
       deps.signal.throwIfAborted()
-      return { ...inputData, draft: guidanceDraftSchema.parse(response.object), sources, research }
+      return { ...inputData, draft, sources, research }
     },
   })
   const report = createStep({
