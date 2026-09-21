@@ -242,7 +242,7 @@ export const INSIGHT_KIND_META: Record<
     bg: 'var(--color-state-blue-soft)',
   },
   INCONSISTENCY: {
-    label: '記載の食い違い',
+    label: '前提の変化・食い違い',
     icon: 'alert',
     fg: 'var(--color-state-yellow)',
     bg: 'var(--color-state-yellow-soft)',

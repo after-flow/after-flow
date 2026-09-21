@@ -19,6 +19,7 @@ import {
 } from '@/kit/kit'
 import { AiQuote, useCaseBase, useLock } from '@/kit/domain'
 import { UploadDialog } from './parts/UploadDialog'
+import { DocumentView } from './parts/DocumentView'
 
 /**
  * 提案の種類ごとのボタン文言。
@@ -295,7 +296,7 @@ function FieldRow({
 
 /**
  * 元の書類。
- * 実データでは PDF／画像を出す場所。いまは紙面の目安と、読み取った位置の枠だけを置く。
+ * 原本（PDF・画像）を出し、画像なら読み取った位置に枠を重ねる。
  */
 function SourcePreview({
   caseId,
@@ -306,7 +307,7 @@ function SourcePreview({
   approval: Approval
   picked: string | null
 }) {
-  const boxes = approval.diff.filter((d) => d.sourceBox)
+  const boxes = approval.diff.flatMap((d) => (d.sourceBox ? [{ field: d.field, box: d.sourceBox }] : []))
   if (!approval.sourceDocumentId) {
     return (
       <section className="flex flex-col items-center gap-2 rounded-lg border border-rd-border bg-rd-card px-4 py-12 text-center">
@@ -318,48 +319,30 @@ function SourcePreview({
   }
   return (
     <section className="flex flex-col rounded-lg border border-rd-border bg-rd-card p-3 xl:sticky xl:top-6">
-      <div className="flex items-center justify-between px-1 pb-2">
-        <span className="flex items-center gap-1.5 text-[0.9rem] font-bold text-rd-text-2">
-          <Icon name="document" size={15} />
-          {approval.sourceDocumentName ?? '元の書類'}
+      <div className="flex items-center justify-between gap-3 px-1 pb-2">
+        <span className="flex min-w-0 items-center gap-1.5 text-[0.9rem] font-bold text-rd-text-2">
+          <Icon name="document" size={15} className="shrink-0" />
+          <span className="truncate">{approval.sourceDocumentName ?? '元の書類'}</span>
         </span>
         <Link
           to={`/cases/${caseId}/documents/${approval.sourceDocumentId}`}
-          className="text-[0.86rem] font-bold text-rd-primary-text hover:underline"
+          className="shrink-0 text-[0.86rem] font-bold text-rd-primary-text hover:underline"
         >
-          元の書類を開く
+          書類の詳細
         </Link>
       </div>
-      <div className="relative h-64 overflow-hidden sm:h-80 xl:h-auto xl:aspect-[1/1.2] rounded-md border border-rd-border-2 bg-rd-shade px-6 py-5">
-        <div className="flex flex-col gap-3.5" aria-hidden>
-          <span className="mx-auto mb-2 h-2.5 w-28 rounded-sm bg-rd-border" />
-          {[68, 54, 86, 62, 76, 54, 82, 66, 58, 72, 60].map((w, i) => (
-            <div key={i} className="flex items-center gap-2.5">
-              <span className="h-2 shrink-0 rounded-sm bg-rd-border" style={{ width: w }} />
-              <span className="h-2 flex-1 rounded-sm bg-rd-border-2" />
-            </div>
-          ))}
-        </div>
-        {boxes.map((row) => {
-          const b = row.sourceBox!
-          const on = picked === row.field
-          return (
-            <span
-              key={row.field}
-              className={`absolute rounded border-2 transition-colors ${on ? 'border-rd-primary bg-rd-primary/15' : 'border-rd-primary-line bg-rd-primary/5'}`}
-              style={{ left: `${b.x * 100}%`, top: `${b.y * 100}%`, width: `${b.w * 100}%`, height: `${b.h * 100}%` }}
-            >
-              {on && (
-                <span className="absolute -top-5 -left-0.5 rounded bg-rd-primary px-1.5 text-[0.8rem] font-bold leading-[18px] whitespace-nowrap text-white">
-                  {row.field}
-                </span>
-              )}
-            </span>
-          )
-        })}
-      </div>
+      <DocumentView
+        caseId={caseId}
+        documentId={approval.sourceDocumentId}
+        fileName={approval.sourceDocumentName ?? '元の書類'}
+        boxes={boxes}
+        picked={picked}
+        heightClass="h-72 sm:h-96 xl:h-[min(36rem,calc(100vh-12rem))]"
+      />
       <p className="mt-2 px-1 text-[0.82rem] text-rd-text-3">
-        {boxes.length > 0 ? '項目にカーソルを合わせると、読み取った場所に枠が付きます。' : '読み取った場所の情報はありません。元の書類を開いて確かめてください。'}
+        {boxes.length > 0
+          ? '項目を選ぶと、読み取った場所に枠が付きます（画像の書類のみ）。'
+          : '読み取った場所の情報はありません。書類と見比べて確かめてください。'}
       </p>
     </section>
   )

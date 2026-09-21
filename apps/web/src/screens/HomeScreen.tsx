@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useApprovals, useCaseOverview, useInsights, useTasks } from '@/lib/api/queries'
-import type { FlowStage, Task } from '@aftercare/public-contracts'
+import { useApprovals, useCaseOverview, useInsights, useTasks, useUpdateInsightStatus } from '@/lib/api/queries'
+import type { FlowStage, Insight, Task } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
 import { formatDate, formatDateTime } from '@/lib/format'
-import { isDisplayableInsight } from '@/lib/insights'
+import { isCarriedOver, isDisplayableInsight } from '@/lib/insights'
+import { INSIGHT_KIND_META } from '@/lib/labels'
 import { AGENT_RUN_WORD, APPROVAL_KIND_WORD, FLOW_STAGE_WORD } from '@/kit/words'
 import { Badge, Button, Empty, ErrorState, LinkButton, Loading, Notice, Page, Panel } from '@/kit/kit'
 import { toast } from '@/kit/toast'
@@ -61,9 +62,10 @@ export function HomeScreen() {
   const pending = (approvals.data?.items ?? [])
     .filter((a) => a.status === 'PENDING')
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const newInsights = (insights.data?.items ?? []).filter(
-    (i) => i.status === 'NEW' && isDisplayableInsight(i),
-  )
+  const fresh = (insights.data?.items ?? []).filter((i) => i.status === 'NEW' && isDisplayableInsight(i))
+  // 止まっている手続き・前提の変化は「前回からの続き」に出すので、確認の件数には重ねて数えない
+  const carried = fresh.filter(isCarriedOver)
+  const newInsights = fresh.filter((i) => !isCarriedOver(i))
   const reviewCount = pending.length + newInsights.length
   const running = overview.data.recentAgentRuns.filter((r) => r.status === 'RUNNING')
 
@@ -109,6 +111,8 @@ export function HomeScreen() {
 
       {/* まずはこれ */}
       {first ? <FirstTask task={first} base={base} caseId={caseId} /> : <AllClear />}
+
+      {carried.length > 0 && <CarriedOver caseId={caseId} base={base} items={carried} />}
 
       {!overview.data.case.profile?.answeredAt && (
         <Notice
@@ -234,6 +238,66 @@ export function HomeScreen() {
 
       <FlowOverview stages={overview.data.flowStages} />
     </Page>
+  )
+}
+
+/**
+ * 前回からの続き。
+ * 止まっている手続きと、前提の変化（相続人が増えた・放棄があったなど）を、次に開いたときに知らせる。
+ */
+function CarriedOver({ caseId, base, items }: { caseId: string; base: string; items: Insight[] }) {
+  const update = useUpdateInsightStatus(caseId)
+  return (
+    <Panel title="前回からの続き" padded={false}>
+      <ul>
+        {items.slice(0, 4).map((ins) => {
+          const meta = INSIGHT_KIND_META[ins.kind]
+          return (
+            <li key={ins.id} className="flex gap-3 border-b border-rd-border-2 px-4 py-3 last:border-b-0">
+              <span
+                aria-hidden
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-md"
+                style={{ background: meta.bg, color: meta.fg }}
+              >
+                <Icon name={meta.icon} size={17} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[0.86rem] font-bold" style={{ color: meta.fg }}>{meta.label}</p>
+                <p className="mt-0.5 text-[0.94rem] leading-relaxed">
+                  <span className="mr-1 text-[0.8rem] font-bold text-rd-primary-text">[AI]</span>
+                  {ins.body}
+                </p>
+                {ins.requiresProfessional && (
+                  <p className="mt-1 text-[0.86rem] text-rd-text-2">法律の判断を含みます。専門家にご確認ください。</p>
+                )}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {ins.relatedTaskId && (
+                    <LinkButton to={`${base}/tasks/${ins.relatedTaskId}`} size="sm">
+                      {ins.relatedTaskTitle ?? '手続き'}を開く
+                    </LinkButton>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={update.isPending}
+                    onClick={() => void update.mutateAsync({ id: ins.id, status: 'ACKNOWLEDGED' })}
+                  >
+                    読みました
+                  </Button>
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+      {items.length > 4 && (
+        <div className="px-4 pb-3">
+          <Link to={`${base}/approvals?tab=insights`} className="text-[0.9rem] font-bold text-rd-primary-text hover:underline">
+            ほか{items.length - 4}件を見る
+          </Link>
+        </div>
+      )}
+    </Panel>
   )
 }
 

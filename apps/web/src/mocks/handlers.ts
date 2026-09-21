@@ -9,6 +9,8 @@ import {
 } from './db'
 import { analysisRuns, isMaskedCase, startAnalysis } from './analysis'
 import { deliberationDue, syncRuleTasks } from './rules'
+import { sampleContent, uploadedFiles } from './content'
+import { watchCase } from './watch'
 import type {
   Approval,
   Asset,
@@ -29,6 +31,12 @@ import type {
 
 const BASE = '/api/v1'
 const list = <T>(items: T[]) => HttpResponse.json({ items, total: items.length })
+
+/** 担当者の名前は、人の登録から毎回引く（名前の直し・削除に追従させるため） */
+function withAssignee(t: Task): Task {
+  const person = t.assigneeId ? db.persons.find((p) => p.id === t.assigneeId) : undefined
+  return { ...t, assigneeId: person?.id, assigneeName: person?.name }
+}
 
 /** マイナンバーが載っている可能性が高い書類は受け付けない（企画書セクション5） */
 const MY_NUMBER_HINTS = ['マイナンバー', '個人番号', '住民票', '源泉徴収', 'mynumber']
@@ -307,6 +315,7 @@ export const handlers = [
       extractions: [],
     }
     db.documents.unshift(doc)
+    uploadedFiles.set(doc.id, file)
 
     // 読み取りの完了をあとから反映する（document_analysis の代役。ファイル名で結果を出し分ける）
     startAnalysis(doc)
@@ -321,14 +330,24 @@ export const handlers = [
       : HttpResponse.json({ code: 'NOT_FOUND', message: '書類が見つかりません' }, { status: 404 })
   }),
 
+  // 原本。本物の Backend と同じ道筋（ケースの下）で返す
+  http.get(`${BASE}/cases/:caseId/documents/:documentId/content`, async ({ params }) => {
+    const doc = db.documents.find((d) => d.id === params.documentId && d.caseId === params.caseId)
+    if (!doc) return HttpResponse.json({ code: 'NOT_FOUND', message: '書類が見つかりません' }, { status: 404 })
+    await delay(300)
+    const blob = uploadedFiles.get(doc.id) ?? sampleContent(doc)
+    return new HttpResponse(blob, { headers: { 'Content-Type': blob.type || 'application/octet-stream' } })
+  }),
+
   http.delete(`${BASE}/documents/:documentId`, ({ params }) => {
     db.documents = db.documents.filter((d) => d.id !== params.documentId)
+    uploadedFiles.delete(String(params.documentId))
     return new HttpResponse(null, { status: 204 })
   }),
 
   /* ---------- Task ---------- */
   http.get(`${BASE}/cases/:caseId/tasks`, ({ params }) =>
-    list(db.tasks.filter((t) => t.caseId === params.caseId)),
+    list(db.tasks.filter((t) => t.caseId === params.caseId).map(withAssignee)),
   ),
 
   http.post(`${BASE}/cases/:caseId/tasks`, async ({ params, request }) => {
@@ -355,7 +374,7 @@ export const handlers = [
     const t = db.tasks.find((x) => x.id === params.taskId)
     if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
     return HttpResponse.json({
-      ...t,
+      ...withAssignee(t),
       evidences: db.evidences.filter((e) => e.taskId === t.id),
     })
   }),
@@ -363,9 +382,17 @@ export const handlers = [
   http.patch(`${BASE}/tasks/:taskId`, async ({ params, request }) => {
     const t = db.tasks.find((x) => x.id === params.taskId)
     if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
-    const body = (await request.json()) as Partial<Task>
-    Object.assign(t, body, { updatedAt: new Date().toISOString() })
-    return HttpResponse.json(t)
+    const body = (await request.json()) as Partial<Task> & { assigneeId?: string | null }
+    if (body.assigneeId) {
+      const person = db.persons.find((p) => p.id === body.assigneeId && p.caseId === t.caseId)
+      if (!person || person.excludedAt) {
+        return HttpResponse.json({ code: 'PRECONDITION_FAILED', message: 'その方は担当にできません' }, { status: 409 })
+      }
+    }
+    const { assigneeId, assigneeName: _ignored, ...rest } = body
+    Object.assign(t, rest, { updatedAt: new Date().toISOString() })
+    if (assigneeId !== undefined) t.assigneeId = assigneeId ?? undefined
+    return HttpResponse.json({ ...withAssignee(t), evidences: db.evidences.filter((e) => e.taskId === t.id) })
   }),
 
   http.post(`${BASE}/tasks/:taskId/complete`, ({ params }) => {
@@ -373,7 +400,7 @@ export const handlers = [
     if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
     t.status = 'COMPLETED'
     t.updatedAt = new Date().toISOString()
-    return HttpResponse.json(t)
+    return HttpResponse.json({ ...withAssignee(t), evidences: db.evidences.filter((e) => e.taskId === t.id) })
   }),
 
   http.post(`${BASE}/tasks/:taskId/reopen`, ({ params }) => {
@@ -381,7 +408,7 @@ export const handlers = [
     if (!t) return HttpResponse.json({ code: 'NOT_FOUND', message: '見つかりません' }, { status: 404 })
     t.status = 'ACTION_REQUIRED'
     t.updatedAt = new Date().toISOString()
-    return HttpResponse.json(t)
+    return HttpResponse.json({ ...withAssignee(t), evidences: db.evidences.filter((e) => e.taskId === t.id) })
   }),
 
   http.post(`${BASE}/tasks/:taskId/evidences`, async ({ params, request }) => {
@@ -541,13 +568,14 @@ export const handlers = [
   }),
 
   /* ---------- Insight ---------- */
-  http.get(`${BASE}/cases/:caseId/insights`, ({ params }) =>
-    list(
+  http.get(`${BASE}/cases/:caseId/insights`, ({ params }) => {
+    watchCase(String(params.caseId))
+    return list(
       db.insights
         .filter((i) => i.caseId === params.caseId)
         .sort((a, b) => b.detectedAt.localeCompare(a.detectedAt)),
-    ),
-  ),
+    )
+  }),
 
   http.patch(`${BASE}/insights/:id`, async ({ params, request }) => {
     const i = db.insights.find((x) => x.id === params.id)

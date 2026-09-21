@@ -83,10 +83,37 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   return json as T
 }
 
+/**
+ * 書類の原本のように、JSON ではない中身を受け取る。
+ * 認証ヘッダーが要るため <img src> に URL を直接渡せず、いったん Blob として受け取る。
+ */
+export async function requestBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const headers: Record<string, string> = {}
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(`${BASE_URL}${path}`, { headers, signal })
+  if (res.status === 401) {
+    setToken(null)
+    onUnauthorized?.()
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    let body: ApiError | null = null
+    try {
+      body = text ? (JSON.parse(text) as ApiError) : null
+    } catch {
+      body = null
+    }
+    throw new HttpError(res.status, body)
+  }
+  return res.blob()
+}
+
 export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: <T>(path: string, formData: FormData) => request<T>(path, { method: 'POST', formData }),
+  blob: (path: string, signal?: AbortSignal) => requestBlob(path, signal),
 }

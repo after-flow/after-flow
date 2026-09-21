@@ -2,13 +2,21 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   useAddEvidence,
+  useAssignTask,
   useCaseOverview,
+  useInsights,
+  usePersons,
   useReopenTask,
   useTask,
   useTasks,
+  useUpdateInsightStatus,
+  useUpdateRequiredDocuments,
   useUpdateTaskStatus,
 } from '@/lib/api/queries'
-import type { Evidence, TaskStatus } from '@aftercare/public-contracts'
+import type { Evidence, RequiredDocument, Task, TaskStatus } from '@aftercare/public-contracts'
+import { toast } from '@/kit/toast'
+import { isCarriedOver, isDisplayableInsight } from '@/lib/insights'
+import { INSIGHT_KIND_META } from '@/lib/labels'
 import { Icon } from '@/kit/Icon'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { TASK_STATUS_ORDER } from '@/lib/labels'
@@ -102,8 +110,6 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
   const done = task.status === 'COMPLETED'
   const unmet = (task.dependencies ?? []).filter((x) => !x.satisfied)
   const where = g?.where ?? task.submitTo
-  const docs = task.requiredDocuments ?? []
-  const extraBring = (g?.bring ?? []).filter((b) => !docs.some((r) => r.label === b))
   const form = safeExternalUrl(g?.formExampleUrl)
 
   const dueTone = !d || done
@@ -149,6 +155,8 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
           }
         />
       )}
+
+      <CarriedOver caseId={caseId} taskId={task.id} />
 
       {/* 1列表示のとき：窓口で真っ先に見たい「期限」を上に出す */}
       {d && (
@@ -205,35 +213,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
               </InfoBlock>
 
               <InfoBlock icon="bag" title="持ち物">
-                {docs.length === 0 && extraBring.length === 0 ? (
-                  <span className="text-rd-text-3">登録されている持ち物はありません</span>
-                ) : (
-                  <ul className="mt-1 flex flex-col gap-1.5">
-                    {docs.map((r) => (
-                      <li key={r.id} className="flex items-center gap-2">
-                        <Icon
-                          name={r.collected ? 'check-circle' : 'circle'}
-                          size={17}
-                          className={r.collected ? 'text-rd-success-text' : 'text-rd-text-3'}
-                        />
-                        <span className={r.collected ? 'text-rd-text-2 line-through decoration-rd-text-3' : ''}>
-                          {r.label}
-                        </span>
-                        {r.collected && r.documentId && (
-                          <Link to={`${base}/documents/${r.documentId}`} className="text-[0.82rem] text-rd-primary-text underline">
-                            追加した書類
-                          </Link>
-                        )}
-                      </li>
-                    ))}
-                    {extraBring.map((b, i) => (
-                      <li key={`b${i}`} className="flex items-center gap-2">
-                        <Icon name="circle" size={17} className="text-rd-text-3" />
-                        {b}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <BringList caseId={caseId} base={base} task={task} />
               </InfoBlock>
 
               {(g?.steps?.length ?? 0) > 0 && (
@@ -370,7 +350,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
             <DList
               rows={[
                 { label: '種類', value: task.category },
-                { label: '担当', value: task.assigneeName ?? '未設定' },
+                { label: '担当', value: <AssigneeSelect caseId={caseId} task={task} ownerName={overview.data?.case.ownerName} /> },
                 { label: '追加された理由', value: SOURCE_LABEL[task.source] },
                 { label: '最終更新', value: formatDateTime(task.updatedAt) },
               ]}
@@ -469,5 +449,145 @@ function EvidenceDialog({ caseId, taskId, open, onClose }: { caseId: string; tas
         </Field>
       </div>
     </Confirm>
+  )
+}
+
+/**
+ * 前回からの持ち越し。
+ * この手続きが止まっている・前提が変わった、という気づきを、手続きを開いたときにも出す。
+ */
+function CarriedOver({ caseId, taskId }: { caseId: string; taskId: string }) {
+  const insights = useInsights(caseId)
+  const update = useUpdateInsightStatus(caseId)
+  const items = (insights.data?.items ?? []).filter(
+    (i) =>
+      i.relatedTaskId === taskId &&
+      i.status === 'NEW' &&
+      isCarriedOver(i) &&
+      isDisplayableInsight(i),
+  )
+  if (items.length === 0) return null
+  return (
+    <>
+      {items.map((ins) => (
+        <Notice
+          key={ins.id}
+          tone="warning"
+          title={INSIGHT_KIND_META[ins.kind].label}
+          action={
+            <Button size="sm" disabled={update.isPending} onClick={() => void update.mutateAsync({ id: ins.id, status: 'ACKNOWLEDGED' })}>
+              読みました
+            </Button>
+          }
+        >
+          <span className="mr-1 text-[0.8rem] font-bold text-rd-primary-text">[AI]</span>
+          {ins.body}
+          {ins.requiresProfessional && (
+            <span className="mt-1 block text-[0.86rem] text-rd-text-2">法律の判断を含みます。専門家にご確認ください。</span>
+          )}
+        </Notice>
+      ))}
+    </>
+  )
+}
+
+/**
+ * 持ち物のチェック。
+ * 窓口や家で1つずつ消し込めるよう、行全体を押せる大きさにする。
+ * 案内にだけ載っている持ち物も、押したときに持ち物の一覧へ加えて記録する。
+ */
+function BringList({ caseId, base, task }: { caseId: string; base: string; task: Task }) {
+  const update = useUpdateRequiredDocuments(caseId)
+  const docs = task.requiredDocuments ?? []
+  const bring = task.guidance?.bring ?? []
+  /*
+    並びは押しても変えない（窓口で消し込んでいる最中に行が動くと押し間違える）。
+    持ち物の一覧 → 案内に載っている持ち物、の順。案内の持ち物は、押して記録した後も案内の位置に出す。
+  */
+  const fromBring = (r: RequiredDocument) => r.id.startsWith('bring_') && bring.includes(r.label)
+  const rows: { label: string; doc?: RequiredDocument }[] = [
+    ...docs.filter((r) => !fromBring(r)).map((r) => ({ label: r.label, doc: r })),
+    ...bring
+      .filter((b) => !docs.some((r) => r.label === b && !fromBring(r)))
+      .map((b) => ({ label: b, doc: docs.find((r) => r.label === b && fromBring(r)) })),
+  ]
+  const total = rows.length
+  if (total === 0) return <span className="text-rd-text-3">登録されている持ち物はありません</span>
+  const ready = rows.filter((r) => r.doc?.collected).length
+
+  const save = (next: RequiredDocument[]) => void update.mutateAsync({ taskId: task.id, requiredDocuments: next }).catch(() => {})
+  const toggle = (id: string) => save(docs.map((r) => (r.id === id ? { ...r, collected: !r.collected } : r)))
+  const addChecked = (label: string) =>
+    save([...docs, { id: `bring_${crypto.randomUUID().slice(0, 8)}`, label, collected: true, source: 'AI' }])
+
+  return (
+    <div className="mt-1">
+      <p className="text-[0.86rem] text-rd-text-2" aria-live="polite">
+        {ready === total ? '全部そろいました' : `${total}点のうち${ready}点を用意できました`}
+        <span className="ml-1.5 text-rd-text-3">（押すと印が付きます）</span>
+      </p>
+      <ul className="mt-1.5 flex flex-col">
+        {rows.map(({ label, doc }) => {
+          const on = Boolean(doc?.collected)
+          return (
+            <li key={doc?.id ?? `bring-${label}`} className="flex flex-wrap items-center gap-x-2 border-b border-rd-border-2 last:border-b-0">
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={on}
+                onClick={() => (doc ? toggle(doc.id) : addChecked(label))}
+                className="flex min-h-11 min-w-0 flex-1 items-center gap-2.5 py-1.5 text-left hover:bg-rd-bg"
+              >
+                <Icon
+                  name={on ? 'check-circle' : 'circle'}
+                  size={20}
+                  className={`shrink-0 ${on ? 'text-rd-success-text' : 'text-rd-text-3'}`}
+                />
+                <span className={on ? 'text-rd-text-2 line-through decoration-rd-text-3' : ''}>{label}</span>
+              </button>
+              {on && doc?.documentId && (
+                <Link to={`${base}/documents/${doc.documentId}`} className="py-2 text-[0.82rem] text-rd-primary-text underline">
+                  追加した書類
+                </Link>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+/** 担当者。家族で手分けするときに、誰が進めるかを決めておく。 */
+function AssigneeSelect({ caseId, task, ownerName }: { caseId: string; task: Task; ownerName?: string }) {
+  const persons = usePersons(caseId)
+  const assign = useAssignTask(caseId)
+  const people = (persons.data?.items ?? []).filter((p) => !p.excludedAt)
+
+  return (
+    <select
+      className={`${inputClass} h-9 py-0`}
+      aria-label="担当"
+      value={task.assigneeId ?? ''}
+      disabled={assign.isPending || !persons.data}
+      onChange={async (e) => {
+        const id = e.target.value || null
+        try {
+          await assign.mutateAsync({ taskId: task.id, assigneeId: id })
+        } catch {
+          return // 失敗の知らせは共通の処理（MutationCache）が出す
+        }
+        const name = people.find((p) => p.id === id)?.name
+        toast(name ? `担当を${name}さんにしました` : '担当を「未定」に戻しました')
+      }}
+    >
+      <option value="">未定</option>
+      {people.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+          {p.name === ownerName ? '（あなた）' : `（${p.relationship}）`}
+        </option>
+      ))}
+    </select>
   )
 }
