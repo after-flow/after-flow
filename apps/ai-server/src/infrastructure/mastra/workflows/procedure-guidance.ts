@@ -9,7 +9,7 @@ import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedMode
 import { GuidanceOutputContractError, guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
-import { completeGuidanceAction, createGuidanceWorkingState, guidancePlanDecisionSchema, guidanceWorkingStateSchema } from '../../../orchestration/working-state.js'
+import { completeGuidanceAction, createGuidanceWorkingState, guidancePlanDecisionSchema, guidanceResearchPlanDecisionSchema, guidanceWorkingStateSchema } from '../../../orchestration/working-state.js'
 import { createGuidanceAgents } from '../agents/guidance-agents.js'
 import { createResearchTools } from '../tools/research.js'
 import type { ResearchProvider } from '../tools/research.js'
@@ -98,14 +98,18 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
         goal: '対象手続きの案内を作るために、許可済みの公式調査が必要かを判断してください。内部思考や説明文は出力せず、有限のAction列だけを返してください。',
         context: modelInput,
         approvedBrief: selection.brief,
-        allowedPlans: [
-          ['REQUEST_RESEARCH', 'GENERATE_GUIDANCE', 'REPORT'],
-          ['NEEDS_INPUT', 'REPORT'],
-        ],
-        constraint: 'REQUEST_RESEARCHを選ぶ場合、最初のActionのquestionIdsにapprovedBriefの全question IDを一度ずつ含めてください。',
+        requiredPlan: {
+          plan: [
+            { action: 'REQUEST_RESEARCH', questionIds: selection.brief.questions.map(question => question.id) },
+            { action: 'GENERATE_GUIDANCE', questionIds: [] },
+            { action: 'REPORT', questionIds: [] },
+          ],
+          nextAction: 'REQUEST_RESEARCH',
+        },
+        constraint: 'approvedBriefが構築済みなので、requiredPlanを省略・追加・並べ替えず、そのまま構造化出力してください。',
       }), {
         maxSteps: 1, toolChoice: 'none', abortSignal: deps.signal,
-        structuredOutput: { schema: guidancePlanDecisionSchema, errorStrategy: 'strict' },
+        structuredOutput: { schema: guidanceResearchPlanDecisionSchema, errorStrategy: 'strict' },
       }), deps.signal)
       const decision = guidancePlanDecisionSchema.parse(response.object)
       return { ...inputData, brief: selection.brief, workingState: createGuidanceWorkingState({ decision, brief: selection.brief, modelInput }) }
@@ -153,7 +157,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
         // already retrieved official sections. Search and read tools are not
         // repeated, and the same quote verifier still decides what is usable.
         const repaired = await agents.researchAgent.generate(JSON.stringify({
-          instruction: '前回の調査出力は契約に適合しませんでした。検索や取得を繰り返さず、次の取得済み資料だけから正しいJSONを1回だけ再生成してください。',
+          instruction: '前回の調査出力は契約に適合しませんでした。検索や取得を繰り返さず、次の取得済み資料だけから正しいJSONを1回だけ再生成してください。各evidence.quoteは逐語引用かつ200文字以内にし、長い箇所は必要な部分だけを複数のquoteへ分けてください。',
           brief: inputData.brief,
           sources: sources.map(({ id, title, issuer, url, fetchedAt, sections }) => ({ id, title, issuer, url, fetchedAt, sections })),
         }), {

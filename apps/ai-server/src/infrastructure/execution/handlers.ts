@@ -1,5 +1,6 @@
 import { Mastra } from '@mastra/core/mastra'
 import type { MastraCompositeStore } from '@mastra/core/storage'
+import type { WorkflowRunState } from '@mastra/core/workflows'
 import { createProcedureGuidanceWorkflow, PROCEDURE_GUIDANCE_WORKFLOW } from '../mastra/workflows/procedure-guidance.js'
 import type { ProcedureGuidanceDependencies } from '../mastra/workflows/procedure-guidance.js'
 import { createChatReplyWorkflow } from '../mastra/workflows/chat-reply.js'
@@ -17,6 +18,12 @@ interface HandlerConfig<T> {
   storage: MastraCompositeStore
   /** Resolve reviewed scope/catalog and real Orch-authorized, budgeted models for this section. */
   prepare(session: ExecutionSession): Promise<Prepared<T>>
+}
+export function guidanceWorkflowAction(status: WorkflowRunState['status'] | null): 'start' | 'restart' | 'complete' | 'fail' {
+  if (status === null || status === 'pending') return 'start'
+  if (status === 'running') return 'restart'
+  if (status === 'success') return 'complete'
+  return 'fail'
 }
 function bindBudget(prepared: Pick<GuidanceAgentDependencies, 'models'> & { budget: AgentBudget }, session: ExecutionSession): AgentBudget {
   if (prepared.budget.inferenceChargedByProviderAdapter || Array.isArray(prepared.models.core) || Array.isArray(prepared.models.research)) {
@@ -36,13 +43,14 @@ export function createGuidanceHandler(config: HandlerConfig<ProcedureGuidanceDep
     const run = await mastra.getWorkflow('workflow').createRun({ runId: session.receipt.workflowRunId })
     const resultId = contentHash({ jobId: session.receipt.jobId, kind: 'guidance-result' })
     const snapshot = await config.snapshots.loadWorkflowSnapshot({ workflowName: PROCEDURE_GUIDANCE_WORKFLOW, runId: session.receipt.workflowRunId })
-    const result = snapshot?.status === 'running'
+    const action = guidanceWorkflowAction(snapshot?.status ?? null)
+    const result = action === 'restart'
       ? await run.restart()
-      : snapshot?.status === 'success'
+      : action === 'complete'
         ? { status: 'success' as const }
-        : snapshot
-          ? { status: 'failed' as const }
-          : await run.start({ inputData: { resultId } })
+        : action === 'start'
+          ? await run.start({ inputData: { resultId } })
+          : { status: 'failed' as const }
     if (result.status !== 'success') throw new Error('Guidance workflow did not complete')
     return 'COMPLETED'
   } }
