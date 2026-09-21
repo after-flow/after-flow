@@ -33,6 +33,8 @@ const { values } = parseArgs({ strict: true, allowPositionals: false, options: {
   model: { type: 'string', default: 'openai/gpt-4o-mini' },
   'max-usd': { type: 'string' },
   'env-file': { type: 'string' },
+  /** 調査用。モデルの応答本文をこのディレクトリへ書く（レポートには書かない）。合成ケースだけで使う。 */
+  trace: { type: 'string' },
   'min-completion': { type: 'string', default: '0.8' },
   'min-fact-recall': { type: 'string', default: '0.7' },
   'max-prohibited-rate': { type: 'string', default: '0' },
@@ -69,7 +71,14 @@ function number(value: string, name: string, min: number, max: number) {
 }
 
 const apiKey = mode === 'live' ? await readOrcaApiKey(values['env-file'] ?? new URL('../../../../.env', import.meta.url)) : null
+let tracing: { caseId: string; repetition: number } | null = null
+const traceDir = values.trace ? resolve(values.trace) : null
 const target: TrialTarget = { mode, web, timeoutMs: mode === 'live' ? 180_000 : 20_000,
+  ...(traceDir ? { trace: (role: string, text: string) => {
+    if (!tracing) return
+    const name = `${tracing.caseId}-${tracing.repetition}-${role}.json`
+    void mkdir(traceDir, { recursive: true }).then(() => writeFile(resolve(traceDir, name), text, { mode: 0o600 }))
+  } } : {}),
   ...(apiKey ? { models: { core: () => createOrcaModel({ apiKey, modelId: values.model!, timeoutMs: 90_000 }),
     research: () => createOrcaModel({ apiKey, modelId: values.model!, timeoutMs: 90_000 }) } } : {}) }
 
@@ -139,6 +148,7 @@ try {
   outer: for (let repetition = 1; repetition <= repetitions; repetition++) {
     for (const item of selected) {
       if (mode === 'live' && spentUsd + (largestTrialUsd ?? 0.05) > maxUsd) { report.budgetExhausted = true; break outer }
+      tracing = { caseId: item.id, repetition }
       const observation = await runTrial(item, target)
       const trialUsd = observation.calls.reduce((sum, call) => sum + callCost(call), 0)
       spentUsd += trialUsd

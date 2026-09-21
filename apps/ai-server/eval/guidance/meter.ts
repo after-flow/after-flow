@@ -27,7 +27,9 @@ export interface CallRecord {
  * モデルを包み、呼び出しごとの識別子・token・費用・時間を記録する。
  * 実OrcaRouterでは応答ヘッダーからrequest IDを取る。fixtureではIDと費用はnullになる。
  */
-export function meteredModel(model: Model, role: CallRecord['role'], sink: (record: CallRecord) => void): Model {
+export function meteredModel(model: Model, role: CallRecord['role'], sink: (record: CallRecord) => void,
+  /** 調査用。応答本文を受け取る。レポートには書かない。 */
+  captureText?: (text: string) => void): Model {
   const receipt = (headers: Record<string, string> | undefined, metadata: unknown) => {
     try {
       const value = orcaReceipt(headers, model.modelId, metadata as Record<string, unknown> | undefined)
@@ -39,9 +41,11 @@ export function meteredModel(model: Model, role: CallRecord['role'], sink: (reco
       if (property === 'doGenerate') return async (options: Parameters<Model['doGenerate']>[0]) => {
         const started = performance.now()
         try {
-          const result = await target.doGenerate(options) as Awaited<ReturnType<Model['doGenerate']>> & { usage: { inputTokens?: number; outputTokens?: number }; providerMetadata?: unknown }
+          const result = await target.doGenerate(options) as Awaited<ReturnType<Model['doGenerate']>> & {
+            content: { type: string; text?: string }[]; usage: { inputTokens?: number; outputTokens?: number }; providerMetadata?: unknown }
           sink({ role, modelId: target.modelId, ...receipt(result.response?.headers, result.providerMetadata), finalCostUsd: null,
             inputTokens: result.usage.inputTokens ?? null, outputTokens: result.usage.outputTokens ?? null, latencyMs: performance.now() - started, ok: true })
+          captureText?.(result.content.map(part => part.type === 'text' ? part.text ?? '' : '').join(''))
           return result
         } catch (error) {
           sink({ role, modelId: target.modelId, requestId: null, resolvedModel: null, fallbackModel: null, provisionalCostUsd: null, finalCostUsd: null,
@@ -58,6 +62,7 @@ export function meteredModel(model: Model, role: CallRecord['role'], sink: (reco
           throw error
         }
         let recorded = false
+        let text = ''
         const record = (chunk: Extract<Chunk, { type: 'finish' }> | null) => {
           if (recorded) return
           recorded = true
@@ -65,8 +70,12 @@ export function meteredModel(model: Model, role: CallRecord['role'], sink: (reco
             inputTokens: chunk?.usage.inputTokens ?? null, outputTokens: chunk?.usage.outputTokens ?? null, latencyMs: performance.now() - started, ok: chunk !== null })
         }
         return { ...result, stream: result.stream.pipeThrough(new TransformStream<Chunk, Chunk>({
-          transform(chunk, controller) { if (chunk.type === 'finish') record(chunk); controller.enqueue(chunk) },
-          flush() { record(null) },
+          transform(chunk, controller) {
+            if (chunk.type === 'text-delta' && captureText) text += chunk.delta
+            if (chunk.type === 'finish') record(chunk)
+            controller.enqueue(chunk)
+          },
+          flush() { record(null); if (captureText) captureText(text) },
         })) }
       }
       return Reflect.get(target, property, receiver)

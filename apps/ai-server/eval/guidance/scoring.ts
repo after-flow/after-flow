@@ -46,7 +46,7 @@ export const PROHIBITED_CLAIMS = {
   'counter-submission': { label: '窓口提出・持参', test: (text: string) => /窓口|持参/.test(text) },
   'municipality': { label: '自治体への提出', test: (text: string) => /市役所|区役所|役場|市区町村の担当/.test(text) },
   'prefecture-branch': { label: '都道府県名の支部の推定', test: (text: string) => new RegExp(`(${PREFECTURES})(都|府|県)?支部`).test(text) },
-  'residence-branch': { label: '住所からの支部の推定', test: (text: string) => /(住所|住民票の|お住まい|居住)[^。]{0,20}支部|支部[^。]{0,20}(住所|お住まい|居住地)/.test(text) },
+  'residence-branch': { label: '住所からの支部の推定', test: (text: string) => /(住所|住民票の|お住まい|居住|最寄り|近く)[^。]{0,20}支部|支部[^。]{0,20}(住所|お住まい|居住地)/.test(text) },
   'swapped-start': { label: '起算日の取り違え', test: (text: string) => /埋葬費[^。、]*死亡(した)?(年月)?日の翌日|埋葬料[^。、]*埋葬(を行った|した)?(年月)?日の翌日/.test(text) },
   'wrong-amount': { label: '50,000円以外の支給額', test: (text: string) => (text.match(/\d+円/g) ?? []).some(value => value !== '50000円') },
   'foreign-url': { label: '公式ページ以外のURL', test: (text: string) => /https?:\/\/(?!www\.kyoukaikenpo\.or\.jp\/)/.test(text) },
@@ -110,10 +110,10 @@ export function scoreGuidance(output: GuidanceOutput | null, expectation: CaseEx
   ]
   // 項目の境界を句点にして、項目をまたいだ一致を防ぐ。
   const shown = items.map(item => normalizeText(item.text)).join('。')
-  // 禁止事項は利用者に見えるすべての文（確認事項を含む）で調べる。
-  const visible = [shown, ...output.missing.map(normalizeText)].join('。')
+  // 禁止事項は表示する案内の項目で調べる。確認事項（missing）はハーネスが除いた理由の説明
+  // （例: 「支部は住所では決まりません」）を含むため対象にしない。
   const missedFacts = expectation.requiredFacts.filter(id => !REQUIRED_FACTS[id].pattern.test(shown))
-  const prohibited = (Object.keys(PROHIBITED_CLAIMS) as ProhibitedId[]).filter(id => PROHIBITED_CLAIMS[id].test(visible))
+  const prohibited = (Object.keys(PROHIBITED_CLAIMS) as ProhibitedId[]).filter(id => PROHIBITED_CLAIMS[id].test(shown))
   const valid = output.citations.map(citation => citationValid(citation, sources))
   const supported = items.filter(item => output.citations.some((citation, index) => valid[index] && citation.item === item.item && citation.index === item.index))
   const contractValid = output.where === null || output.where.length <= GUIDANCE_LIMITS.where

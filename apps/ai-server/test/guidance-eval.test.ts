@@ -53,6 +53,8 @@ test('#164 禁止主張を検出し、公式ページと同じ正しい記載は
   assert.deepEqual(prohibited('お住まいの市役所へ提出する。'), ['municipality'])
   assert.deepEqual(prohibited('東京都支部へ郵送する。'), ['prefecture-branch'])
   assert.deepEqual(prohibited('住民票の住所を管轄する支部へ郵送する。'), ['residence-branch'])
+  // 実モデルの出力で見られた表現。
+  assert.deepEqual(prohibited('各地方に支部があるため、最寄りの支部へ提出する。'), ['residence-branch'])
   assert.deepEqual(prohibited('埋葬費は死亡した日の翌日から2年。'), ['swapped-start'])
   assert.deepEqual(prohibited('埋葬料は7万円。'), ['wrong-amount'])
   assert.deepEqual(prohibited('https://example.com/apply から申請する。'), ['foreign-url'])
@@ -65,6 +67,9 @@ test('#164 禁止主張を検出し、公式ページと同じ正しい記載は
   // 項目をまたいで一致させない（住民票の項目と支部の項目が並んでも住所からの推定とみなさない）。
   const joined = scoreGuidance(output({ bring: ['住民票の写し', '加入していた支部へ郵送'] }), expectation, sources)
   assert.ok(!joined.prohibited.includes('residence-branch'))
+  // ハーネスが除いた理由の説明（missing）は禁止主張として数えない。
+  const explained = scoreGuidance(output({ missing: ['提出先の支部は住所では決まりません。亡くなった方が加入していた支部を確認してください。'] }), expectation, sources)
+  assert.deepEqual(explained.prohibited, [])
 })
 
 test('#164 モデル呼び出しごとにrequest ID・token・暫定費用・時間を本文なしで記録する', async () => {

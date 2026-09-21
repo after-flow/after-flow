@@ -27,6 +27,8 @@ export interface TrialTarget {
   /** liveで使うモデル。fixtureでは使わない。 */
   models?: { core: () => Model; research: () => Model }
   timeoutMs: number
+  /** 調査用。モデルの応答本文を受け取る。レポートには書かない。 */
+  trace?: (role: CallRecord['role'], text: string) => void
 }
 
 export interface TrialObservation {
@@ -91,8 +93,8 @@ export async function runTrial(item: GuidanceCase, target: TrialTarget): Promise
         },
       }
   const models = target.mode === 'live'
-    ? { core: meteredModel(target.models!.core(), 'core', record => calls.push(record)),
-        research: meteredModel(target.models!.research(), 'research', record => calls.push(record)) }
+    ? { core: meteredModel(target.models!.core(), 'core', record => calls.push(record), target.trace && (text => target.trace!('core', text))),
+        research: meteredModel(target.models!.research(), 'research', record => calls.push(record), target.trace && (text => target.trace!('research', text))) }
     : { core: meteredModel(scriptedModel([{ text: JSON.stringify((item.fixtureCore ?? (draft => draft))(FIXTURE_DRAFT)) }]).model, 'core', record => calls.push(record)),
         research: meteredModel(scriptedModel([{ text: JSON.stringify(FIXTURE_RESEARCH) }]).model, 'research', record => calls.push(record)) }
   const artifact = artifactFor(item)
