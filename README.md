@@ -66,7 +66,7 @@ AIは提案者であり、業務状態の書き込み主体ではありません
 | Backend | Public/Internal API、業務ドメイン、Firestore/Storage Adapter、認証・認可境界、AgentRun/Outboxの基盤を実装済みです。 |
 | AI Agent | 実行Runtime、Workflow、Backend Client、評価などの基盤モジュールとテストがあります。ただし、標準起動時の本番向けProvider・Orchestrator・Runtime構成は未接続です。 |
 | Authentication | Firebase Authenticationを採用済みです。Frontend/Backendの実接続、失効確認、招待などは未完了です。 |
-| 非同期Worker | Worker実装はありますが、通常の `make up` や本番デプロイではまだ常駐起動されません。 |
+| 非同期Worker | `make up` で `backend-worker` container が常駐し、Outboxの配送とRunの照合を行います。本番デプロイへの組み込みは未完了です。 |
 | 書類検査 | 検査状態とAI投入制御はありますが、マイナンバー等を実際に検出・マスキングする検査Adapterは未選定・未実装です。 |
 
 `/health` や `/internal/v1/health` の成功は、外部AI ProviderやOrchestratorまで準備できていることを意味しません。
@@ -79,16 +79,18 @@ AIは提案者であり、業務状態の書き込み主体ではありません
 make up
 ```
 
-次の5サービスが起動します。
+次のサービスが起動します。
 
 | サービス | URL / 接続先 |
 | --- | --- |
 | Web | http://127.0.0.1:5173 |
 | Backend API | http://127.0.0.1:8080 |
 | Swagger UI | http://127.0.0.1:8080/api-docs |
+| Backend Outbox Worker | Docker内部ネットワークのみ。HTTPを持たず、ログで状態を確認します。 |
 | Firestore Emulator | `127.0.0.1:8085` |
 | Storage Emulator | http://127.0.0.1:4443 |
 | AI Server | Docker内部ネットワークのみ。ホストには公開しません。 |
+| AI Runtime Emulator | AI Server専用。ホストにも業務側にも公開しません。 |
 
 起動後の確認:
 

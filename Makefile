@@ -7,7 +7,7 @@ PNPM ?= pnpm
 help: ## コマンド一覧
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-up: ## Dockerでアプリ3サービスと業務・AI Runtime・Storage Emulatorを起動
+up: ## Dockerでアプリ3サービス・Backend Outbox worker・業務/AI Runtime/Storage Emulatorを起動
 	FIRESTORE_EMULATOR_HOST=firestore-emulator:8085 \
 	DOCUMENT_STORAGE_ROOT= \
 	DOCUMENT_STORAGE_BUCKET=$${DOCUMENT_STORAGE_BUCKET:-after-flow-documents} \
@@ -17,10 +17,11 @@ up: ## Dockerでアプリ3サービスと業務・AI Runtime・Storage Emulator�
 
 up-data: up ## 互換エイリアス（make upと同じ）
 
-data-check: ## 業務/AI Runtime/Storage疎通とBackend/AI分離を検証
+data-check: ## 業務/AI Runtime/Storage疎通とBackend/Worker/AI分離を検証
 	$(COMPOSE) --profile data exec -T backend-server pnpm --filter @aftercare/backend-server exec tsx /workspace/scripts/smoke-data-emulators.mjs
 	$(COMPOSE) --profile data exec -T ai-server node -e 'const bad=Object.keys(process.env).filter((key)=>/^(FIRESTORE_|GOOGLE_APPLICATION_CREDENTIALS|STORAGE_|DOCUMENT_STORAGE_)/.test(key));if(bad.length)throw new Error(`AI received forbidden data settings: $${bad.join(", ")}`)'
 	$(COMPOSE) --profile data exec -T ai-server node -e 'const h=process.env.AI_RUNTIME_EMULATOR_HOST;if(h!=="ai-runtime-emulator:8085")throw new Error("AI runtime endpoint mismatch");fetch(`http://$${h}/v1/projects/after-flow-ai-runtime/databases/ai-runtime-local/documents/__health`,{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)throw new Error("AI runtime unavailable")})'
+	$(COMPOSE) --profile data exec -T backend-worker node -e 'const bad=Object.keys(process.env).filter((key)=>/^(DOCUMENT_STORAGE_|STORAGE_|GOOGLE_APPLICATION_CREDENTIALS|BACKEND_INTERNAL_SERVICE_TOKEN|READINESS_ACCESS_TOKEN|ORCAROUTER_|AI_RUNTIME_)/.test(key));if(bad.length)throw new Error(`Worker received settings outside its role: $${bad.join(", ")}`);for(const key of ["OUTBOX_TENANT_IDS","FIRESTORE_PROJECT_ID","AI_SERVER_URL","AI_SERVICE_TOKEN","BACKEND_EXECUTION_SIGNING_KEY"])if(!process.env[key])throw new Error(`Worker is missing $${key}`)'
 
 down: ## このプロジェクトのコンテナを停止・削除
 	$(COMPOSE) --profile data down
