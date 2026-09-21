@@ -11,9 +11,14 @@ export interface CaseEntity extends EntityBase {
   /**
    * 相続の開始を知った日。
    *
-   * 死亡日とは別の事実として保持する。熟慮期間などの起算日は
-   * 「知った日」を使う手続きがあり、不明なまま死亡日で補完すると
-   * 期限を誤って早める。不明は null のままにする。
+   * 死亡日とは別の事実として保持する。未入力は null のままにする
+   * （申告を強制しない）。熟慮期間などの起算日は「知った日」を使う
+   * 手続きがあり、Rule Engine（`domain/task/rule-engine.ts`
+   * `computeDeadline`）は未入力の間だけ死亡日で代わりに算定する。
+   * `findCaseDateIssues`（`domain/case/case-dates.ts`）が作成・更新の
+   * 両経路で `knownAt >= dateOfDeath` を強制しているため、この代替は
+   * 常に早い側（またはちょうど同じ）にしか外れず、期限を実際より
+   * 遅く見せることはない。
    */
   knownAt: string | null
   /** 申告された手続き担当者名。認証上の本人確認の根拠にはしない。 */

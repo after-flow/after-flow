@@ -117,7 +117,11 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
     overviewService: new CaseOverviewService(
       access,
       readRepository(),
-      (options.connectedOperations ?? []).length > 0,
+      options.ruleCatalog ?? PLACEHOLDER_RULE_CATALOG,
+      {
+        aiConnected: (options.connectedOperations ?? []).length > 0,
+        clock: options.clock,
+      },
     ),
   })
 
