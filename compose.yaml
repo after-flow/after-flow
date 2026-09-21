@@ -50,9 +50,6 @@ services:
       DOCUMENT_STORAGE_BUCKET: ${DOCUMENT_STORAGE_BUCKET-}
       DOCUMENT_STORAGE_EMULATOR_ENDPOINT: ${DOCUMENT_STORAGE_EMULATOR_ENDPOINT-}
       STORAGE_PROJECT_ID: ${STORAGE_PROJECT_ID:-after-flow-local}
-      # 内部readiness endpoint（GET /internal/v1/health/ready）専用の資格情報。
-      # 既定では未設定=このendpointをmountしない。設定してもAIやブラウザーへは
-      # 配布しない（ai-serverのcompose定義には渡さない）。docs/runbooks/readiness.md参照。
       READINESS_ACCESS_TOKEN: ${READINESS_ACCESS_TOKEN-}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
