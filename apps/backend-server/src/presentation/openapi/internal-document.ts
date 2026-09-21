@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { dispatchAckSchema, dispatchSchema, INTERNAL_LIMITS, internalRoutes, snapshotStatusSchema } from '@aftercare/internal-contracts'
+import { dispatchAckSchema, dispatchSchema, cancelExecutionSchema, cancelExecutionAckSchema, INTERNAL_LIMITS, internalRoutes, snapshotStatusSchema } from '@aftercare/internal-contracts'
 
 export function buildInternalOpenApiDocument() {
   const headers = [
@@ -40,6 +40,12 @@ export function buildInternalOpenApiDocument() {
     post: { ...(paths['/runs/{runId}/dispatch'] as { post: Record<string, unknown> }).post,
       operationId: 'ai_resume', description: '同一Jobの重複排除とfresh context取得後に再開する。Snapshot参照はcontext.resumeで取得。実AI接続は別途検証。' },
   }
+  paths['/runs/{runId}/cancel'] = { post: {
+    ...(paths['/runs/{runId}/dispatch'] as { post: Record<string, unknown> }).post,
+    operationId: 'ai_cancel', description: 'Backendで取消済みのjob/attemptを停止する。未配送jobにも取消記録を保存する。',
+    requestBody: { required: true, content: { 'application/json': { schema: z.toJSONSchema(cancelExecutionSchema) } } },
+    responses: { '200': { description: 'Stopped or duplicate cancellation', content: { 'application/json': { schema: z.toJSONSchema(cancelExecutionAckSchema) } } } },
+  } }
   paths['/runs/{runId}/snapshot-status'] = { get: {
     operationId: 'ai_snapshot_status', servers: [{ url: 'https://ai-server.internal/internal/v1' }], security: [{ serviceIdentity: [] }],
     description: 'runtime保存済みメタデータのみ。Snapshot本文は返さない。',

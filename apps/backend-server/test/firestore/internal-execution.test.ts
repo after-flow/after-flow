@@ -1,3 +1,4 @@
+import { fingerprintOf } from '../../src/shared/fingerprint.js'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
@@ -101,12 +102,66 @@ async function setup(t: TestContext) {
 }
 
 describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
+  it('Backend検出イベントの気づきを公開APIへ保存し、Runを跨ぐ重複と古い根拠を扱う', async t => {
+    const h = await setup(t)
+    const created = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '書類の確認', stage: 'government', category: 'fixture',
+      requiredDocuments: [{ id: 'required-one', label: '合成確認資料', documentId: null }] }))
+    assert.equal(created.status, 201)
+    const task = created.body.data
+    const exec = await h.accept(), context = await h.context(exec)
+    const event = (context.content.insightEvents as any[]).find(e => e.task.id === task.id)
+    assert.equal(event.kind, 'DOCUMENTS_MISSING')
+    const insight = { eventId: event.id, resultId: fingerprintOf({ caseId: h.caseId, eventId: event.id, version: 'event-insights-v1' }),
+      kind: 'MISSING_DOCUMENT', body: '登録済みの必要書類を確認してください。', relatedTaskId: task.id, relatedTaskTitle: task.title,
+      evidence: [{ label: task.title, value: '合成確認資料', taskId: task.id, capturedVersion: task.version }], requiresProfessional: false, professionalReviewNote: null }
+    const result = { ...proof(context), resultId: randomUUID(), kind: 'case_planning', status: 'NEEDS_ATTENTION', insights: [insight] }
+    assert.equal((await h.request(exec, 'result', { ...result, insights: [{ ...insight, eventId: 'forged' }] })).status, 409)
+    assert.equal((await h.request(exec, 'result', { ...result, insights: [{ ...insight, relatedTaskId: 'foreign' }] })).status, 403)
+    assert.equal((await h.request(exec, 'result', result)).status, 200)
+    let listed = await call(h.app, `/cases/${h.caseId}/insights`)
+    assert.equal(listed.body.data.length, 1); assert.equal(listed.body.data[0].evidence[0].freshness, 'CURRENT')
+    const next = await h.accept(), latest = await h.context(next)
+    assert.equal((await h.request(next, 'result', { ...result, ...proof(latest), resultId: randomUUID() })).status, 200)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/insights`)).body.data.length, 1)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/tasks/${task.id}`, jsonRequest('PATCH', { expectedVersion: task.version, title: '修正した書類確認' }))).status, 200)
+    listed = await call(h.app, `/cases/${h.caseId}/insights`)
+    assert.equal(listed.body.data[0].evidence[0].freshness, 'STALE')
+  })
+
+  it('取消をOutboxへ保存し、保存済み旧attemptだけに停止を配送する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const current = (await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)).body.data
+    assert.equal((await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}/cancel`, jsonRequest('POST', { expectedVersion: current.version }))).status, 200)
+    const run = (await readRepository().get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: exec.run.id }))!
+    assert.equal(run.cancellation?.executionAttempt, exec.claims.executionAttempt)
+    const event = (await firestore().doc(`tenants/${h.tenantId}/outbox/${run.cancellation!.cancelId}`).get()).data() as OutboxEvent
+    const job = { eventId: event.id, tenantId: h.tenantId, caseId: h.caseId, type: event.type, payload: event.payload, attempt: 1 }
+    assert.equal((await h.client.deliver(job)).status, 'ACCEPTED')
+    assert.equal((await h.client.deliver(job)).status, 'ACCEPTED')
+    assert.equal(h.ai.countOf(event.id), 2)
+    assert.equal((await h.request(exec, 'result', { ...proof(context), resultId: randomUUID(), kind: 'case_planning', status: 'SUCCEEDED' })).status, 409)
+    assert.equal((await h.client.deliver({ ...job, eventId: randomUUID() })).status, 'RETRYABLE')
+  })
+
+  it('中断結果は現在のoperation/proofだけを受け、部分結果を保存して実行を終了する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const input = { ...proof(context), resultId: 'budget-result', kind: 'execution_interrupted', operation: 'case_planning',
+      status: 'NEEDS_ATTENTION', failureReason: 'BUDGET_EXCEEDED', output: { summary: '予算上限', completed: ['候補確認'], questions: ['確認事項'], remaining: ['提案確認'] } }
+    assert.equal((await h.request(exec, 'result', { ...input, operation: 'chat_reply' })).status, 403)
+    assert.equal((await h.request(exec, 'result', input)).status, 200)
+    assert.equal((await h.request(exec, 'result', input)).status, 200)
+    const run = (await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)).body.data
+    assert.equal(run.status, 'NEEDS_ATTENTION'); assert.equal(run.failureReason, 'BUDGET_EXCEEDED')
+    assert.deepEqual(run.outcome.remaining, ['提案確認'])
+  })
+
   it('個人本文のないdispatch→context→artifact→heartbeat→progress→resultを実HTTPで検証する', async t => {
     const h = await setup(t), exec = await h.accept()
     dispatchSchema.parse(exec.dispatch)
     assert.deepEqual(Object.keys(exec.dispatch).sort(), ['jobId', 'runId', 'executionAttempt', 'operation', 'issuedAt', 'expiresAt', 'executionAuthorization'].sort())
     assert.equal(JSON.stringify(exec.dispatch).includes('架空人物'), false)
     const context = await h.context(exec)
+    assert.equal(context.content.planningRestriction, null)
     assert.equal(context.content.case && (context.content.case as any).deceasedName, '架空人物')
     const artifact = await h.request(exec, `artifacts/${context.contextSnapshotId}`)
     assert.deepEqual(artifact.body.data, context)
@@ -124,6 +179,36 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal((await h.request(exec, 'control')).body.data.instruction, 'STOP')
     const run = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)
     assert.equal(run.body.data.status, 'SUCCEEDED')
+  })
+
+  it('planning results expose questions; user answers replan the same Run without confirming facts', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const output = { summary: '確認が必要です', completed: [], questions: ['対象の地域はどこですか', '資料はありますか'], remaining: ['地域の確認'] }
+    const result = { ...proof(context), resultId: 'questions-result', kind: 'case_planning', status: 'NEEDS_ATTENTION', output }
+    assert.equal((await h.request(exec, 'result', result)).status, 200)
+    const path = `/cases/${h.caseId}/agent-runs/${exec.run.id}`
+    const saved = (await call(h.app, path)).body.data
+    assert.deepEqual(saved.outcome.questions, output.questions)
+    const answer = { expectedVersion: saved.version, resultId: result.resultId, answers: [{ questionIndex: 0, answer: 'PRIVATE-USER-ANSWER' }] }
+    assert.equal((await call(h.app, `${path}/answers`, jsonRequest('POST', { ...answer, resultId: 'another-result' }))).status, 409)
+    assert.equal((await call(h.app, `${path}/answers`, jsonRequest('POST', { ...answer, answers: [{ questionIndex: 19, answer: 'invalid' }] }))).status, 400)
+    const request = jsonRequest('POST', answer)
+    const replied = await call(h.app, `${path}/answers`, request)
+    assert.equal(replied.status, 202, JSON.stringify(replied.body))
+    assert.equal(replied.body.data.attempt, 2)
+    assert.equal((await call(h.app, `${path}/answers`, request)).body.data.attempt, 2)
+    assert.equal((await h.request(exec, 'result', result)).status, 409)
+    const next = (await readRepository().get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: exec.run.id }))!
+    const claims = await h.service.dispatchClaims(h.tenantId, h.caseId, next.id, next.currentJobId!)
+    const refreshed = await h.request({ claims, dispatch: { executionAuthorization: await h.authorization.issue(claims) } }, 'context')
+    assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body))
+    assert.equal(refreshed.body.data.content.resume.kind, 'RETRY')
+    assert.equal(refreshed.body.data.content.resume.previousAttemptId, exec.run.currentAttemptId)
+    assert.deepEqual(refreshed.body.data.content.unresolvedQuestions, [output.questions[1]])
+    assert.equal(refreshed.body.data.content.clarificationHistory[0].state, 'user_reported')
+    assert.equal(refreshed.body.data.content.case.municipality, null)
+    assert.deepEqual(refreshed.body.data.content.decisions, [])
+    assert.equal((await call(h.app, `/cases/${h.caseId}/messages`)).body.data.length, 1)
   })
 
   it('wrong audience・期限切れ・未来の要求・異なるjob/attempt・不足scopeを拒否する', async t => {
@@ -265,6 +350,37 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
       expectedVersion: approval.version, proposalVersion: submitted.proposalVersion, payloadHash: submitted.payloadHash,
     }))
   }
+  it('owner restriction rejects AI proposals with a fresh Context but preserves manual task creation', async t => {
+    const h = await setup(t)
+    const current = (await call(h.app, `/cases/${h.caseId}`)).body.data
+    const paused = await call(h.app, `/cases/${h.caseId}/ai-planning-restriction`, jsonRequest('PATCH', {
+      expectedVersion: current.version, restriction: { reason: '本人の確認まで停止' },
+    }))
+    assert.equal(paused.status, 200)
+    const exec = await h.accept(), context = await h.context(exec)
+    assert.deepEqual(context.content.planningRestriction, { reason: '本人の確認まで停止' })
+    const response = await h.request(exec, 'proposals', proposal(context))
+    assert.equal(response.status, 409, JSON.stringify(response.body))
+    assert.equal(response.body.error.details.reason, 'AI_PLANNING_RESTRICTED')
+    assert.equal((await call(h.app, `/cases/${h.caseId}/proposals`)).body.data.length, 0)
+    const manual = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '利用者の手続き', category: '手動', stage: 'immediate' }))
+    assert.equal(manual.status, 201)
+  })
+
+  it('pausing after submission invalidates the Context and pending AI approval', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = await h.request(exec, 'proposals', proposal(context))
+    assert.equal(submitted.status, 200)
+    const current = (await call(h.app, `/cases/${h.caseId}`)).body.data
+    assert.equal((await call(h.app, `/cases/${h.caseId}/ai-planning-restriction`, jsonRequest('PATCH', {
+      expectedVersion: current.version, restriction: { reason: '計画を見直す' },
+    }))).status, 200)
+    assert.equal((await h.request(exec, 'proposals', proposal(context))).status, 409)
+    const response = await approve(h, submitted.body.data)
+    assert.equal(response.status, 409)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/assets`)).body.data.length, 0)
+  })
+
   it('AI Task提案は承認時に依存と必要書類を反映し、不明・循環する依存を拒否する', async t => {
     for (const variant of ['valid', 'foreign', 'cycle']) {
       const h = await setup(t)

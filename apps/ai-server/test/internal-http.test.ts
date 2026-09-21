@@ -124,3 +124,21 @@ test('duplicate acknowledgement and snapshot response must match the requested s
   assert.deepEqual(await response.json(), { runId: 'run-1', jobId: 'job-1', status: 'DUPLICATE' })
   assert.equal((await app.request('/internal/v1/runs/run-1/snapshot-status?jobId=job-1&executionAttempt=attempt-1', { headers })).status, 503)
 })
+
+test('cancel ingress requires Backend identity and exact fresh cancellation metadata', async () => {
+  let calls = 0
+  const runtime: ExecutionRuntime = { accept: async () => 'ACCEPTED', snapshot: async scope => ({ ...scope, state: 'MISSING', snapshotId: null }),
+    cancel: async () => { calls++; return 'STOPPED' } }
+  const app = createApp({ serviceToken: 'ingress-fixture', runtime })
+  const seconds = Math.floor(Date.now() / 1000)
+  const body = { runId: 'run-1', jobId: 'job-1', executionAttempt: 'attempt-1', cancelId: 'cancel-1', issuedAt: seconds, expiresAt: seconds + 60 }
+  const init = (value = body, overrides: Record<string, string> = {}) => ({ method: 'POST', body: JSON.stringify(value), headers: { ...headers,
+    'X-Request-Id': body.cancelId, 'Idempotency-Key': body.cancelId, ...overrides } })
+  const path = '/internal/v1/runs/run-1/cancel'
+  assert.equal((await app.request(path, init(body, { Authorization: 'Bearer invalid' }))).status, 401)
+  assert.equal((await app.request(path, init({ ...body, runId: 'other' }))).status, 400)
+  assert.equal((await app.request(path, init({ ...body, expiresAt: seconds - 1 }))).status, 400)
+  assert.equal((await app.request(path, init(body, { 'Idempotency-Key': 'other' }))).status, 400)
+  assert.equal(calls, 0)
+  assert.equal((await app.request(path, init())).status, 200); assert.equal(calls, 1)
+})

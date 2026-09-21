@@ -2,32 +2,39 @@
 COMPOSE ?= docker compose
 PNPM ?= pnpm
 
-.PHONY: help up up-data down build logs ps restart check install dev test test-firestore production-check
+.PHONY: help up up-data data-check down build logs ps restart check install dev test test-firestore production-check
 
 help: ## コマンド一覧
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-up: ## Dockerで3サービスをビルド・起動（モック画面）
-	$(COMPOSE) up --build --detach --wait
-
-up-data: ## Firestore Emulatorも含めて起動（初回はイメージ取得に時間がかかる）
+up: ## Dockerでアプリ3サービスとFirestore・Storage Emulatorを起動
 	FIRESTORE_EMULATOR_HOST=firestore-emulator:8085 \
-	$(COMPOSE) --profile data up --build --detach --wait
+	DOCUMENT_STORAGE_ROOT= \
+	DOCUMENT_STORAGE_BUCKET=$${DOCUMENT_STORAGE_BUCKET:-after-flow-documents} \
+	DOCUMENT_STORAGE_EMULATOR_ENDPOINT=http://storage-emulator:4443 \
+	STORAGE_PROJECT_ID=$${STORAGE_PROJECT_ID:-after-flow-local} \
+	$(COMPOSE) --profile data up --build --detach --wait --wait-timeout 120
+
+up-data: up ## 互換エイリアス（make upと同じ）
+
+data-check: ## 起動中のFirestore・Storage疎通とBackend/AI分離を検証
+	$(COMPOSE) --profile data exec -T backend-server pnpm --filter @aftercare/backend-server exec tsx /workspace/scripts/smoke-data-emulators.mjs
+	$(COMPOSE) --profile data exec -T ai-server node -e 'const bad=Object.keys(process.env).filter((key)=>/^(FIRESTORE_|GOOGLE_APPLICATION_CREDENTIALS|STORAGE_|DOCUMENT_STORAGE_)/.test(key));if(bad.length)throw new Error(`AI received forbidden data settings: $${bad.join(", ")}`)'
 
 down: ## このプロジェクトのコンテナを停止・削除
 	$(COMPOSE) --profile data down
 
 build: ## Dockerイメージをビルド
-	$(COMPOSE) build
+	$(COMPOSE) --profile data build
 
 logs: ## ログを表示（例: make logs SERVICE=web）
-	$(COMPOSE) logs --follow $(SERVICE)
+	$(COMPOSE) --profile data logs --follow $(SERVICE)
 
 ps: ## コンテナの状態を確認
-	$(COMPOSE) ps
+	$(COMPOSE) --profile data ps
 
 restart: ## コンテナを再起動
-	$(COMPOSE) restart
+	$(COMPOSE) --profile data restart
 
 check: ## Docker内で型・Lint・テスト・依存境界・本番ビルドを検証
 	$(COMPOSE) run --build --rm --no-deps -e VITE_USE_MOCK=false web sh -c 'pnpm typecheck && pnpm lint && pnpm test && pnpm openapi:check && pnpm build'

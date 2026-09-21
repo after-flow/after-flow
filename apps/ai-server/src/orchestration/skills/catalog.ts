@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { skillOutputReference } from './output-contracts.js'
 
 export type AgentRole = 'core' | 'research'
 export type AgentMode = 'guidance' | 'planning' | 'preparation'
@@ -111,10 +112,15 @@ const definitions = [
 ] as const satisfies readonly SkillDefinition[]
 
 export type SkillId = (typeof definitions)[number]['id']
-export const skillCatalog = Object.freeze(definitions.map((definition) => Object.freeze({
-  ...definition,
-  hash: createHash('sha256').update(JSON.stringify(definition)).digest('hex'),
-})))
+export const skillCatalog = Object.freeze(definitions.map((definition) => {
+  const output = skillOutputReference(definition.id)
+  const skill = { ...definition, version: '1.1.0',
+    outputBoundary: output.boundary,
+    instructions: `${definition.instructions}\n出力Schema: references/output-schema.json。現在のWorkflowが指定する契約だけを使用する。Schema以外の権限・根拠・版の検証も省略しない。`,
+    references: { ...definition.references, 'output-schema.json': output.reference },
+  }
+  return Object.freeze({ ...skill, hash: createHash('sha256').update(JSON.stringify(skill)).digest('hex') })
+}))
 
 export function resolveSkills(ids: readonly SkillId[], role: AgentRole, mode: AgentMode, capabilities: readonly ToolCapability[]) {
   return ids.map((id) => {

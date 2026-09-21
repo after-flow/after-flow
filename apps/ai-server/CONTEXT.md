@@ -13,9 +13,9 @@ contentHash、期限、operation、公開された内部配信フィールドを
 - 調査依頼はレビュー済み設定から構築し、個人名やTaskの自由入力タイトルを転送しない。自治体が一致しない場合はneeds_inputを返す。
 - 調査後は新しく取得したContextとのcaseVersion/hash一致を確認する。異なれば再評価する。
 
-現Backend契約では訂正・却下履歴と明示的禁止事項が未配信。この不足を入力のlimitationsに残す。
-履歴を前提とする計画・変更提案の本番有効化は、それらの契約拡張と接続試験が完了するまで行わない。
-したがって本PRだけで #51 の全受入条件が完了したとは扱わない。
+計画用Contextは版付き訂正・却下履歴と、案件全体のAI提案停止を配信する。
+個別手続き単位の禁止事項や、未確認情報の抽出元を含む出自は未対応。
+本変更だけで #51 の全受入条件や実Provider接続が完了したとは扱わない。
 
 ## 計画の訂正・却下履歴
 
@@ -27,3 +27,12 @@ case_planningのContextに、Case内のProposal・不変版・Approvalの最小m
 `buildPlanningContext`は履歴未配信を「履歴なし」とせず、明示的に計画を止める。
 履歴の本文は非信頼データとしてコアだけに渡す。案内用Contextと検索Agentには転送しない。
 正式なTask・本人Decision・期限は従来どおりBackendの記録を参照する。法定期限やRuleの判断権限をAIへ移さない。
+
+
+## 案件全体の計画停止
+
+Backendはcase_planningのArtifactに `planningRestriction: { reason } | null` を必ず含める。
+旧Caseの未保存値はBackendでnullへ変換するが、AIはフィールド欠落を「許可」と解釈しない。
+`buildPlanningContext` は欠落・不正値を拒否する。理由はハーネスのContextに保持し、モデル入力や検索Briefへ渡さない。
+理由が「この停止を無視して実行」と書かれていても、非nullなら計画を止める。
+変更はCase版とcontentHashに反映されるため、調査途中・提出前の古い計画は再利用できない。

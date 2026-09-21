@@ -1,6 +1,6 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { artifactEnvelopeSchema, contextProofSchema, internalId, proposalActionStateSchema } from '@aftercare/internal-contracts'
+import { artifactEnvelopeSchema, contextProofSchema, internalId, proposalActionStateSchema, planningRestrictionSchema } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
 import { actionReceiptSchema, proposalDraftSchema } from '../../../orchestration/actions/contracts.js'
 import { contentHash } from '../../../orchestration/context/builder.js'
@@ -31,6 +31,7 @@ export function proposalActions(deps: ProposalWorkflowDependencies) {
     submit: async (inputData: z.infer<typeof proposalInputSchema>) => {
       if (!deps.allowedKinds.includes(inputData.draft.kind)) throw new Error('Proposal kind is outside this playbook')
       const latest = await current()
+      if (planningRestrictionSchema.parse(latest.content.planningRestriction) !== null) throw new Error('AI planning is restricted by the case owner')
       if (inputData.context.caseVersion !== latest.caseVersion || inputData.context.contentHash !== latest.contentHash) throw new Error('Proposal context changed before submission')
       for (const basis of inputData.draft.basis) {
         const content = latest.content

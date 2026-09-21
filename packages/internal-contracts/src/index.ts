@@ -44,8 +44,39 @@ const guidanceSchema = resultBase.extend({
   missing: z.array(z.string().max(200)).max(50).default([]), failureReason: z.string().max(500).nullable().optional(),
 }).strict()
 const chatSchema = resultBase.extend({ kind: z.literal('chat_reply'), body: z.string().min(1).max(10000), professionalNotice: z.boolean().default(false) }).strict()
-const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']) }).strict()
-export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema])
+export const runSummarySchema = z.object({
+  summary: z.string().max(1000), completed: z.array(z.string().min(1).max(300)).max(20),
+  questions: z.array(z.string().min(1).max(300)).max(20), remaining: z.array(z.string().min(1).max(300)).max(20),
+}).strict()
+export type RunSummary = z.infer<typeof runSummarySchema>
+export const clarificationHistorySchema = z.array(z.object({
+  resultId: internalId, questionIndex: z.number().int().min(0).max(19), question: z.string().min(1).max(300),
+  answer: z.string().min(1).max(1000), caseVersion: z.number().int().positive(), state: z.literal('user_reported'),
+}).strict()).max(60)
+export type ClarificationHistory = z.infer<typeof clarificationHistorySchema>
+const insightTaskSchema = z.object({ id: internalId, version: z.number().int().positive(), title: z.string().min(1).max(120) }).strict()
+const insightEventBase = z.object({ id: internalId, caseId: internalId, caseVersion: z.number().int().positive(), expiresAt: z.string().datetime(), task: insightTaskSchema })
+/** Issued by an authenticated Backend detector, not by a model or public request. */
+export const insightEventSchema = z.discriminatedUnion('kind', [
+  insightEventBase.extend({ kind: z.literal('DEADLINE_REVIEW'), deadline: z.object({ id: internalId, version: z.number().int().positive(), dueDate: z.iso.date(), confirmation: z.literal('CONFIRMED'), ruleId: internalId, ruleVersion: internalId }).strict() }).strict(),
+  insightEventBase.extend({ kind: z.literal('DOCUMENTS_MISSING'), documents: z.array(z.object({ id: internalId, label: z.string().min(1).max(120) }).strict()).min(1).max(20) }).strict(),
+  insightEventBase.extend({ kind: z.literal('PROFESSIONAL_REVIEW'), reason: z.string().min(1).max(1000) }).strict(),
+  insightEventBase.extend({ kind: z.literal('CASE_CHANGED') }).strict(),
+])
+export type InsightEvent = z.infer<typeof insightEventSchema>
+export const insightDraftSchema = z.object({
+  eventId: internalId, resultId: internalId,
+  kind: z.enum(['DEADLINE_RISK', 'MISSING_DOCUMENT', 'PROFESSIONAL_NEEDED']), body: z.string().min(1).max(4000),
+  relatedTaskId: internalId, relatedTaskTitle: z.string().min(1).max(120),
+  evidence: z.array(z.object({ label: z.string().min(1).max(120), value: z.string().min(1).max(2000), taskId: internalId, capturedVersion: z.number().int().positive() }).strict()).min(1).max(20),
+  requiresProfessional: z.boolean(), professionalReviewNote: z.string().min(1).max(1000).nullable(),
+}).strict()
+export type InsightDraft = z.infer<typeof insightDraftSchema>
+const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']), output: runSummarySchema.optional(), insights: z.array(insightDraftSchema).max(20).optional() }).strict()
+export const interruptedResultSchema = resultBase.extend({ kind: z.literal('execution_interrupted'), operation: operationSchema,
+  status: z.literal('NEEDS_ATTENTION'), failureReason: z.enum(['BUDGET_EXCEEDED', 'TIME_LIMIT', 'EXECUTION_FAILED']), output: runSummarySchema,
+}).strict()
+export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema, interruptedResultSchema])
 export type InternalResult = z.infer<typeof internalResultSchema>
 export const heartbeatSchema = z.object({}).strict()
 const progressEventSchema = z.object({
@@ -146,3 +177,17 @@ export const planningHistorySchema = z.object({
   }
 })
 export type PlanningHistory = z.infer<typeof planningHistorySchema>
+
+
+/** Backend-owned case planning pause. null is explicit absence; omission is not permission. */
+export const planningRestrictionSchema = z.object({ reason: z.string().trim().min(1).max(1000) }).strict().nullable()
+export type PlanningRestriction = z.infer<typeof planningRestrictionSchema>
+
+/** Backend-authenticated control message. It contains no business content or execution capability. */
+export const cancelExecutionSchema = z.object({ cancelId: internalId, runId: internalId, jobId: internalId, executionAttempt: internalId,
+  issuedAt: z.number().int().nonnegative(), expiresAt: z.number().int().positive(),
+}).strict()
+export type CancelExecution = z.infer<typeof cancelExecutionSchema>
+export const cancelExecutionAckSchema = z.object({ cancelId: internalId, runId: internalId, jobId: internalId,
+  executionAttempt: internalId, status: z.enum(['STOPPED', 'DUPLICATE']),
+}).strict()

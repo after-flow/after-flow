@@ -5,6 +5,7 @@ import type { ResearchProvider } from '../mastra/tools/research.js'
 import { sourceCandidateSchema, sourceDocumentSchema } from '../../orchestration/research/sources.js'
 import type { SourceCandidate } from '../../orchestration/research/sources.js'
 import { fetchOfficialText, validateOfficialUrl } from './safe-https.js'
+import { extractOfficialPdf } from './pdf-text.js'
 
 const entrySchema = sourceCandidateSchema.extend({ keywords: z.array(z.string().min(1).max(100)).min(1).max(30) }).strict()
 export const officialCatalogSchema = z.object({
@@ -14,7 +15,8 @@ export const officialCatalogSchema = z.object({
   entries: z.array(entrySchema).min(1).max(500),
 }).strict()
 export type OfficialCatalog = z.infer<typeof officialCatalogSchema>
-export interface OfficialResponse { body: string; contentType: 'text/html' | 'text/plain' }
+type TextResponse = { body: string; contentType: 'text/html' | 'text/plain' }
+export type OfficialResponse = TextResponse | { body: Uint8Array; contentType: 'application/pdf' }
 
 /** Search is local to reviewed metadata; external search vendors are an independent adapter. */
 export function createOfficialCatalogProvider(inputs: readonly OfficialCatalog[], options: {
@@ -58,15 +60,18 @@ export function createOfficialCatalogProvider(inputs: readonly OfficialCatalog[]
       const catalog = active(entry.catalogId)
       const result = await (options.fetchText ?? fetchOfficialText)(entry.url, catalog.allowedHosts, signal)
       signal.throwIfAborted(); active(entry.catalogId)
-      const text = extractOfficialText(result)
-      return sourceDocumentSchema.parse({ ...candidateOf(entry), text, location: result.contentType === 'text/html' ? 'HTML本文（ページ全体）' : 'テキスト本文（全体）',
+      const pdf = result.contentType === 'application/pdf' ? await extractOfficialPdf(result.body, signal) : null
+      const text = pdf ? pdf.text : extractOfficialText(result as TextResponse)
+      signal.throwIfAborted(); active(entry.catalogId)
+      const location = pdf ? `PDF本文（1〜${pdf.pages}ページ・ページ番号付き、画像文字は未抽出）` : result.contentType === 'text/html' ? 'HTML本文（ページ全体）' : 'テキスト本文（全体）'
+      return sourceDocumentSchema.parse({ ...candidateOf(entry), text, location,
         fetchedAt: new Date(now()).toISOString(), updatedAt: null })
     },
   }
 }
 const candidateOf = (entry: z.infer<typeof entrySchema>): SourceCandidate => ({ id: entry.id, catalogId: entry.catalogId, title: entry.title, issuer: entry.issuer, url: entry.url })
 
-export function extractOfficialText(response: OfficialResponse): string {
+export function extractOfficialText(response: TextResponse): string {
   if (Buffer.byteLength(response.body) > 524288) throw new Error('Official source body is too large')
   let text: string
   if (response.contentType === 'text/plain') text = response.body
