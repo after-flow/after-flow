@@ -23,3 +23,5 @@ JavaScript実行・ブラウザ操作・Cookie・原本Storageアクセスはな
 
 参照: [Node HTTPS](https://nodejs.org/api/https.html)、[parse5](https://parse5.js.org/)、
 [IANA IPv4特別用途アドレス](https://www.iana.org/assignments/iana-ipv4-special-registry)。採用実行環境はNode22。
+
+調査中の実行取消は、Harnessが`cancelled`の結果として記録する。未完了の調査に回答や完了を付けず、Coreの生成も中断する。モデルが自己申告したcancelledは受け付けない。すでに検証済みの調査結果は取消で書き換えず、取り消された未完了の委任と区別する。

@@ -20,7 +20,7 @@ export const delegationSelectionSchema = z.object({ briefId: id }).strict()
 
 // IDs, attempts, timestamps, context proof and cost are attached by the harness, never by the model.
 export const researchFindingsSchema = z.object({
-  status: z.enum(['complete', 'partial', 'needs_input', 'failed']),
+  status: z.enum(['complete', 'partial', 'needs_input', 'failed', 'cancelled']),
   answers: z.array(z.object({
     questionId: id, text: z.string().min(1).max(2000),
     sourceIds: z.array(id).min(1).max(12),
@@ -29,6 +29,7 @@ export const researchFindingsSchema = z.object({
   missing: z.array(z.string().min(1).max(500)).max(20),
   conflicts: z.array(z.string().min(1).max(1000)).max(20),
 }).strict().superRefine((result, ctx) => {
+  if (result.status === 'cancelled' && result.answers.length) ctx.addIssue({ code: 'custom', message: 'Cancelled research cannot claim answers' })
   if (result.status === 'complete' && (!result.answers.length || result.missing.length || result.conflicts.length)) {
     ctx.addIssue({ code: 'custom', message: 'Incomplete findings cannot be complete' })
   }
@@ -68,6 +69,7 @@ export function assertCompleteResearch(input: ResearchEvidence, sourceIds: Reado
 /** Referential validation, not a semantic truthfulness scorer. */
 export function validateFindings(input: unknown, brief: ResearchBrief, retrievedSourceIds: ReadonlySet<string>): ResearchFindings {
   const result = researchFindingsSchema.parse(input)
+  if (result.status === 'cancelled') throw new Error('Only the harness can cancel research')
   const questions = new Set(brief.questions.map((question) => question.id))
   for (const answer of result.answers) {
     if (!questions.has(answer.questionId) || answer.sourceIds.some((sourceId) => !retrievedSourceIds.has(sourceId))) {
