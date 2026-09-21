@@ -1,4 +1,4 @@
-import { planningHistorySchema } from '@aftercare/internal-contracts'
+import { planningHistorySchema, planningRestrictionSchema } from '@aftercare/internal-contracts'
 import type { ProposalVersionEntity } from '../../domain/proposal/proposal-version.js'
 import type { ApprovalEntity } from '../../domain/proposal/approval.js'
 import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent, WaitRequestInput } from '@aftercare/internal-contracts'
@@ -190,6 +190,7 @@ export class InternalExecutionService {
         })
         if (!planningHistory.success) throw errors.preconditionFailed({ details: { reason: 'PLANNING_HISTORY_UNAVAILABLE' } })
         content.planningHistory = planningHistory.data
+        content.planningRestriction = planningRestrictionSchema.parse(entity.aiPlanningRestriction ?? null)
       }
       // 原本・ファイル名・Storage keyは含めない。検査済みでも文書本文は#27接続まで配信しない。
       const documents = await reader.list<DocumentEntity>(claims.tenantId, collections.documents, claims.caseId, {

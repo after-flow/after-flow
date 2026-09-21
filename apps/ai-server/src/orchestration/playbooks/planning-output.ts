@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { internalId } from '@aftercare/internal-contracts'
+import { internalId, planningRestrictionSchema } from '@aftercare/internal-contracts'
 import { contentHash } from '../context/builder.js'
 import type { CoreContext } from '../context/builder.js'
 import type { SourceDocument } from '../research/sources.js'
@@ -34,6 +34,9 @@ const normalize = (value: unknown) => String(value ?? '').normalize('NFKC').repl
 export function validatePlan(input: { runId: string; context: CoreContext; draft: PlanningDraft; templates: readonly ReviewedTaskTemplate[]; sources: readonly SourceDocument[] }): ValidatedPlan {
   const history = input.context.modelInput.planningHistory
   if (input.context.operation !== 'case_planning' || !history) throw new Error('Complete planning history is required')
+  if (planningRestrictionSchema.parse(input.context.planningRestriction) !== null) {
+    return { proposals: [], skipped: [], questions: ['この案件ではAIの手続き提案が停止されています。案件の管理者に停止理由と再開の可否を確認してください。'] }
+  }
   const draft = planningDraftSchema.parse(input.draft)
   const templates = new Map(input.templates.map(value => { const template = reviewedTaskTemplateSchema.parse(value); return [template.id, template] }))
   if (templates.size !== input.templates.length) throw new Error('Duplicate reviewed template')
@@ -44,7 +47,7 @@ export function validatePlan(input: { runId: string; context: CoreContext; draft
     if (!tasks.has(fact.entityId)) tasks.set(fact.entityId, new Map())
     tasks.get(fact.entityId)!.set(fact.field, fact.value); versions.set(fact.entityId, fact.entityVersion)
   }
-  const plan: ValidatedPlan = { proposals: [], skipped: [], questions: draft.questions }
+  const plan: ValidatedPlan = { proposals: [], skipped: [], questions: [...draft.questions] }
   for (const selection of draft.tasks) {
     const template = templates.get(selection.templateId)
     if (!template || Date.parse(template.reviewedAt) > Date.now() || Date.parse(template.expiresAt) <= Date.now()) throw new Error('Planning template is not current')
@@ -67,7 +70,9 @@ export function validatePlan(input: { runId: string; context: CoreContext; draft
         facts.some(fact => fact.entityId === entityId && fact.field === item.field && fact.state === item.state && fact.value === item.value)))
     })
     if (missingPrerequisite) {
-      plan.skipped.push({ templateId: template.id, reason: 'PREREQUISITE_UNKNOWN' }); continue
+      plan.skipped.push({ templateId: template.id, reason: 'PREREQUISITE_UNKNOWN' })
+      plan.questions.push(`「${template.task.title}」に必要な本人意思・前提情報が確認できません。現在の記録を確認してください。`)
+      continue
     }
     if (new Set(selection.dependencyTaskIds).size !== selection.dependencyTaskIds.length || selection.dependencyTaskIds.some(id => !tasks.has(id))) throw new Error('Plan dependency is outside the current case')
     const checked = new Set<string>()

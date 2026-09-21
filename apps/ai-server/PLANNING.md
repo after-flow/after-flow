@@ -14,3 +14,22 @@ WAIT再開は保存済み計画を使用し、Orch/Agent/提案送信を繰り�
 検証: 実Mastraの2 Agent fixture、既存/過去案の重複抑止、前提不足、別Case依存、独自期限拒否。Firestore統合試験で承認時の必要書類/依存反映と不明/循環依存の拒否を検証。
 
 承認待ちを跨ぐ際は、保存したTemplate設定hashと根拠/Templateの有効期限を再照合する。改定・期限切れがある場合は正式な適用結果がAPPLIEDでもNEEDS_ATTENTIONとする。確定済みBackend変更を巻き戻したり、古い根拠を使って自動的に別の提案を送ったりしない。
+
+
+## 停止・本人意思の再検証
+
+案件の `planningRestriction` が非nullなら、Orch・モデル・検索・Proposal・承認待ちを開始せず、
+管理者への確認をWorkflowのquestionsに残し、BackendへNEEDS_ATTENTIONを報告する。
+停止情報が欠落しているBackendや古いSnapshotから、新しい提案を送らない。
+停止解除後は新Runで最新Contextから計画する。承認待ちからの再開でも最新の停止状態を確認し、
+すでに反映済みの結果があっても停止中なら自動的にSUCCEEDEDとしない。
+
+レビュー済みTemplateの前提を満たさない候補は、モデルが質問を出し忘れていても確認質問へ戻す。
+本人が確定していない相続方法や別人の意思を、指定された本人の確認済み意思として扱わない。
+これはTemplateに指定された前提の照合であり、AIが相続方法の正否を判断する機能ではない。
+
+質問はWorkflow出力とSnapshotに保持する。現在のBackend結果契約はcase_planningのstatusのみであり、
+質問の画面配送、個別手続きの禁止、実Orch/Provider・業務資料を使う受入は継続課題。
+
+配置順はBackendの保存・提出防止PRを先行し、本変更でContext配信とAI側の検証を同時に更新する。
+旧AIは追加Contextを拒否し、新AIは停止情報のない旧Backendを拒否するため、両サービスの版を揃える。

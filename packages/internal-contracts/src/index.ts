@@ -146,3 +146,8 @@ export const planningHistorySchema = z.object({
   }
 })
 export type PlanningHistory = z.infer<typeof planningHistorySchema>
+
+
+/** Backend-owned case planning pause. null is explicit absence; omission is not permission. */
+export const planningRestrictionSchema = z.object({ reason: z.string().trim().min(1).max(1000) }).strict().nullable()
+export type PlanningRestriction = z.infer<typeof planningRestrictionSchema>

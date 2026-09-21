@@ -14,7 +14,7 @@ import type { BackendClient } from '../../backend-client/client.js'
 const routeSchema = z.object({ routeId: z.literal('case-planning/v1'), evidenceId: internalId }).strict()
 const inputSchema = z.object({ runId: internalId }).strict()
 const generatedSchema = inputSchema.extend({ artifact: artifactEnvelopeSchema, draft: planningDraftSchema,
-  sources: z.array(sourceDocumentSchema).max(20), research: researchEvidenceSchema, routing: routeSchema })
+  sources: z.array(sourceDocumentSchema).max(20), research: researchEvidenceSchema, routing: routeSchema.nullable() })
 export const planningOutputSchema = z.object({
   context: artifactEnvelopeSchema,
   reviewConfigHash: z.string(), reviewValidUntil: z.string().datetime(),
@@ -32,6 +32,10 @@ export function createCasePlanningWorkflow(deps: {
     deps.signal.throwIfAborted()
     if ((await deps.backend.control({ signal: deps.signal })).instruction !== 'CONTINUE') throw new Error('Planning stopped')
     const artifact = await deps.backend.context({ signal: deps.signal }); const context = buildPlanningContext(artifact)
+    if (context.planningRestriction !== null) return {
+      ...inputData, artifact, draft: { tasks: [], questions: [] }, sources: [],
+      research: { briefs: [], outcomes: [] }, routing: null,
+    }
     const prepared = await deps.prepare()
     routeSchema.parse(prepared.routing)
     const agents = createPlaybookAgents({ ...prepared.agents, playbookId: 'case-planning', signal: deps.signal })
@@ -47,6 +51,7 @@ export function createCasePlanningWorkflow(deps: {
     const artifact = await deps.backend.context({ signal: deps.signal })
     const latest = buildPlanningContext(artifact)
     assertContextFresh(buildPlanningContext(inputData.artifact), latest)
+    if (latest.planningRestriction === null) routeSchema.parse(inputData.routing)
     if (inputData.sources.some(source => Date.now() - Date.parse(source.fetchedAt) > deps.maxSourceAgeMs)) throw new Error('Planning sources expired')
     if (inputData.draft.tasks.length) assertCompleteResearch(inputData.research, new Set(inputData.sources.map(source => source.id)))
     return { ...validatePlan({ ...inputData, context: latest, templates }), context: artifact, reviewConfigHash: contentHash(templates),
