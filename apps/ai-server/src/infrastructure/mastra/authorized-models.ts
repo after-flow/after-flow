@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { assertOrcaModel, orcaReceipt } from '../orcarouter/models.js'
+import type { OrcaReceipt } from '../orcarouter/models.js'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import type { ModelWithRetries } from '@mastra/core/agent'
 import { assertProviderAllowed, inferenceReservation, providerPolicySchema, routeDecisionSchema, routeRequestSchema } from '../../orchestration/models/policy.js'
@@ -14,7 +17,7 @@ export function assertAuthorizedModelSet(models: unknown, expected: ModelBinding
     entry.maxRetries !== 0)) throw new Error('Physical provider budget adapter must match this execution')
 }
 export interface ProviderMetric {
-  policyId: string; policyRevision: string; routeEvidenceId: string; role: 'core' | 'research'
+  policyId: string; policyRevision: string; routeEvidenceId: string | null; selectionId?: string; gateway?: OrcaReceipt; role: 'core' | 'research'
   status: 'success' | 'failure'; durationMs: number; inputTokens: number | null; outputTokens: number | null
   failure: 'TRANSIENT' | 'PERMANENT' | 'INTERRUPTED' | null
 }
@@ -28,14 +31,15 @@ function classify(error: unknown): ProviderFailure['classification'] {
 }
 
 /** Native Mastra fallback list; every actual SDK invocation rechecks authority and reserves its own budget. */
-export async function createAuthorizedModels(options: {
-  request: RouteRequest; policies: readonly ProviderPolicy[]; router: OrchRouter; signal: AbortSignal
+export interface AuthorizedModelOptions {
+  request: RouteRequest; policies: readonly ProviderPolicy[]; signal: AbortSignal
   /** Must resolve current Backend-authorized consent before each transfer, never an LLM-supplied grant. */
   grant(): Promise<ProviderGrant>
   models: ReadonlyMap<string, Model>
   charge(value: BudgetCharge): Promise<void>
   record(metric: ProviderMetric): Promise<void>
-}): Promise<{ models: ModelWithRetries[]; evidenceId: string }> {
+}
+export async function createAuthorizedModels(options: AuthorizedModelOptions & { router: OrchRouter }): Promise<{ models: ModelWithRetries[]; evidenceId: string }> {
   const request = routeRequestSchema.parse(options.request)
   if (request.role === 'research' && request.dataClass !== 'public_research') throw new Error('Research cannot receive private case data')
   const policies = new Map(options.policies.map(value => { const policy = providerPolicySchema.parse(value); return [policy.id, policy] }))
@@ -50,6 +54,32 @@ export async function createAuthorizedModels(options: {
   const decision = routeDecisionSchema.parse(await options.router.route(request, options.signal))
   if (decision.requestId !== request.requestId || Date.parse(decision.expiresAt) <= Date.now() ||
     new Set(decision.policyIds).size !== decision.policyIds.length || decision.policyIds.some(id => !request.policyIds.includes(id))) throw new Error('Orch routing result is not authorized')
+  return wrapSelectedModels(options, request, policies, decision, false)
+}
+
+/** Local authorized selection, then real inference through OrcaRouter. This is NOT a remote routing receipt. */
+export async function createAuthorizedOrcaModels(options: AuthorizedModelOptions) {
+  const request = routeRequestSchema.parse(options.request)
+  if (request.role === 'research' && request.dataClass !== 'public_research') throw new Error('Research cannot receive private case data')
+  if (request.policyIds.length > 2 || new Set(request.policyIds).size !== request.policyIds.length) throw new Error('Configure one or two explicit OrcaRouter policies per role')
+  const policies = new Map(options.policies.map(value => { const policy = providerPolicySchema.parse(value); return [policy.id, policy] }))
+  if (policies.size !== options.policies.length) throw new Error('Duplicate model policy')
+  const grant = await options.grant()
+  for (const id of request.policyIds) {
+    const policy = policies.get(id), model = options.models.get(id)
+    if (!policy || !model) throw new Error('Unknown OrcaRouter policy')
+    assertOrcaModel(model, policy.modelId)
+    assertProviderAllowed(policy, grant, request.role, request.dataClass)
+  }
+  options.signal.throwIfAborted()
+  const decision = { requestId: request.requestId, policyIds: request.policyIds,
+    evidenceId: 'orca-policy-' + createHash('sha256').update(JSON.stringify({ request, policies: [...policies.values()] })).digest('hex'),
+    expiresAt: new Date(Math.min(Date.parse(grant.expiresAt), ...request.policyIds.map(id => Date.parse(policies.get(id)!.expiresAt)))).toISOString() }
+  return wrapSelectedModels(options, request, policies, decision, true)
+}
+
+function wrapSelectedModels(options: AuthorizedModelOptions, request: RouteRequest, policies: Map<string, ProviderPolicy>,
+  decision: { policyIds: string[]; evidenceId: string; expiresAt: string }, gateway: boolean) {
   const selected = decision.policyIds.map(id => policies.get(id)!)
   if (new Set(selected.map(policy => policy.currency)).size !== 1 || new Set(selected.map(policy => policy.sdkProvider)).size !== selected.length) throw new Error('Fallback requires distinct providers in one budget currency')
   const stop = new AbortController()
@@ -60,16 +90,16 @@ export async function createAuthorizedModels(options: {
     const reservation = inferenceReservation(policy)
     const before = async () => {
       signal.throwIfAborted()
-      if (Date.parse(decision.expiresAt) <= Date.now()) throw new Error('Orch route expired')
+      if (Date.parse(decision.expiresAt) <= Date.now()) throw new Error('Model selection expired')
       try {
         assertProviderAllowed(policy, await options.grant(), request.role, request.dataClass)
         await options.charge({ inferenceAttempts: 1, tokens: reservation.tokens, costMicros: reservation.costMicros })
         signal.throwIfAborted()
       } catch { stop.abort(); throw new ProviderFailure('INTERRUPTED') }
     }
-    const metric = async (started: number, failure: ProviderFailure['classification'] | null, usage?: { inputTokens?: number; outputTokens?: number }) => {
+    const metric = async (started: number, failure: ProviderFailure['classification'] | null, usage?: { inputTokens?: number; outputTokens?: number }, receipt?: OrcaReceipt) => {
       const safe = (value: number | undefined) => Number.isSafeInteger(value) && value! >= 0 ? value! : null
-      await options.record({ policyId: policy.id, policyRevision: policy.revision, routeEvidenceId: decision.evidenceId, role: request.role,
+      await options.record({ policyId: policy.id, policyRevision: policy.revision, routeEvidenceId: gateway ? null : decision.evidenceId, ...(gateway ? { selectionId: decision.evidenceId } : {}), ...(receipt ? { gateway: receipt } : {}), role: request.role,
         status: failure ? 'failure' : 'success', durationMs: Math.max(0, Date.now() - started),
         inputTokens: safe(usage?.inputTokens), outputTokens: safe(usage?.outputTokens), failure })
     }
@@ -85,7 +115,7 @@ export async function createAuthorizedModels(options: {
         await before(); const started = Date.now()
         try {
           const result = await model.doGenerate({ ...call, maxOutputTokens: reservation.maxOutputTokens, abortSignal: call.abortSignal ? AbortSignal.any([signal, call.abortSignal]) : signal })
-          signal.throwIfAborted(); await metric(started, null, result.usage); return result
+          signal.throwIfAborted(); await metric(started, null, result.usage, gateway ? orcaReceipt(result.response?.headers, policy.modelId, result.providerMetadata) : undefined); return result
         } catch (error) { throw await failed(error, started) }
       },
       doStream: async call => {
@@ -106,7 +136,7 @@ export async function createAuthorizedModels(options: {
                 }
                 if (chunk.type === 'error') throw chunk.error
                 if (['text-delta', 'tool-call', 'reasoning-delta'].includes(chunk.type)) partial = true
-                if (chunk.type === 'finish') { finished = true; await metric(started, null, chunk.usage) }
+                if (chunk.type === 'finish') { finished = true; await metric(started, null, chunk.usage, gateway ? orcaReceipt(result.response?.headers, policy.modelId, chunk.providerMetadata) : undefined) }
                 controller.enqueue(chunk)
               } catch (error) {
                 const failure = await failed(error, started, partial)
