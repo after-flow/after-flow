@@ -104,8 +104,9 @@ export function unresolvedDeadline(args: {
 }
 
 export const FLOW_STAGE_LABELS: { id: FlowStageId; label: string }[] = [
-  { id: 'immediate', label: '死亡直後の対応' },
-  { id: 'funeral', label: '葬儀・火葬（死亡届7日以内）' },
+  // 死亡届（7日以内）は火葬許可と一緒に出すので、葬儀より前の「死亡直後」の段階に付ける
+  { id: 'immediate', label: '死亡直後の対応（死亡届7日以内）' },
+  { id: 'funeral', label: '葬儀・火葬' },
   { id: 'government', label: '役所・公的手続（目安14日以内）' },
   { id: 'contracts', label: '契約・生活の整理' },
   { id: 'investigation', label: '相続の調査' },

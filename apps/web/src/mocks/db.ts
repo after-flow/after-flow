@@ -164,7 +164,8 @@ export const db: Store = {
       summary: '死亡診断書と一緒に、市区町村の窓口へ提出します。火葬許可証の交付もあわせて受け取ります。',
       submitTo: '○○市役所 市民課',
       status: 'READY',
-      stage: 'funeral',
+      // 死亡届と一緒に火葬許可を申請し、許可証がないと火葬できない。葬儀より前の「亡くなった直後」に置く（Backend の定義と同じ）
+      stage: 'immediate',
       category: '役所手続き',
       source: 'RULE_ENGINE',
       deadline: makeDeadline({
@@ -178,8 +179,9 @@ export const db: Store = {
         critical: true,
       }),
       requiredDocuments: [
-        { id: 'rd_1', label: '死亡診断書', documentId: null, source: 'AI', collected: false },
-        { id: 'rd_2', label: '届出人の印鑑', documentId: null, source: 'AI', collected: false },
+        { id: 'rd_1', label: '死亡診断書（原本）', documentId: null, source: 'AI', collected: false },
+        // 2021年9月から戸籍の届出への押印は任意。印鑑ではなく本人確認書類（Backend の定義と同じ）
+        { id: 'rd_2', label: '届出人の本人確認書類', documentId: null, source: 'AI', collected: false },
       ],
       assigneeId: SELF_PERSON_ID,
       // 準備ができたまま数日たっている（「止まっている手続き」の見本）
