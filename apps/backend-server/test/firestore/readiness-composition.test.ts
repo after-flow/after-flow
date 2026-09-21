@@ -30,7 +30,7 @@ describeFirestore('composition: readinessの正常系（Emulator込み）', () =
       }),
     )
     const rulesPath = path.join(dir, 'rules.json')
-    writeFileSync(rulesPath, JSON.stringify({ placeholder: false, deadlineRules: [], initialProcedures: [] }))
+    writeFileSync(rulesPath, JSON.stringify({ placeholder: false, deadlineRules: [], initialProcedures: [], deliberationDeadlineRuleId: null }))
 
     const app = createServer({
       ...process.env,
@@ -75,7 +75,7 @@ describeFirestore('composition: readinessの正常系（Emulator込み）', () =
       }),
     )
     const rulesPath = path.join(dir, 'rules.json')
-    writeFileSync(rulesPath, JSON.stringify({ placeholder: false, deadlineRules: [], initialProcedures: [] }))
+    writeFileSync(rulesPath, JSON.stringify({ placeholder: false, deadlineRules: [], initialProcedures: [], deliberationDeadlineRuleId: null }))
 
     const aiServer = createHttpServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })

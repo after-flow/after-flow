@@ -88,6 +88,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     })
   }
 
+  const ruleCatalog = readRuleCatalog(env)
   const enabledOperations = connectedOperations(env)
   if (enabledOperations.size > 0 && !consentCatalog.documents.some((document) => document.kind === 'CROSS_BORDER_AI')) {
     // 接続済みのふりをしない、と対にする検査。AI へ渡す操作を接続していながら
@@ -126,7 +127,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     ) : null,
     // 放棄前ロックは保存済みの確定状況で判定する。未記録は未確定のまま。
     taskService: new TaskService(
-      readRuleCatalog(env),
+      ruleCatalog,
       access,
       database.read,
       database.uow,
@@ -143,7 +144,8 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     overviewService: new CaseOverviewService(
       access,
       database.read,
-      enabledOperations.size > 0,
+      ruleCatalog,
+      { aiConnected: enabledOperations.size > 0 },
     ),
   })
 

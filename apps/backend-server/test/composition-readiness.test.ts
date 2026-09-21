@@ -25,7 +25,16 @@ async function readiness(env: NodeJS.ProcessEnv) {
 
 function ruleCatalogFixture(dir: string, overrides: Partial<{ placeholder: boolean }> = {}) {
   const file = path.join(dir, 'rules.json')
-  writeFileSync(file, JSON.stringify({ placeholder: false, deadlineRules: [], initialProcedures: [], ...overrides }))
+  writeFileSync(
+    file,
+    JSON.stringify({
+      placeholder: false,
+      deadlineRules: [],
+      initialProcedures: [],
+      deliberationDeadlineRuleId: null,
+      ...overrides,
+    }),
+  )
   return file
 }
 
@@ -123,6 +132,13 @@ describe('composition: 内部readiness endpointの組み立て', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'after-flow-readiness-'))
     const { body } = await readiness({ ...baseEnv, DEADLINE_RULES_PATH: ruleCatalogFixture(dir) })
     assert.equal(checksOf(body).deadline_rules?.status, 'ok')
+  })
+
+  it('NODE_ENV=productionでDEADLINE_RULES_PATH未設定ならreadinessはNOT_CONFIGUREDに丸め込む', async () => {
+    // readRuleCatalog自体は起動を止める例外を投げるが、readinessの検査はそれを
+    // 汎用のNOT_CONFIGUREDとして報告する（consent_catalogと同じ扱い）。
+    const { body } = await readiness({ ...baseEnv, NODE_ENV: 'production' })
+    assert.equal(checksOf(body).deadline_rules?.reason, 'NOT_CONFIGURED')
   })
 
   describe('AI操作が有効な場合だけAI検査を追加する', () => {
