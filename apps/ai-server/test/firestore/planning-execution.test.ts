@@ -16,7 +16,7 @@ const template: ReviewedTaskTemplate = { id: 'template', version: 'v1', reviewed
 const candidate = { id: 'source', catalogId: 'catalog', title: '合成資料', issuer: '架空機関', url: 'https://official.example/fixture' }
 const source = { ...candidate, text: '合成手続きの確認に合成資料を用いる。', location: '1項', fetchedAt: new Date().toISOString(), updatedAt: null }
 function artifact() {
-  const content = { operation: 'case_planning', case: { id: 'case', version: 1, municipality: '架空市' }, documents: [],
+  const content = { operation: 'case_planning', planningRestriction: null, case: { id: 'case', version: 1, municipality: '架空市' }, documents: [],
     tasks: [{ id: 'existing', version: 2, title: '既存の手動手続き', source: 'MANUAL', submitTo: '架空機関', dependencyTaskIds: [] }],
     planningHistory: { complete: true, proposals: [], versions: [], approvals: [] } }
   return { caseVersion: 1, contextSnapshotId: 'context', fencingToken: 1, artifactVersion: 1, contentHash: contentHash(content), content, expiresAt: new Date(Date.now() + 60000).toISOString() }
@@ -25,7 +25,7 @@ const draft = { tasks: [{ templateId: 'template', sourceIds: ['source'], depende
 
 
 test('planning approval resumes a stored plan without re-running agents or submitting twice', { skip: !process.env.AI_RUNTIME_EMULATOR_HOST }, async () => {
-  for (const reviewState of ['current', 'changed', 'expired'] as const) {
+  for (const reviewState of ['current', 'changed', 'expired', 'restricted'] as const) {
   const signal = new AbortController().signal
   const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief' }) } }, { text: JSON.stringify(draft) }])
   const research = scriptedModel([{ tool: 'searchOfficialSources', input: { query: '必要資料' } }, { tool: 'readOfficialSource', input: { sourceId: 'source' } },
@@ -35,7 +35,7 @@ test('planning approval resumes a stored plan without re-running agents or submi
     beforeTool: async () => {}, provider: { search: async () => [candidate], read: async () => source } })
 
   const db = createRuntimeFirestore(); const snapshots = new FirestoreWorkflowsStorage(db)
-  let context = artifact() as ReturnType<typeof artifact> & { content: Record<string, unknown> }
+  let context: Omit<ReturnType<typeof artifact>, 'content'> & { content: Record<string, unknown> } = artifact()
   let submissions = 0; let preparations = 0; let reports = 0
   let actionId = ''; let payloadHash = ''
   const oldId = randomUUID(); const newId = randomUUID()
@@ -49,7 +49,7 @@ test('planning approval resumes a stored plan without re-running agents or submi
     const first = new Mastra({ storage: createRuntimeStore(db), workflows: { workflow: createPlanningExecutionWorkflow(deps) } })
     const result = await (await first.getWorkflow('workflow').createRun({ runId: oldId })).start({ inputData: { runId: 'run', resultId: 'result' } })
     assert.equal(result.status, 'suspended', JSON.stringify(result)); assert.equal(reports, 0)
-    const content = { ...context.content, actions: [{ id: 'proposal', actionId, proposalVersion: 1, payloadHash, status: 'APPLIED' }], resume: { previousAttemptId: 'old', kind: 'WAIT', waitRequestId: 'wait', snapshotId: oldId, outcome: 'APPLIED' } }
+    const content = { ...context.content, planningRestriction: reviewState === 'restricted' ? { reason: 'pause after approval' } : null, actions: [{ id: 'proposal', actionId, proposalVersion: 1, payloadHash, status: 'APPLIED' }], resume: { previousAttemptId: 'old', kind: 'WAIT', waitRequestId: 'wait', snapshotId: oldId, outcome: 'APPLIED' } }
     context = { ...context, caseVersion: 2, content, contentHash: contentHash(content) }
     await snapshots.forkSuspendedSnapshot({ workflowName: PLANNING_EXECUTION, fromRunId: oldId, toRunId: newId })
     const currentTemplates = reviewState === 'changed' ? [{ ...template, version: 'v2' }] : reviewState === 'expired' ? [{ ...template, expiresAt: '2020-01-01T00:00:00Z' }] : [template]

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { artifactEnvelopeSchema, contextProofSchema, internalId, operationSchema, planningHistorySchema } from '@aftercare/internal-contracts'
-import type { ContextProof, PlanningHistory } from '@aftercare/internal-contracts'
+import { artifactEnvelopeSchema, contextProofSchema, internalId, operationSchema, planningHistorySchema, planningRestrictionSchema } from '@aftercare/internal-contracts'
+import type { ContextProof, PlanningHistory, PlanningRestriction } from '@aftercare/internal-contracts'
 import { researchBriefSchema } from '../research/contracts.js'
 
 const fields = {
@@ -42,6 +42,8 @@ export interface CoreContext {
   operation: z.infer<typeof operationSchema>
   proof: ContextProof
   expiresAt: string
+  /** Kept in the harness; private reasons are not model or research instructions. */
+  planningRestriction?: PlanningRestriction
   modelInput: {
     facts: ContextFact[]
     documents: { id: string; version: number; kind: string; contentAvailable: false }[]
@@ -51,7 +53,7 @@ export interface CoreContext {
 }
 
 export class ContextError extends Error {
-  constructor(readonly code: 'INVALID_CONTEXT' | 'EXPIRED_CONTEXT' | 'CONTEXT_TOO_LARGE' | 'CONTEXT_CHANGED' | 'PLANNING_HISTORY_UNAVAILABLE') {
+  constructor(readonly code: 'INVALID_CONTEXT' | 'EXPIRED_CONTEXT' | 'CONTEXT_TOO_LARGE' | 'CONTEXT_CHANGED' | 'PLANNING_HISTORY_UNAVAILABLE' | 'PLANNING_RESTRICTION_UNAVAILABLE') {
     super(code)
   }
 }
@@ -86,6 +88,7 @@ const contentSchema = z.object({
   // Execution control metadata stays outside the LLM context, in the harness.
   actions: z.array(z.unknown()).max(100).optional(), resume: z.unknown().optional(),
   planningHistory: planningHistorySchema.optional(),
+  planningRestriction: planningRestrictionSchema.optional(),
 }).strict()
 
 export function buildCoreContext(input: unknown, operation: CoreContext['operation'], options: { now?: number; maxBytes?: number } = {}): CoreContext {
@@ -101,7 +104,7 @@ export function buildCoreContext(input: unknown, operation: CoreContext['operati
     if ((operation === 'task_guidance' && !content.task) || (operation === 'chat_reply' && !content.message)) throw new ContextError('INVALID_CONTEXT')
     const facts: ContextFact[] = []
     for (const [group, value] of Object.entries(content)) {
-      if (['operation', 'documents', 'actions', 'resume', 'planningHistory'].includes(group)) continue
+      if (['operation', 'documents', 'actions', 'resume', 'planningHistory', 'planningRestriction'].includes(group)) continue
       const allowedFields: readonly string[] = group === 'tasks' ? fields.task : fields[group as keyof typeof fields]
       if (!allowedFields) throw new ContextError('INVALID_CONTEXT')
       for (const entity of (Array.isArray(value) ? value : [value]) as Record<string, unknown>[]) {
@@ -125,7 +128,9 @@ export function buildCoreContext(input: unknown, operation: CoreContext['operati
       ],
     }
     if (Buffer.byteLength(JSON.stringify(modelInput)) > maxBytes) throw new ContextError('CONTEXT_TOO_LARGE')
-    return { operation, proof: contextProofSchema.parse(artifact), expiresAt: artifact.expiresAt, modelInput }
+    return { operation, proof: contextProofSchema.parse(artifact), expiresAt: artifact.expiresAt, modelInput,
+      ...(operation === 'case_planning' && content.planningRestriction !== undefined ? { planningRestriction: content.planningRestriction } : {}),
+    }
   } catch (error) {
     if (error instanceof ContextError) throw error
     throw new ContextError('INVALID_CONTEXT')
@@ -182,8 +187,9 @@ export function buildResearchBrief(context: CoreContext, rawScope: z.infer<typeo
 }
 
 
-export function buildPlanningContext(input: unknown): CoreContext & { modelInput: CoreContext['modelInput'] & { planningHistory: PlanningHistory } } {
+export function buildPlanningContext(input: unknown): CoreContext & { planningRestriction: PlanningRestriction; modelInput: CoreContext['modelInput'] & { planningHistory: PlanningHistory } } {
   const context = buildCoreContext(input, 'case_planning')
   if (!context.modelInput.planningHistory) throw new ContextError('PLANNING_HISTORY_UNAVAILABLE')
-  return { ...context, modelInput: { ...context.modelInput, planningHistory: context.modelInput.planningHistory } }
+  if (context.planningRestriction === undefined) throw new ContextError('PLANNING_RESTRICTION_UNAVAILABLE')
+  return { ...context, planningRestriction: context.planningRestriction, modelInput: { ...context.modelInput, planningHistory: context.modelInput.planningHistory } }
 }

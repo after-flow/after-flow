@@ -18,7 +18,7 @@ test('native proposal suspend/fork/resume confirms exact applied version without
       const oldId = randomUUID(); const newId = randomUUID(); const actionId = actionIdFor('run-one', 'planning-v1', 'slot-one')
       const payload = { title: '合成確認', summary: 'fixture', stage: 'government', category: 'fixture' }
       const payloadHash = contentHash(payload)
-      const initialContent = { operation: 'case_planning', actions: [], resume: null, documents: [], tasks: [] }
+      const initialContent = { operation: 'case_planning', planningRestriction: null, actions: [], resume: null, documents: [], tasks: [] }
       let context = { caseVersion: 1, contextSnapshotId: 'context-one', fencingToken: 1, artifactVersion: 1, contentHash: contentHash(initialContent),
         content: initialContent as Record<string, unknown>, expiresAt: new Date(Date.now() + 60000).toISOString() }
       let submissions = 0; let registered: string | undefined
