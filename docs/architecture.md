@@ -358,6 +358,8 @@ dispatch/resume本文は`jobId / runId / executionAttempt / operation / issuedAt
 
 ContextとArtifactの応答には`caseVersion / contextSnapshotId / artifactVersion / contentHash / expiresAt`を含める。AI ServerはBackendから受け取ったContextをruntime処理に使えるが、正式状態として保存・更新しない。内部Artifact URLは短寿命・Run scope付きとし、別Runや別Caseで再利用できないようにする。
 
+Backendも同じ`GET /internal/v1/health/ready`のpathを自ら公開するが、上のAI Server向け表とは別contractである。AIサービス資格情報ではアクセスできない専用の`READINESS_ACCESS_TOKEN`を要求し、運用/デプロイツールだけが使う。詳細は[docs/runbooks/readiness.md](runbooks/readiness.md)。
+
 #### 認証・信頼境界
 
 - Backend → AIとAI → Backendで別audience・別service identityを用いる。各サービスのService Accountには相手の必要な内部routeだけを呼べる権限を付ける。

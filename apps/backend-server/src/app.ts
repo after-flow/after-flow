@@ -33,6 +33,14 @@ export interface CreateAppOptions {
    * ネットワークの分離は配備側の責務。
    */
   internalApp?: HonoApp<AppEnv>
+  /**
+   * 運用/デプロイツール専用の内部readiness API。
+   *
+   * AIからの内部 API（`internalApp`）とは別のアクセス制御を持つ、別の app。
+   * 未設定なら公開しない。liveness（`/api/v1/health`）とは別契約で、
+   * こちらも公開 OpenAPI には載らない。
+   */
+  readinessApp?: HonoApp<AppEnv>
   /** ローカル開発用の公開APIテスト画面。内部APIは含めない。 */
   apiDocs?: boolean
 }
@@ -56,7 +64,14 @@ export function createApp(options: CreateAppOptions = {}) {
     ...(options.consentGate ? { consentGate: options.consentGate } : {}),
   })
   app.route('/api/v1', v1)
+  // internalApp（AI実行API）とreadinessApp（運用/デプロイ専用）は同じ
+  // '/internal/v1' prefixに同居するが、互いに異なるpath配下（/runs/* と
+  // /health/ready）にしか反応しないよう、それぞれのapp内でmiddlewareの
+  // pathを絞ってある（execution.ts, readiness.ts）。そのためmountの順序は
+  // 認可の結果に影響しない。どちらも自分の担当外のrequestには反応せず、
+  // 次のmatchへ進む（またはそもそもmatchしない）。
   if (options.internalApp) app.route('/internal/v1', options.internalApp)
+  if (options.readinessApp) app.route('/internal/v1', options.readinessApp)
 
   return app
 }
