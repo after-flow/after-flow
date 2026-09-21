@@ -160,3 +160,18 @@ test('planning keeps owner restrictions in the harness, rejects missing policy a
   const after = buildPlanningContext(wrap({ ...content, planningRestriction: null }))
   assert.throws(() => assertContextFresh(before, after), { code: 'CONTEXT_CHANGED' })
 })
+
+
+test('clarification answers remain user reports and do not enter research or confirmed facts', () => {
+  const input = artifact()
+  const content = { ...input.content, planningRestriction: null,
+    planningHistory: { complete: true, proposals: [], versions: [], approvals: [] },
+    clarificationHistory: [{ resultId: 'result', questionIndex: 0, question: '地域の確認', answer: 'PRIVATE-ANSWER', caseVersion: 1, state: 'user_reported' }],
+    unresolvedQuestions: ['残る確認'],
+  }
+  const context = buildPlanningContext({ ...input, content, contentHash: contentHash(content) })
+  assert.equal(context.modelInput.clarificationHistory?.[0]?.state, 'user_reported')
+  assert.deepEqual(context.modelInput.unresolvedQuestions, ['残る確認'])
+  assert.equal(context.modelInput.facts.some(fact => fact.value === 'PRIVATE-ANSWER'), false)
+  assert.equal(JSON.stringify(buildResearchBrief(context, scope)).includes('PRIVATE-ANSWER'), false)
+})

@@ -7,9 +7,9 @@
 - 依存先は既存Taskだけ。所属・循環・欠落を検証する。新規Task間の依存は正式IDが返るまで作らない。
 - 必要書類と依存はProposalのpayloadに含める。Backendが承認時に再検証し、正式Taskへ反映する。Taskの直接作成・承認・完了はAIの権限にない。
 
-`planning-execution-v1` と `createPlanningHandler` が候補生成→1件の正式提案→永続承認待ち→別attemptでの再開→正式版/hashの確認→Backendへの結果報告を接続する。最初に承認されたTaskが案件状態を変えるため、残りの候補を古いContextで連続適用しない。残り・質問・却下・変更がある場合はNEEDS_ATTENTION。次の新Runで最新状態から再計画する。
+`planning-execution-v1` と `createPlanningHandler` が候補生成→1件の正式提案→永続承認待ち→別attemptでの再開→正式版/hashの確認→Backendへの結果報告を接続する。最初に承認されたTaskが案件状態を変えるため、残りの候補を古いContextで連続適用しない。残り・質問・却下・変更がある場合はNEEDS_ATTENTION。回答または再試行で同じRunの新attemptを開始し、最新状態から再計画する。
 
-WAIT再開は保存済み計画を使用し、Orch/Agent/提案送信を繰り返さない。新しいattemptへSnapshotをforkするのはRuntimeの認可と所有権確認後だけ。実行途中のRETRY/CHECKPOINTは未定義の再適用を避けるため拒否する。Provider/Orch/Templateが未提供の既定プロセスでは503を維持する。
+WAIT再開は保存済み計画を使用し、Orch/Agent/提案送信を繰り返さない。新しいattemptへSnapshotをforkするのはRuntimeの認可と所有権確認後だけ。RETRYは共有予算内で最新Contextから再計画し、CHECKPOINTによる任意位置の再適用は拒否する。Provider/Orch/Templateが未提供の既定プロセスでは503を維持する。
 
 検証: 実Mastraの2 Agent fixture、既存/過去案の重複抑止、前提不足、別Case依存、独自期限拒否。Firestore統合試験で承認時の必要書類/依存反映と不明/循環依存の拒否を検証。
 
@@ -28,8 +28,20 @@ WAIT再開は保存済み計画を使用し、Orch/Agent/提案送信を繰り�
 本人が確定していない相続方法や別人の意思を、指定された本人の確認済み意思として扱わない。
 これはTemplateに指定された前提の照合であり、AIが相続方法の正否を判断する機能ではない。
 
-質問はWorkflow出力とSnapshotに保持する。現在のBackend結果契約はcase_planningのstatusのみであり、
-質問の画面配送、個別手続きの禁止、実Orch/Provider・業務資料を使う受入は継続課題。
+質問はWorkflow出力・Snapshot・Backendの実行結果に保持する。
+質問の画面操作導線、個別手続きの禁止、実Orch/Provider・業務資料を使う受入は継続課題。
 
 配置順はBackendの保存・提出防止PRを先行し、本変更でContext配信とAI側の検証を同時に更新する。
 旧AIは追加Contextを拒否し、新AIは停止情報のない旧Backendを拒否するため、両サービスの版を揃える。
+
+
+## 確認質問の結果保存と回答
+
+計画のsummary/completed/questions/remainingを内部結果APIへ送信し、BackendのAgentRun.outcomeに保存する。
+既存の実行取得APIで読める。`POST /cases/:caseId/agent-runs/:runId/answers` はexpectedVersion・resultId・questionIndex付きで回答を受ける。
+回答はCase内の利用者Messageと申告履歴に保存し、同じRunの新attemptへOutbox配送する。質問の重複回答、古い結果、別案件、停止中の計画は拒否する。
+一部の質問だけに答えた場合、未回答を次のContextへ残す。上限に達した履歴は切り捨てず拒否する。
+
+再計画は古いSnapshotの途中位置へ戻らず、新しいContext・Task・訂正履歴から開始する。Runの共有予算は継続し、replansを消費する。
+回答本文からCaseや本人Decisionを自動変更しない。確認済み事実が必要な前提は、既存の正式編集・本人確認APIで満たす必要がある。
+フロントの画面操作導線は別作業だが、質問の取得と回答・再受付に必要なBackend APIは接続済み。

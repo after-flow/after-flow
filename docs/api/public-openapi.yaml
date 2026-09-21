@@ -12532,6 +12532,58 @@ paths:
                       failureReason:
                         nullable: true
                         type: string
+                      outcome:
+                        nullable: true
+                        type: object
+                        properties:
+                          summary:
+                            type: string
+                            maxLength: 1000
+                          completed:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          questions:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          remaining:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          resultId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          attemptId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          caseVersion:
+                            type: integer
+                            minimum: 0
+                            exclusiveMinimum: true
+                            maximum: 9007199254740991
+                        required:
+                          - summary
+                          - completed
+                          - questions
+                          - remaining
+                          - resultId
+                          - attemptId
+                          - caseVersion
+                        additionalProperties: false
                       caseVersionAtAccept:
                         type: integer
                         minimum: -9007199254740991
@@ -12576,6 +12628,7 @@ paths:
                       - waiting
                       - waitingFor
                       - failureReason
+                      - outcome
                       - caseVersionAtAccept
                       - startedAt
                       - finishedAt
@@ -12743,6 +12796,58 @@ paths:
                         failureReason:
                           nullable: true
                           type: string
+                        outcome:
+                          nullable: true
+                          type: object
+                          properties:
+                            summary:
+                              type: string
+                              maxLength: 1000
+                            completed:
+                              maxItems: 20
+                              type: array
+                              items:
+                                type: string
+                                minLength: 1
+                                maxLength: 300
+                            questions:
+                              maxItems: 20
+                              type: array
+                              items:
+                                type: string
+                                minLength: 1
+                                maxLength: 300
+                            remaining:
+                              maxItems: 20
+                              type: array
+                              items:
+                                type: string
+                                minLength: 1
+                                maxLength: 300
+                            resultId:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^[A-Za-z0-9_-]+$
+                            attemptId:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^[A-Za-z0-9_-]+$
+                            caseVersion:
+                              type: integer
+                              minimum: 0
+                              exclusiveMinimum: true
+                              maximum: 9007199254740991
+                          required:
+                            - summary
+                            - completed
+                            - questions
+                            - remaining
+                            - resultId
+                            - attemptId
+                            - caseVersion
+                          additionalProperties: false
                         caseVersionAtAccept:
                           type: integer
                           minimum: -9007199254740991
@@ -12787,6 +12892,7 @@ paths:
                         - waiting
                         - waitingFor
                         - failureReason
+                        - outcome
                         - caseVersionAtAccept
                         - startedAt
                         - finishedAt
@@ -12928,6 +13034,58 @@ paths:
                       failureReason:
                         nullable: true
                         type: string
+                      outcome:
+                        nullable: true
+                        type: object
+                        properties:
+                          summary:
+                            type: string
+                            maxLength: 1000
+                          completed:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          questions:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          remaining:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          resultId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          attemptId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          caseVersion:
+                            type: integer
+                            minimum: 0
+                            exclusiveMinimum: true
+                            maximum: 9007199254740991
+                        required:
+                          - summary
+                          - completed
+                          - questions
+                          - remaining
+                          - resultId
+                          - attemptId
+                          - caseVersion
+                        additionalProperties: false
                       caseVersionAtAccept:
                         type: integer
                         minimum: -9007199254740991
@@ -12972,6 +13130,7 @@ paths:
                       - waiting
                       - waitingFor
                       - failureReason
+                      - outcome
                       - caseVersionAtAccept
                       - startedAt
                       - finishedAt
@@ -13135,6 +13294,58 @@ paths:
                       failureReason:
                         nullable: true
                         type: string
+                      outcome:
+                        nullable: true
+                        type: object
+                        properties:
+                          summary:
+                            type: string
+                            maxLength: 1000
+                          completed:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          questions:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          remaining:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          resultId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          attemptId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          caseVersion:
+                            type: integer
+                            minimum: 0
+                            exclusiveMinimum: true
+                            maximum: 9007199254740991
+                        required:
+                          - summary
+                          - completed
+                          - questions
+                          - remaining
+                          - resultId
+                          - attemptId
+                          - caseVersion
+                        additionalProperties: false
                       caseVersionAtAccept:
                         type: integer
                         minimum: -9007199254740991
@@ -13179,6 +13390,7 @@ paths:
                       - waiting
                       - waitingFor
                       - failureReason
+                      - outcome
                       - caseVersionAtAccept
                       - startedAt
                       - finishedAt
@@ -13354,6 +13566,58 @@ paths:
                       failureReason:
                         nullable: true
                         type: string
+                      outcome:
+                        nullable: true
+                        type: object
+                        properties:
+                          summary:
+                            type: string
+                            maxLength: 1000
+                          completed:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          questions:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          remaining:
+                            maxItems: 20
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 300
+                          resultId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          attemptId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          caseVersion:
+                            type: integer
+                            minimum: 0
+                            exclusiveMinimum: true
+                            maximum: 9007199254740991
+                        required:
+                          - summary
+                          - completed
+                          - questions
+                          - remaining
+                          - resultId
+                          - attemptId
+                          - caseVersion
+                        additionalProperties: false
                       caseVersionAtAccept:
                         type: integer
                         minimum: -9007199254740991
@@ -13398,6 +13662,7 @@ paths:
                       - waiting
                       - waitingFor
                       - failureReason
+                      - outcome
                       - caseVersionAtAccept
                       - startedAt
                       - finishedAt
@@ -17136,6 +17401,58 @@ paths:
                             failureReason:
                               nullable: true
                               type: string
+                            outcome:
+                              nullable: true
+                              type: object
+                              properties:
+                                summary:
+                                  type: string
+                                  maxLength: 1000
+                                completed:
+                                  maxItems: 20
+                                  type: array
+                                  items:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 300
+                                questions:
+                                  maxItems: 20
+                                  type: array
+                                  items:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 300
+                                remaining:
+                                  maxItems: 20
+                                  type: array
+                                  items:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 300
+                                resultId:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 128
+                                  pattern: ^[A-Za-z0-9_-]+$
+                                attemptId:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 128
+                                  pattern: ^[A-Za-z0-9_-]+$
+                                caseVersion:
+                                  type: integer
+                                  minimum: 0
+                                  exclusiveMinimum: true
+                                  maximum: 9007199254740991
+                              required:
+                                - summary
+                                - completed
+                                - questions
+                                - remaining
+                                - resultId
+                                - attemptId
+                                - caseVersion
+                              additionalProperties: false
                             caseVersionAtAccept:
                               type: integer
                               minimum: -9007199254740991
@@ -17180,6 +17497,7 @@ paths:
                             - waiting
                             - waitingFor
                             - failureReason
+                            - outcome
                             - caseVersionAtAccept
                             - startedAt
                             - finishedAt

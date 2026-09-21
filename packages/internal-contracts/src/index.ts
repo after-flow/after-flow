@@ -44,7 +44,17 @@ const guidanceSchema = resultBase.extend({
   missing: z.array(z.string().max(200)).max(50).default([]), failureReason: z.string().max(500).nullable().optional(),
 }).strict()
 const chatSchema = resultBase.extend({ kind: z.literal('chat_reply'), body: z.string().min(1).max(10000), professionalNotice: z.boolean().default(false) }).strict()
-const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']) }).strict()
+export const runSummarySchema = z.object({
+  summary: z.string().max(1000), completed: z.array(z.string().min(1).max(300)).max(20),
+  questions: z.array(z.string().min(1).max(300)).max(20), remaining: z.array(z.string().min(1).max(300)).max(20),
+}).strict()
+export type RunSummary = z.infer<typeof runSummarySchema>
+export const clarificationHistorySchema = z.array(z.object({
+  resultId: internalId, questionIndex: z.number().int().min(0).max(19), question: z.string().min(1).max(300),
+  answer: z.string().min(1).max(1000), caseVersion: z.number().int().positive(), state: z.literal('user_reported'),
+}).strict()).max(60)
+export type ClarificationHistory = z.infer<typeof clarificationHistorySchema>
+const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']), output: runSummarySchema.optional() }).strict()
 export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema])
 export type InternalResult = z.infer<typeof internalResultSchema>
 export const heartbeatSchema = z.object({}).strict()

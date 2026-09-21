@@ -72,6 +72,9 @@ export function createPlanningHandler(config: {
     if (resume?.kind === 'WAIT') {
       if (!resume.snapshotId) throw new Error('Planning resume requires a durable snapshot')
       await config.snapshots.forkSuspendedSnapshot({ workflowName: PLANNING_EXECUTION, fromRunId: resume.snapshotId, toRunId: session.receipt.workflowRunId })
+    } else if (resume?.kind === 'RETRY') {
+      // A user-authorized full replan uses fresh Context/history, the same Run budget and a new workflow ID.
+      await session.guard({ replans: 1 })
     } else if (resume) throw new Error('Planning replay requires explicit recovery policy')
     const run = await mastra.getWorkflow('workflow').createRun({ runId: session.receipt.workflowRunId })
     const result = resume?.kind === 'WAIT' ? await run.resume({ resumeData: { resume: true } }) :
