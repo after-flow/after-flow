@@ -7,6 +7,7 @@ import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId } from '@aftercare/
 import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
 import { guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
+import type { GuidanceDiagnostics } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { finalizeResearchSynthesis, researchEvidenceSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { createGuidanceAgents } from '../agents/guidance-agents.js'
@@ -32,6 +33,8 @@ export interface ProcedureGuidanceDependencies {
   beforeTool: (kind: 'search' | 'read-source') => Promise<void>
   maxSourceAgeMs: number
   timeoutMs: number
+  /** 案内の組み立てで除いた項目などの診断情報（本文なし）。評価とメトリクスに使う。 */
+  observeGuidance?: (diagnostics: GuidanceDiagnostics) => void
 }
 
 /** Workflow definition for a durable host; main.ts does not start it in an unmanaged Promise. */
@@ -140,7 +143,7 @@ answersのtextとevidenceに書かれていない金額・期限・提出先・�
       // 適用条件は最新のContextで判定する。モデルの自己申告では確認済みにしない（#162）。
       const unresolved = unresolvedApplicability(scope.applicabilityChecks ?? [], latest.modelInput.facts)
       const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target, unresolved,
-        rules: scope.groundingRules })
+        rules: scope.groundingRules, onDiagnostics: deps.observeGuidance })
       await checkControl()
       const outcome = await deps.backend.result(result, { requestId: inputData.resultId, signal: deps.signal })
       return { resultId: inputData.resultId, ...outcome }

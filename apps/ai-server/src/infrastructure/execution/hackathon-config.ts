@@ -17,7 +17,7 @@ const envSchema = z.object({
 })
 
 const REVIEW_REFERENCE = 'hackathon-demo-2026-09-21; OrcaRouter gateway and public provider terms must be reviewed before production'
-const CATALOG_ID = 'kyoukaikenpo-burial-benefit'
+export const BURIAL_CATALOG_ID = 'kyoukaikenpo-burial-benefit'
 const POLICY_IDS = ['orca-core-primary', 'orca-core-fallback'] as const
 
 /** 協会けんぽの支部名に使われる都道府県名。 */
@@ -44,6 +44,39 @@ export const BURIAL_GROUNDING_RULES: GroundingRules = {
       message: '埋葬料の申請期限の起算日は公式資料で確認してください。' },
   ],
 }
+
+/** 協会けんぽの埋葬料（費）の公式ページ。 */
+export const BURIAL_CATALOG_ENTRIES = [
+  { id: 'burial-application', catalogId: BURIAL_CATALOG_ID, title: '健康保険埋葬料（費）支給申請書', issuer: '全国健康保険協会',
+    url: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/', keywords: ['埋葬料', '埋葬費', '必要書類', '申請期限', '死亡'] },
+  { id: 'burial-benefit', catalogId: BURIAL_CATALOG_ID, title: '埋葬料・埋葬費', issuer: '全国健康保険協会',
+    url: 'https://www.kyoukaikenpo.or.jp/benefit/burial_charges/', keywords: ['埋葬料', '埋葬費', '支給条件', '死亡'] },
+]
+
+/** 協会けんぽの埋葬料（費）案内のレビュー済みscope。実行時と評価（eval/guidance）で同じものを使う。 */
+export function burialGuidanceScope(reviewedAt: string) {
+  return {
+    id: 'burial-benefit-guidance', version: 'hackathon-v1', reviewedAt,
+    procedure: '健康保険の埋葬料（費）支給申請', institution: '全国健康保険協会', jurisdiction: '日本', municipality: null,
+    taskTitles: ['健康保険の埋葬料（費）を確認する'], taskCategories: ['insurance-benefit'], sourceCatalogIds: [BURIAL_CATALOG_ID],
+    // 案内の各区分（提出先・必要書類・手順・期限）に根拠の問いが対応するように分ける（#163）。
+    questions: [
+      { id: 'eligibility', text: '申請できる人と支給条件を確認してください。' },
+      { id: 'benefit-kinds', text: '埋葬料・埋葬費・家族埋葬料の違いと、どれに当たるかの条件を確認してください。' },
+      { id: 'amount', text: '支給額を給付の種類ごとに確認してください。' },
+      { id: 'documents', text: '主な必要書類と条件による追加書類を確認してください。' },
+      { id: 'deadline', text: '申請期限と起算日を給付の種類ごとに確認してください。' },
+      { id: 'submission', text: '申請書の提出先と提出方法を確認してください。' },
+    ],
+    groundingRules: BURIAL_GROUNDING_RULES,
+    // 協会けんぽの公式ページ（reviewReference）から作成した、案件への適用で確かめる事項。
+    // Backendにこれらを確認済みとして記録する項目がまだ無いため、現在は常に未確認として残る。
+    applicabilityChecks: [
+      { id: 'enrollment', question: '亡くなった方が協会けんぽに加入していたか、加入していた支部はどこかを確認してください。' },
+      { id: 'deceased-status', question: '亡くなった方が被保険者本人か被扶養者かを確認してください（被扶養者の場合は家族埋葬料）。' },
+      { id: 'applicant', question: '申請する方が亡くなった方に生計を維持されていたか（埋葬料）、実際に埋葬を行った方か（埋葬費）を確認してください。' },
+    ],
+  }}
 
 /**
  * Explicit hackathon composition. It is enabled automatically only in non-production
@@ -86,28 +119,8 @@ export function readHackathonComposition(
     // Conservative demo reservation bounds, not a billing quote.
     inputMicrosPerToken: 10, outputMicrosPerToken: 20,
   }))
-  const scope = {
-    id: 'burial-benefit-guidance', version: 'hackathon-v1', reviewedAt: approvedAt,
-    procedure: '健康保険の埋葬料（費）支給申請', institution: '全国健康保険協会', jurisdiction: '日本', municipality: null,
-    taskTitles: ['健康保険の埋葬料（費）を確認する'], taskCategories: ['insurance-benefit'], sourceCatalogIds: [CATALOG_ID],
-    // 案内の各区分（提出先・必要書類・手順・期限）に根拠の問いが対応するように分ける（#163）。
-    questions: [
-      { id: 'eligibility', text: '申請できる人と支給条件を確認してください。' },
-      { id: 'benefit-kinds', text: '埋葬料・埋葬費・家族埋葬料の違いと、どれに当たるかの条件を確認してください。' },
-      { id: 'amount', text: '支給額を給付の種類ごとに確認してください。' },
-      { id: 'documents', text: '主な必要書類と条件による追加書類を確認してください。' },
-      { id: 'deadline', text: '申請期限と起算日を給付の種類ごとに確認してください。' },
-      { id: 'submission', text: '申請書の提出先と提出方法を確認してください。' },
-    ],
-    groundingRules: BURIAL_GROUNDING_RULES,
-    // 協会けんぽの公式ページ（reviewReference）から作成した、案件への適用で確かめる事項。
-    // Backendにこれらを確認済みとして記録する項目がまだ無いため、現在は常に未確認として残る。
-    applicabilityChecks: [
-      { id: 'enrollment', question: '亡くなった方が協会けんぽに加入していたか、加入していた支部はどこかを確認してください。' },
-      { id: 'deceased-status', question: '亡くなった方が被保険者本人か被扶養者かを確認してください（被扶養者の場合は家族埋葬料）。' },
-      { id: 'applicant', question: '申請する方が亡くなった方に生計を維持されていたか（埋葬料）、実際に埋葬を行った方か（埋葬費）を確認してください。' },
-    ],
-  }
+  const scope = burialGuidanceScope(approvedAt)
+
   return {
     serviceToken: input.AI_SERVICE_TOKEN,
     audience: env.AI_SERVICE_AUDIENCE ?? 'ai-server',
@@ -131,18 +144,13 @@ export function readHackathonComposition(
       dataClasses: ['minimized_case', 'public_research'], expiresAt: new Date(Date.now() + 30_000).toISOString(), maxRetentionDays: 0 }),
     recordMetric: async (metric: ProviderMetric, identity) => writeMetric({ event: 'ai_provider_attempt', ...identity, ...metric }),
     catalogs: [{
-      id: CATALOG_ID, version: '2026-09-21', reviewedAt: approvedAt, expiresAt,
+      id: BURIAL_CATALOG_ID, version: '2026-09-21', reviewedAt: approvedAt, expiresAt,
       reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/',
       allowedHosts: ['www.kyoukaikenpo.or.jp'],
-      entries: [
-        { id: 'burial-application', catalogId: CATALOG_ID, title: '健康保険埋葬料（費）支給申請書', issuer: '全国健康保険協会',
-          url: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/', keywords: ['埋葬料', '埋葬費', '必要書類', '申請期限', '死亡'] },
-        { id: 'burial-benefit', catalogId: CATALOG_ID, title: '埋葬料・埋葬費', issuer: '全国健康保険協会',
-          url: 'https://www.kyoukaikenpo.or.jp/benefit/burial_charges/', keywords: ['埋葬料', '埋葬費', '支給条件', '死亡'] },
-      ],
+      entries: BURIAL_CATALOG_ENTRIES.map(entry => ({ ...entry, keywords: [...entry.keywords] })),
     }],
     templates: [{ id: 'burial-benefit-task', version: 'hackathon-v1', reviewedAt: approvedAt, expiresAt,
-      reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/', sourceCatalogIds: [CATALOG_ID],
+      reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/', sourceCatalogIds: [BURIAL_CATALOG_ID],
       task: { title: '健康保険の埋葬料（費）を確認する', summary: '加入状況と申請者の関係に応じて、支給条件と必要書類を確認します。',
         stage: 'government', category: 'insurance-benefit', submitTo: '全国健康保険協会', evidenceRequired: true, assetDisposal: false },
       prerequisites: [], requiredDocuments: ['健康保険埋葬料（費）支給申請書', '死亡を確認できる書類', '申請者と亡くなった方の関係を確認できる書類'],

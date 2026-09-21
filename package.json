@@ -20,6 +20,7 @@
     "openapi:generate": "pnpm --filter @aftercare/backend-server openapi:generate",
     "test:firestore": "pnpm --filter @aftercare/backend-server test:firestore && pnpm --filter @aftercare/ai-server test:firestore",
     "eval:ai": "pnpm --filter @aftercare/ai-server eval:fixture",
+    "eval:ai:live": "pnpm --filter @aftercare/ai-server eval:guidance:live",
     "smoke:orca": "pnpm --filter @aftercare/ai-server smoke:orca"
   },
   "devDependencies": {

@@ -1,12 +1,12 @@
 import { mkdir, writeFile, rename } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { execFileSync } from 'node:child_process'
 import { Mastra } from '@mastra/core/mastra'
 import { DatasetsInMemory, ExperimentsInMemory, InMemoryDB, MastraCompositeStore } from '@mastra/core/storage'
 import { dataset, datasetVersion, expectationSchema, fixtureInputSchema } from './dataset.js'
 import { executeFixture, observationSchema } from './target.js'
 import { contractScorer, extractionMetrics, scorerVersion } from './scorers.js'
 import { skillCatalog } from '../src/orchestration/skills/catalog.js'
+import { sourceRevision } from './git.js'
 import { playbooks } from '../src/orchestration/playbooks/registry.js'
 
 const split = process.argv[2] ?? 'development'
@@ -22,8 +22,7 @@ const nativeDataset = await mastra.datasets.create({ id: `after-flow-${split}`, 
 await nativeDataset.addItems({ items: selected.map(item => ({ id: item.id, input: item.input, groundTruth: item.expected, metadata: { caseId: item.id, severity: item.severity, split } })) })
 const report = {
   schemaVersion: 1, mode: 'harness-fixture', realProvider: false, realOrch: false, web: 'fixed-synthetic',
-  commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-  dirtyWorktree: execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0,
+  ...sourceRevision(),
   datasetVersion, scorerVersion, split, caseCount: selected.length, repetitions: 3,
   skills: skillCatalog.map(item => ({ id: item.id, version: item.version, hash: item.hash })),
   playbooks: playbooks.map(item => ({ id: item.id, version: item.version, hash: item.hash })),
