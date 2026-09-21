@@ -36,7 +36,7 @@ export const BURIAL_GROUNDING_RULES: GroundingRules = {
   prohibited: [
     { id: 'prefecture-branch', pattern: `(?:${PREFECTURES.join('|')})(?:都|府|県)?支部`,
       message: '提出先の支部は、亡くなった方が加入していた支部です。資格情報のお知らせやマイナポータルで確認してください。' },
-    { id: 'residence-branch', pattern: '(?:住所|住民票|お住まい|居住|市区町村)[^。]{0,20}支部|支部[^。]{0,20}(?:住所|お住まい|居住地)',
+    { id: 'residence-branch', pattern: '(?:住所|住民票|お住まい|居住|市区町村|最寄り|近く)[^。]{0,20}支部|支部[^。]{0,20}(?:住所|お住まい|居住地)',
       message: '提出先の支部は住所では決まりません。亡くなった方が加入していた支部を確認してください。' },
     { id: 'burial-cost-death-date', pattern: '埋葬費[^。、]*死亡(?:した)?(?:年月)?日の翌日',
       message: '埋葬費の申請期限の起算日は公式資料で確認してください。' },

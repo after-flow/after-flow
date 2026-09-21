@@ -143,4 +143,3 @@ export function groundGuidance(input: {
   for (const questionId of uncoveredQuestionIds) missing.push(questions.get(questionId)!)
   return { where: where ?? null, bring, steps, missing: [...new Set(missing)], dropped, uncoveredQuestionIds }
 }
-

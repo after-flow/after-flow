@@ -34,6 +34,21 @@ export interface ProcedureGuidanceDependencies {
   timeoutMs: number
 }
 
+/**
+ * 構造化出力がスキーマに合わない場合だけ、1回だけ生成し直す。
+ * OrcaRouter経由のjson_schemaはstrictを指定できず、実モデルの評価（#164）で
+ * スキーマ外の要素を返す失敗が一定割合で起きたため。それ以外の失敗は再試行しない。
+ */
+async function generateStructured<T>(generate: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  try {
+    return await generate()
+  } catch (error) {
+    signal.throwIfAborted()
+    if (!(error instanceof Error && /Structured output validation failed/.test(error.message))) throw error
+    return generate()
+  }
+}
+
 /** Workflow definition for a durable host; main.ts does not start it in an unmanaged Promise. */
 export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies) {
   const scope = reviewedResearchScopeSchema.parse(deps.scope)
@@ -86,9 +101,11 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       for (const candidate of selectedCandidates) await tools.execute.read(selection.brief.briefId, candidate.id)
       const sources = tools.sources(selection.brief.briefId)
       await deps.budget?.charge({ research: 1 })
-      const researchResponse = await researchAgent.generate(JSON.stringify({
+      const researchResponse = await generateStructured(() => researchAgent.generate(JSON.stringify({
         goal: `各questionに、渡した公式資料の本文だけで回答してください。
-- 回答ごとにevidenceを1〜5件付ける。evidenceは根拠となる本文をsections[].textからそのまま写したquote（2〜200文字）と、そのsourceIdとsectionIdにする。要約・言い換え・補足をquoteに入れない。
+- 回答ごとにevidenceを1〜5件付ける。evidenceは根拠となる本文をsections[].textからそのまま写したquote（2〜200文字）と、そのsourceIdとsectionIdにする。
+- quoteは本文の連続した一部分を1文ずつ写す。語を足す・省く・言い換える・「など」で終える・別の文や見出しとつなぐことはしない。例えば本文が「ご加入の支部は」なら「加入の支部は」と書かない。
+- answersの各要素は questionId、text、evidence をすべて持つ。evidenceを別の要素にしない。
 - quoteに無い金額・期限・提出先・提出方法をtextに書かない。
 - 資料で確認できない問いはanswersに入れずmissingに残す。資料どうしの記載が食い違う場合はconflictsに書く。
 - すべての問いを確認できた場合だけstatusをcompleteにする。
@@ -99,7 +116,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       }), {
         maxSteps: 1, toolChoice: 'none', abortSignal: deps.signal,
         structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'strict' },
-      })
+      }), deps.signal)
       // 引用が本文と一致しない回答はここで捨てる（#163）。
       const findings = finalizeResearchSynthesis(researchResponse.object, selection.brief, sources)
       const research = researchEvidenceSchema.parse({ briefs: [selection.brief], outcomes: [{ briefId: selection.brief.briefId, findings }] })
@@ -110,7 +127,9 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
 - steps: 申請手順、支給額、申請期限、注意点を項目ごとの配列にする（各${GUIDANCE_LIMITS.stepItem}文字以内）。
 - missing: 公式資料で確認できない事項だけを入れる（各${GUIDANCE_LIMITS.missingItem}文字以内）。
 各項目のquestionIdsには、その項目の根拠となるanswersのquestionIdを入れる。
-answersのtextとevidenceに書かれていない金額・期限・提出先・提出方法（窓口への持参、特定の支部名や自治体など）を足さない。条件によって内容が変わる場合は条件を省かない。
+- 項目はanswersのevidence（公式資料からの引用）に書かれている内容だけで書く。textは要約で、evidenceに無い書類・金額・期限・提出先・提出方法（窓口への持参、特定の支部名や自治体、最寄りの支部など）を足さない。
+- answersにあるquestionIdごとに、少なくとも1つの項目で扱う。給付の種類（埋葬料・埋葬費・家族埋葬料）で条件・支給額・起算日が異なる場合は、種類ごとに書き分ける。
+- 条件によって内容が変わる場合は条件を省かない。
 ハーネスが各項目をevidenceと照合し、根拠の無い項目は表示しません。すべてのquestionを扱えた場合だけstatusをcompleteにする。
 これは制度の一般的な案内です。この案件に当てはまるかの確認はハーネスが別に行います。`,
         // allowlistの項目だけを送る。Case全体は鮮度・scope検証のためハーネスに残す（#166）。
