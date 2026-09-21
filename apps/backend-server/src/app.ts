@@ -64,6 +64,12 @@ export function createApp(options: CreateAppOptions = {}) {
     ...(options.consentGate ? { consentGate: options.consentGate } : {}),
   })
   app.route('/api/v1', v1)
+  // internalApp（AI実行API）とreadinessApp（運用/デプロイ専用）は同じ
+  // '/internal/v1' prefixに同居するが、互いに異なるpath配下（/runs/* と
+  // /health/ready）にしか反応しないよう、それぞれのapp内でmiddlewareの
+  // pathを絞ってある（execution.ts, readiness.ts）。そのためmountの順序は
+  // 認可の結果に影響しない。どちらも自分の担当外のrequestには反応せず、
+  // 次のmatchへ進む（またはそもそもmatchしない）。
   if (options.internalApp) app.route('/internal/v1', options.internalApp)
   if (options.readinessApp) app.route('/internal/v1', options.readinessApp)
 

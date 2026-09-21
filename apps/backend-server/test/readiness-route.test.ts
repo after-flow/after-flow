@@ -3,6 +3,9 @@ import { describe, it } from 'node:test'
 import { ReadinessService, syncCheck } from '../src/application/operations/readiness-service.js'
 import { createApp } from '../src/app.js'
 import { createReadinessApp } from '../src/presentation/routes/internal/v1/readiness.js'
+import { buildOpenApiDocument } from '../src/presentation/openapi/document.js'
+import { buildInternalOpenApiDocument } from '../src/presentation/openapi/internal-document.js'
+import { publicV1Specs } from '../src/presentation/routes/public/v1/index.js'
 
 const TOKEN = 'readiness-test-token-0123456789'
 
@@ -67,13 +70,21 @@ describe('内部readiness endpoint', () => {
     assert.deepEqual((await liveness.json()).data, { service: 'backend-server', status: 'ok' })
   })
 
-  it('readiness応答は公開OpenAPIのroute一覧に現れない', async () => {
+  it('readinessのpathは公開OpenAPIにも内部AI実行API OpenAPIにも現れない', () => {
+    const publicApi = buildOpenApiDocument(publicV1Specs, { version: 'test', basePath: '/api/v1' })
+    const internalApi = buildInternalOpenApiDocument()
+    assert.equal(publicApi.paths['/health/ready'], undefined)
+    assert.equal(internalApi.paths['/health/ready'], undefined)
+    assert.equal(Object.keys(publicApi.paths).some((path) => path.includes('health/ready')), false)
+    assert.equal(Object.keys(internalApi.paths).some((path) => path.includes('health/ready')), false)
+  })
+
+  it('readiness応答はenvelopeのdata直下にstatus/checksを持つ（公開APIのenvelopeと同型のまま別contract）', async () => {
     const service = new ReadinessService([syncCheck('ok', () => ({ ok: true }))])
     const app = appWith(service)
-    // apiDocs未指定でも/internal/v1のreadinessは動く一方、公開APIの一覧には無いことを別test(openapi.test.ts等)が保証する。
-    // ここではreadiness応答がpublicV1Specs由来の envelope 以外の形（statusフィールド等）を持つことだけ確認する。
     const response = await app.request('/internal/v1/health/ready', { headers: { Authorization: `Bearer ${TOKEN}` } })
     const body = (await response.json()) as Record<string, any>
     assert.ok('status' in body.data)
+    assert.ok('checks' in body.data)
   })
 })

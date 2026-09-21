@@ -20,8 +20,12 @@ export function createExecutionApp(options: {
     if (!parsed.success) throw errors.internal({ internal: { reason: 'internal response contract mismatch', route } })
     return ok(c, parsed.data)
   }
-  app.use('*', bodyLimit({ maxSize: INTERNAL_LIMITS.bodyBytes, onError: () => { throw errors.validationFailed({ details: { reason: 'BODY_TOO_LARGE' } }) } }))
-  app.use('*', async (c, next) => {
+  // '*' ではなく '/runs/*' に絞る。このappが app.route('/internal/v1', ...) で
+  // 他のinternal app（readinessなど、別のアクセス制御を持つ）と同じprefixに
+  // mountされても、このmiddlewareが自分の担当外のpath（例: /internal/v1/health/ready）
+  // まで奪って401にしないため。internalRoutesは全て /runs/:runId/... 配下。
+  app.use('/runs/*', bodyLimit({ maxSize: INTERNAL_LIMITS.bodyBytes, onError: () => { throw errors.validationFailed({ details: { reason: 'BODY_TOO_LARGE' } }) } }))
+  app.use('/runs/*', async (c, next) => {
     if (!matchesServiceCredential(c.req.header('Authorization') ?? '', `Bearer ${options.serviceCredential}`)) throw errors.unauthenticated()
     await next()
   })

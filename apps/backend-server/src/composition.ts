@@ -284,8 +284,15 @@ function readinessChecks(
 
   checks.push(
     syncCheck('deadline_rules', () => {
+      let catalog
+      try {
+        catalog = readRuleCatalog(env)
+      } catch {
+        // consent_catalog と同じ扱い。DEADLINE_RULES_PATH が壊れたJSON/矛盾した
+        // ルールを指していても、汎用の CHECK_FAILED ではなく設定不備として報告する。
+        return { ok: false, reason: 'NOT_CONFIGURED' }
+      }
       // #129で正式ルールが確定するまで、placeholder:trueは業務レビュー未了のまま。
-      const catalog = readRuleCatalog(env)
       return catalog.placeholder ? { ok: false, reason: 'PLACEHOLDER_CATALOG' } : { ok: true }
     }),
   )
@@ -293,6 +300,13 @@ function readinessChecks(
   // AI操作が有効化されている場合だけ、AI関連の検査を追加する（#123実装範囲）。
   if (connectedOperations(env).size > 0) {
     checks.push(
+      // 呼び出し時点では connectedOperations(env).size > 0 が
+      // BACKEND_EXECUTION_SIGNING_KEY / BACKEND_INTERNAL_SERVICE_TOKEN / readAgentClientConfig(env)
+      // をすでに要求しているため、NOT_CONFIGURED分岐は現状到達しない。また
+      // Firestoreが設定されている経路ではcreateServerが不正な署名鍵を起動時に
+      // 例外で落とすため、INVALID_SIGNING_KEY分岐も現状到達しない。それでも
+      // readinessが「checkの入力を毎回自分で検証する」という前提を保つため、
+      // connectedOperations の内部実装に依存せず残してある（防御的）。
       syncCheck('ai_internal_auth', () => {
         if (!env.BACKEND_INTERNAL_SERVICE_TOKEN) return { ok: false, reason: 'NOT_CONFIGURED' }
         try {

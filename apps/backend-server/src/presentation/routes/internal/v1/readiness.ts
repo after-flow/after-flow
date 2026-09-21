@@ -25,7 +25,11 @@ export interface ReadinessRouteOptions {
 export function createReadinessApp(options: ReadinessRouteOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
-  app.use('*', async (c, next) => {
+  // '*' ではなく自分の担当path（'/health/ready'）に絞る。他のinternal app
+  // （AI実行API。別のアクセス制御を持つ）と同じ '/internal/v1' prefixに
+  // mountされても、このmiddlewareがそちらのpath（/internal/v1/runs/...）まで
+  // 奪って readiness token を要求しないため。
+  app.use('/health/ready', async (c, next) => {
     const authorization = c.req.header('Authorization') ?? ''
     if (!matchesServiceCredential(authorization, `Bearer ${options.accessToken}`)) {
       throw errors.unauthenticated({ internal: { reason: 'invalid readiness access token' } })
