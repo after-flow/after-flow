@@ -63,7 +63,7 @@ export function createPlanningHandler(config: {
   return { workflowName: PLANNING_EXECUTION, async execute(session) {
     await session.guard()
     const workflow = createPlanningExecutionWorkflow({ backend: session.backend, signal: session.signal, guard: session.guard,
-      previousAttemptId: session.receipt.resume?.previousAttemptId ?? null, allowedKinds: ['TASK_PROPOSAL'], registerWait: session.registerWait,
+      checkpoint: session.checkpoint, previousAttemptId: session.receipt.resume?.previousAttemptId ?? null, allowedKinds: ['TASK_PROPOSAL'], registerWait: session.registerWait,
       templates: config.templates, maxSourceAgeMs: config.maxSourceAgeMs,
       prepare: async () => { const prepared = await config.prepare(session); return { ...prepared, agents: { ...prepared.agents, budget: bindBudget(prepared.agents, session) } } },
     })
@@ -78,7 +78,7 @@ export function createPlanningHandler(config: {
     } else if (resume) throw new Error('Planning replay requires explicit recovery policy')
     const run = await mastra.getWorkflow('workflow').createRun({ runId: session.receipt.workflowRunId })
     const result = resume?.kind === 'WAIT' ? await run.resume({ resumeData: { resume: true } }) :
-      await run.start({ inputData: { runId: session.receipt.runId, resultId: contentHash({ runId: session.receipt.runId, kind: 'planning-result' }) } })
+      await run.start({ inputData: { runId: session.receipt.runId, resultId: contentHash({ runId: session.receipt.runId, jobId: session.receipt.jobId, kind: 'planning-result' }) } })
     if (result.status === 'suspended') return 'WAITING'
     if (result.status !== 'success') throw new Error('Planning execution did not complete')
     return 'COMPLETED'

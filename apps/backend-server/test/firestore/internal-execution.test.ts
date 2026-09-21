@@ -101,6 +101,33 @@ async function setup(t: TestContext) {
 }
 
 describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
+  it('取消をOutboxへ保存し、保存済み旧attemptだけに停止を配送する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const current = (await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)).body.data
+    assert.equal((await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}/cancel`, jsonRequest('POST', { expectedVersion: current.version }))).status, 200)
+    const run = (await readRepository().get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: exec.run.id }))!
+    assert.equal(run.cancellation?.executionAttempt, exec.claims.executionAttempt)
+    const event = (await firestore().doc(`tenants/${h.tenantId}/outbox/${run.cancellation!.cancelId}`).get()).data() as OutboxEvent
+    const job = { eventId: event.id, tenantId: h.tenantId, caseId: h.caseId, type: event.type, payload: event.payload, attempt: 1 }
+    assert.equal((await h.client.deliver(job)).status, 'ACCEPTED')
+    assert.equal((await h.client.deliver(job)).status, 'ACCEPTED')
+    assert.equal(h.ai.countOf(event.id), 2)
+    assert.equal((await h.request(exec, 'result', { ...proof(context), resultId: randomUUID(), kind: 'case_planning', status: 'SUCCEEDED' })).status, 409)
+    assert.equal((await h.client.deliver({ ...job, eventId: randomUUID() })).status, 'RETRYABLE')
+  })
+
+  it('中断結果は現在のoperation/proofだけを受け、部分結果を保存して実行を終了する', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const input = { ...proof(context), resultId: 'budget-result', kind: 'execution_interrupted', operation: 'case_planning',
+      status: 'NEEDS_ATTENTION', failureReason: 'BUDGET_EXCEEDED', output: { summary: '予算上限', completed: ['候補確認'], questions: ['確認事項'], remaining: ['提案確認'] } }
+    assert.equal((await h.request(exec, 'result', { ...input, operation: 'chat_reply' })).status, 403)
+    assert.equal((await h.request(exec, 'result', input)).status, 200)
+    assert.equal((await h.request(exec, 'result', input)).status, 200)
+    const run = (await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)).body.data
+    assert.equal(run.status, 'NEEDS_ATTENTION'); assert.equal(run.failureReason, 'BUDGET_EXCEEDED')
+    assert.deepEqual(run.outcome.remaining, ['提案確認'])
+  })
+
   it('個人本文のないdispatch→context→artifact→heartbeat→progress→resultを実HTTPで検証する', async t => {
     const h = await setup(t), exec = await h.accept()
     dispatchSchema.parse(exec.dispatch)

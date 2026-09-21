@@ -1370,6 +1370,125 @@ paths:
                     - kind
                     - status
                   additionalProperties: false
+                - type: object
+                  properties:
+                    caseVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contextSnapshotId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    fencingToken:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    artifactVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contentHash:
+                      type: string
+                      pattern: ^[A-Za-z0-9_-]{43}$
+                    resultId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    basis:
+                      default: []
+                      maxItems: 20
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum:
+                              - DOCUMENT
+                              - TASK
+                              - MESSAGE
+                          id:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          version:
+                            type: integer
+                            exclusiveMinimum: 0
+                            maximum: 9007199254740991
+                        required:
+                          - type
+                          - id
+                          - version
+                        additionalProperties: false
+                    kind:
+                      type: string
+                      const: execution_interrupted
+                    operation:
+                      type: string
+                      enum:
+                        - case_planning
+                        - task_guidance
+                        - chat_reply
+                        - document_analysis
+                    status:
+                      type: string
+                      const: NEEDS_ATTENTION
+                    failureReason:
+                      type: string
+                      enum:
+                        - BUDGET_EXCEEDED
+                        - TIME_LIMIT
+                        - EXECUTION_FAILED
+                    output:
+                      type: object
+                      properties:
+                        summary:
+                          type: string
+                          maxLength: 1000
+                        completed:
+                          maxItems: 20
+                          type: array
+                          items:
+                            type: string
+                            minLength: 1
+                            maxLength: 300
+                        questions:
+                          maxItems: 20
+                          type: array
+                          items:
+                            type: string
+                            minLength: 1
+                            maxLength: 300
+                        remaining:
+                          maxItems: 20
+                          type: array
+                          items:
+                            type: string
+                            minLength: 1
+                            maxLength: 300
+                      required:
+                        - summary
+                        - completed
+                        - questions
+                        - remaining
+                      additionalProperties: false
+                  required:
+                    - caseVersion
+                    - contextSnapshotId
+                    - fencingToken
+                    - artifactVersion
+                    - contentHash
+                    - resultId
+                    - kind
+                    - operation
+                    - status
+                    - failureReason
+                    - output
+                  additionalProperties: false
       responses:
         "200":
           description: Run scoped response
@@ -1619,6 +1738,98 @@ paths:
       parameters: *a8
       requestBody: *a9
       responses: *a10
+  /runs/{runId}/cancel:
+    post:
+      operationId: ai_cancel
+      description: Backendで取消済みのjob/attemptを停止する。未配送jobにも取消記録を保存する。
+      servers: *a6
+      security: *a7
+      parameters: *a8
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $schema: https://json-schema.org/draft/2020-12/schema
+              type: object
+              properties:
+                cancelId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                runId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                jobId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                executionAttempt:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
+                issuedAt:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+                expiresAt:
+                  type: integer
+                  exclusiveMinimum: 0
+                  maximum: 9007199254740991
+              required:
+                - cancelId
+                - runId
+                - jobId
+                - executionAttempt
+                - issuedAt
+                - expiresAt
+              additionalProperties: false
+      responses:
+        "200":
+          description: Stopped or duplicate cancellation
+          content:
+            application/json:
+              schema:
+                $schema: https://json-schema.org/draft/2020-12/schema
+                type: object
+                properties:
+                  cancelId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  runId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  jobId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  executionAttempt:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_-]+$
+                  status:
+                    type: string
+                    enum:
+                      - STOPPED
+                      - DUPLICATE
+                required:
+                  - cancelId
+                  - runId
+                  - jobId
+                  - executionAttempt
+                  - status
+                additionalProperties: false
   /runs/{runId}/snapshot-status:
     get:
       operationId: ai_snapshot_status

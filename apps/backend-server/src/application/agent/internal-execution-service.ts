@@ -65,6 +65,12 @@ export class InternalExecutionService {
     private readonly consent: ConsentService, private readonly intake: AgentResultIntake,
     private readonly proposals?: ProposalService) {}
 
+  async cancellation(tenantId: string, caseId: string, runId: string, cancelId: string) {
+    const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, runId))
+    if (!run || run.status !== 'CANCELLED' || run.cancellation?.cancelId !== cancelId) throw errors.conflict()
+    return { ...run.cancellation, runId: run.id }
+  }
+
   /** mint/delivery前にも保存済みscope、membership、同意を確認する。 */
   async dispatchClaims(tenantId: string, caseId: string, runId: string, jobId: string): Promise<ExecutionClaims> {
     return this.uow.run({ tenantId, actor: { type: 'SYSTEM', userId: null, agentRunId: runId }, requestId: null }, async tx => {
@@ -324,7 +330,7 @@ export class InternalExecutionService {
   result(call: InternalCall, input: InternalResult) {
     return this.execute(call, async (tx, run) => {
       if (run.activeWaitRequestId) throw errors.conflict({ details: { reason: 'WAIT_OUTSTANDING' } })
-      if (input.kind !== run.operation) throw errors.forbidden()
+      if ((input.kind === 'execution_interrupted' ? input.operation : input.kind) !== run.operation) throw errors.forbidden()
       const artifact = await tx.require<RunArtifactEntity>(artifactLocation(call.claims.caseId, input.contextSnapshotId))
       await this.assertArtifact(tx, call, artifact, input)
       await this.assertBasis(tx, call, artifact, input.basis)
@@ -333,6 +339,7 @@ export class InternalExecutionService {
       if (input.kind === 'task_guidance') return this.intake.applyGuidanceResult(tx, call.claims.caseId, { ...input, ...envelope })
       if (input.kind === 'chat_reply') return this.intake.applyChatReply(tx, call.claims.caseId, { ...input, ...envelope })
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString(),
+        failureReason: input.kind === 'execution_interrupted' ? input.failureReason : null,
         outcome: input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
       tx.audit({ caseId: call.claims.caseId, type: 'agent_run.result',
         target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: { resultId: input.resultId, status: input.status } })

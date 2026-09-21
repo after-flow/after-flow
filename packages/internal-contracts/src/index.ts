@@ -55,7 +55,10 @@ export const clarificationHistorySchema = z.array(z.object({
 }).strict()).max(60)
 export type ClarificationHistory = z.infer<typeof clarificationHistorySchema>
 const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']), output: runSummarySchema.optional() }).strict()
-export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema])
+export const interruptedResultSchema = resultBase.extend({ kind: z.literal('execution_interrupted'), operation: operationSchema,
+  status: z.literal('NEEDS_ATTENTION'), failureReason: z.enum(['BUDGET_EXCEEDED', 'TIME_LIMIT', 'EXECUTION_FAILED']), output: runSummarySchema,
+}).strict()
+export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema, interruptedResultSchema])
 export type InternalResult = z.infer<typeof internalResultSchema>
 export const heartbeatSchema = z.object({}).strict()
 const progressEventSchema = z.object({
@@ -161,3 +164,12 @@ export type PlanningHistory = z.infer<typeof planningHistorySchema>
 /** Backend-owned case planning pause. null is explicit absence; omission is not permission. */
 export const planningRestrictionSchema = z.object({ reason: z.string().trim().min(1).max(1000) }).strict().nullable()
 export type PlanningRestriction = z.infer<typeof planningRestrictionSchema>
+
+/** Backend-authenticated control message. It contains no business content or execution capability. */
+export const cancelExecutionSchema = z.object({ cancelId: internalId, runId: internalId, jobId: internalId, executionAttempt: internalId,
+  issuedAt: z.number().int().nonnegative(), expiresAt: z.number().int().positive(),
+}).strict()
+export type CancelExecution = z.infer<typeof cancelExecutionSchema>
+export const cancelExecutionAckSchema = z.object({ cancelId: internalId, runId: internalId, jobId: internalId,
+  executionAttempt: internalId, status: z.enum(['STOPPED', 'DUPLICATE']),
+}).strict()

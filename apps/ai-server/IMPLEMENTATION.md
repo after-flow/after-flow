@@ -44,3 +44,21 @@ P-03は1 Runで1件の正式提案を処理する。承認で案件が変わる�
 PRは機能ごとのstack。起点はmain `9385b67`、順序と各PRは[継続計画](DELIVERY_PLAN.md)。個別PRには親ブランチへマージ済みのものがある。mainへの反映は別の統合PRでまとめて検証する。元の作業ディレクトリにあった未commit変更は触らず、隔離worktreeで作業した。
 
 Devinは着手許可を意味するラベルではない。共有PRの契約・依存が揃った周辺実装から担当可能。今回実装済みのIssueを重複着手しないよう、PRの範囲と残る実接続条件を先に確認する。Provider/Orch/業務判断の未確定部分は、任意の製品やFakeを選ばせて埋めない。
+
+### 公式資料PDFの読み取り
+
+レビュー済みCatalogの公式URLはHTML・UTF-8テキスト・PDFを取得できる。PDFはPDF.js 6.3.289で本文を抽出し、ページ番号を根拠に残す。5 MiB・40ページ・本文60,000文字・処理5秒を超える資料や暗号化/破損/文字のない資料は拒否する。画像文字はOCRしない。独立したWorkerを中断時に終了し、PDF内スクリプト・添付ファイル・外部リンクは実行/取得しない。URL/DNS/HTTPSの既存検証は共通。
+
+実装参照: [PDF.js Node example](https://github.com/mozilla/pdf.js/blob/master/examples/node/getinfo.mjs)、[v6.3.289](https://github.com/mozilla/pdf.js/releases/tag/v6.3.289)。
+
+### 中断結果と再送
+
+共有予算超過・実行時間切れ・実行エラーは、検証済みの途中経過と残作業を`execution_interrupted`としてBackendへ返す。Backendは現在のoperation・Context・leaseを検証してNEEDS_ATTENTIONにし、公開Run.outcomeへ保存する。途中でCase版が変わった場合は古い途中経過を返さない。
+
+結果をAI側のREPORTING receiptへ先に保存し、通信失敗時は10秒後に同じ結果ID/本文だけを再送する。所有権期限後の再取得でもAgent/Toolを再実行しない。取消・古い認可・Context不一致は停止し、Backend Reconcilerに委ねる。承認待ちを中断結果で上書きしない。結果作成前のContext取得失敗や認可期限切れを、結果配送成功とは扱わない。
+
+### 取消の直接配送
+
+公開取消APIはBackendのRunをCANCELLEDにし、旧job/attemptと取消Outboxを同じトランザクションで保存する。`POST /internal/v1/runs/:runId/cancel`へサービス認証付きで配送し、同意撤回後も停止通知は配送する。AIは取消を永続化して未到着のdispatchも拒否し、同一プロセスの実行をAbortする。別Workerでも次の共有所有権検査で停止する。既に完了した正式変更は戻さない。
+
+取消記録を削除すると遅延dispatchの復活防止を失うため、execution_cancellationsに自動TTLは設定しない。取消payloadは業務本文・ユーザー認証・モデル設定を含まない。

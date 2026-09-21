@@ -37,6 +37,7 @@ export type AgentOperation =
   | 'chat_reply'
 
 export interface AgentRunEntity extends EntityBase {
+  cancellation?: { cancelId: string; jobId: string; executionAttempt: string }
   outcome?: AgentRunOutcomeResource | null
   clarificationHistory?: { resultId: string; questionIndex: number; question: string; answer: string; caseVersion: number; state: 'user_reported' }[]
   operation: AgentOperation
