@@ -395,3 +395,26 @@ describe('readRuleCatalog', () => {
     assert.equal(catalog.placeholder, false)
   })
 })
+
+describe('assertRuleCatalogUsable: dependencyProcedureIds', () => {
+  const withDependency = (procedureId: string, dependencyProcedureIds: string[]): RuleCatalog => ({
+    ...PLACEHOLDER_RULE_CATALOG,
+    initialProcedures: PLACEHOLDER_RULE_CATALOG.initialProcedures.map((procedure) => procedure.id === procedureId ? { ...procedure, dependencyProcedureIds } : procedure),
+  })
+
+  it('存在しない先行手続きを拒否する', () => {
+    assert.throws(() => assertRuleCatalogUsable(withDependency('bank-accounts', ['unknown-procedure'])), /先行手続き/)
+  })
+
+  it('条件次第で生成されない手続き（always ではない）への依存を拒否する', () => {
+    assert.throws(() => assertRuleCatalogUsable(withDependency('bank-accounts', ['household-change'])), /常に生成される/)
+  })
+
+  it('自分自身への依存を拒否する', () => {
+    assert.throws(() => assertRuleCatalogUsable(withDependency('bank-accounts', ['bank-accounts'])))
+  })
+
+  it('always な先行手続きへの依存は通る', () => {
+    assert.doesNotThrow(() => assertRuleCatalogUsable(withDependency('bank-accounts', ['inheritance-choice', 'collect-family-register'])))
+  })
+})

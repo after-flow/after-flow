@@ -14,7 +14,7 @@ const inputSchema = z.object({ resultId: internalId }).strict()
 const loadedSchema = inputSchema.extend({ artifact: artifactEnvelopeSchema, routing: routeSchema })
 const generatedSchema = loadedSchema.extend({ draft: chatDraftSchema, sources: z.array(sourceDocumentSchema).max(20), research: researchEvidenceSchema })
 const outputSchema = z.object({ resultId: internalId, applied: z.boolean(), reason: z.string().nullable() }).strict()
-export interface ChatReplyDependencies extends Omit<ProcedureGuidanceDependencies, 'authorizeRoute'> {
+export interface ChatReplyDependencies extends Omit<ProcedureGuidanceDependencies, 'authorizeRoute' | 'allowDraftDefinitions' | 'recordContextAudit'> {
   authorizeRoute(): Promise<z.infer<typeof routeSchema>>
 }
 

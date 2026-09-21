@@ -42,14 +42,15 @@ const incoming = 'synthetic-incoming-service-identity'
 const outgoing = 'synthetic-outgoing-service-identity'
 const proof = (a: ContextArtifact) => ({ caseVersion: a.caseVersion, contextSnapshotId: a.contextSnapshotId, artifactVersion: a.artifactVersion, contentHash: a.contentHash, fencingToken: a.fencingToken })
 
-async function setup(t: TestContext) {
+async function setup(t: TestContext, options: { rejectDraftDefinitions?: boolean } = {}) {
   const tenantId = newTenantId(), userId = 'owner'
   await seedTenantMember(tenantId, userId)
   const app = buildApp(tenantId, userId, { connectedOperations: ['case_planning', 'task_guidance', 'chat_reply'] })
   const read = readRepository(), uow = new ContextVersionUnitOfWork(unitOfWork())
   const consent = new ConsentService(PLACEHOLDER_CATALOG, new AccessService(read), read, uow)
   const proposals = new ProposalService(new AccessService(read), read, uow, [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers])
-  const service = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow), proposals)
+  const service = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow), proposals,
+    { rejectDraftDefinitions: options.rejectDraftDefinitions ?? false })
   const authorization = new SignedExecutionAuthorization(signingKey)
   app.route('/internal/v1', createExecutionApp({ service, authorization, serviceCredential: incoming }))
   await call(app, '/consents', jsonRequest('POST', { agreements: PLACEHOLDER_CATALOG.documents.map(d => ({ kind: d.kind, version: d.version })) }))
@@ -173,7 +174,8 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(JSON.stringify(exec.dispatch).includes('架空人物'), false)
     const context = await h.context(exec)
     assert.equal(context.content.planningRestriction, null)
-    assert.equal(context.content.case && (context.content.case as any).deceasedName, '架空人物')
+    // 故人の氏名はどの operation でも Context に渡さない。
+    assert.equal('deceasedName' in (context.content.case as object), false)
     const artifact = await h.request(exec, `artifacts/${context.contextSnapshotId}`)
     assert.deepEqual(artifact.body.data, context)
     const heartbeat = await h.request(exec, 'heartbeat', {})
@@ -287,8 +289,17 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
     assert.equal(task.status, 201)
     const exec = await h.accept('task_guidance', task.body.data.id, 'TASK'), context = await h.context(exec)
+    // procedureId 未マッピングの手動 Task には procedure: null と識別子だけを渡し、手続きを推測しない。
+    assert.equal(context.content.procedure, null)
+    assert.deepEqual(Object.keys(context.content.case as object).sort(), ['id', 'version'])
+    const current = (await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}`)).body.data
+    assert.deepEqual(context.content.task, { id: task.body.data.id, version: current.version, procedureId: null })
+    assert.deepEqual(context.content.documents, [])
+    const audits = await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/auditEvents`).where('type', '==', 'agent_run.context_projected').get()
+    assert.equal(audits.size, 1)
+    assert.deepEqual(audits.docs[0]!.get('detail'), { procedureId: null, reason: 'PROCEDURE_UNMAPPED' })
     const result = { ...proof(context), resultId: randomUUID(), kind: 'task_guidance', status: 'PARTIAL',
-      steps: ['対象機関に確認してください'], missing: ['地域の詳細'], basis: [{ type: 'TASK', id: task.body.data.id, version: task.body.data.version }],
+      steps: ['対象機関に確認してください'], missing: ['地域の詳細'], basis: [{ type: 'TASK', id: task.body.data.id, version: current.version }],
       citations: [{ item: 'steps', index: 0, sourceUrl: 'https://official.example/a#apply', sectionHeading: '申請方法', quote: '対象機関に確認する' }] }
     assert.equal((await h.request(exec, 'result', result)).status, 200)
     assert.equal((await h.request(exec, 'result', result)).status, 200)
@@ -326,6 +337,67 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/caseMembers/${h.userId}`).update({ active: false })
     assert.equal((await h.request(exec, 'context')).status, 403)
     assert.equal((await h.request(exec, 'control')).body.data.instruction, 'STOP')
+  })
+
+  it('procedureId が紐付いた Task の案内 Context は、Definition の allowlist にある項目だけを投影する', async t => {
+    const h = await setup(t)
+    const patched = await call(h.app, `/cases/${h.caseId}`, jsonRequest('PATCH', { expectedVersion: 1, municipality: '架空市' }))
+    assert.equal(patched.status, 200, JSON.stringify(patched.body))
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '死亡届（手動登録）', category: '手動', stage: 'immediate', procedureId: 'death-notification' }))
+    assert.equal(task.status, 201, JSON.stringify(task.body))
+    const exec = await h.accept('task_guidance', task.body.data.id, 'TASK'), context = await h.context(exec)
+    assert.deepEqual(context.content.procedure, { id: 'death-notification', version: 1, reviewStatus: 'draft' })
+    const contentCase = context.content.case as Record<string, unknown>
+    assert.deepEqual(Object.keys(contentCase).sort(), ['id', 'knownAt', 'municipality', 'version'])
+    assert.equal(contentCase.municipality, '架空市')
+    assert.deepEqual(Object.keys(context.content.task as object).sort(), ['id', 'procedureId', 'version'])
+    for (const group of ['profile', 'persons', 'assets', 'liabilities', 'tasks']) assert.equal(group in context.content, false, group)
+    // optional の deadlines.dueDate を持つため group は投影されるが、対象 Task の期限だけで手動 Task には無い。
+    assert.deepEqual(context.content.deadlines, [])
+    assert.equal(JSON.stringify(context.content).includes('架空人物'), false)
+    const audits = await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/auditEvents`).where('type', '==', 'agent_run.context_projected').get()
+    assert.equal(audits.size, 1)
+    const detail = audits.docs[0]!.get('detail')
+    assert.equal(detail.procedureId, 'death-notification')
+    // knownAt は未入力（null）なので使用 key には入らない。
+    assert.deepEqual(detail.contextKeys, ['case.municipality'])
+    assert.deepEqual(detail.missingRequiredKeys, [])
+    // 監査には key しか残さず、市区町村名などの値を含めない。
+    assert.equal(JSON.stringify(detail).includes('架空市'), false)
+  })
+
+  it('本番相当（rejectDraftDefinitions:true）では未レビューの Definition の案内 Context を拒否する', async t => {
+    const h = await setup(t, { rejectDraftDefinitions: true })
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '死亡届（手動登録）', category: '手動', stage: 'immediate', procedureId: 'death-notification' }))
+    assert.equal(task.status, 201)
+    const exec = await h.accept('task_guidance', task.body.data.id, 'TASK')
+    const response = await h.request(exec, 'context')
+    assert.equal(response.status, 409, JSON.stringify(response.body))
+    assert.equal(response.body.error.details.reason, 'PROCEDURE_NOT_REVIEWED')
+  })
+
+  it('申請者要件を扱う案内では、除外済みPersonを落とし実行ユーザー本人だけを投影する', async t => {
+    const h = await setup(t)
+    const self = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '実行ユーザー本人', relationship: '子', isHeir: true }))
+    assert.equal(self.status, 201, JSON.stringify(self.body))
+    const selfPersonId = self.body.data.id as string
+    await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/caseMembers/${h.userId}`).update({ personId: selfPersonId })
+    const activeOther = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '別の家族', relationship: '親', isHeir: true }))
+    assert.equal(activeOther.status, 201, JSON.stringify(activeOther.body))
+    const excluded = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '除外する家族', relationship: '兄弟', isHeir: true }))
+    assert.equal(excluded.status, 201, JSON.stringify(excluded.body))
+    assert.equal((await call(h.app, `/cases/${h.caseId}/persons/${excluded.body.data.id}/exclude`,
+      jsonRequest('POST', { expectedVersion: 1 }))).status, 200)
+    const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', {
+      title: '埋葬料を確認する', category: '手動', stage: 'immediate', procedureId: 'kyoukaikenpo-burial-benefit',
+    }))
+    assert.equal(task.status, 201, JSON.stringify(task.body))
+    const exec = await h.accept('task_guidance', task.body.data.id, 'TASK')
+    const context = await h.context(exec)
+    const persons = context.content.persons as Record<string, unknown>[]
+    assert.deepEqual(persons.map(person => person.id), [selfPersonId])
+    assert.equal(JSON.stringify(persons).includes(activeOther.body.data.id), false)
+    assert.equal(JSON.stringify(persons).includes(excluded.body.data.id), false)
   })
 
   it('task_guidanceの中断結果はRunと案内を同じTransactionで終端し、再送で二重反映しない', async t => {

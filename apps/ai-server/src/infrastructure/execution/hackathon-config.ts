@@ -91,8 +91,7 @@ export function readHackathonComposition(
   const scope = {
     id: 'burial-benefit-guidance', version: 'hackathon-v1', reviewedAt: approvedAt,
     procedure: '健康保険の埋葬料（費）支給申請', institution: '全国健康保険協会', jurisdiction: '日本', municipality: null,
-    procedureIds: ['kyoukaikenpo-burial-benefit'], taskTitles: ['健康保険の埋葬料（費）を確認する'], taskCategories: ['insurance-benefit'],
-    sourceCatalogIds: [CATALOG_ID], sourceCatalogVersions: { [CATALOG_ID]: CATALOG_VERSION },
+    procedureIds: [CATALOG_ID], sourceCatalogIds: [CATALOG_ID], sourceCatalogVersions: { [CATALOG_ID]: CATALOG_VERSION },
     // 案内の各区分（提出先・必要書類・手順・期限）に根拠の問いが対応するように分ける（#163）。
     questions: [
       { id: 'eligibility', text: '申請できる人と支給条件を確認してください。' },
@@ -145,7 +144,7 @@ export function readHackathonComposition(
       ],
     }],
     templates: [{ id: 'burial-benefit-task', version: 'hackathon-v1', reviewedAt: approvedAt, expiresAt,
-      reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/', sourceCatalogIds: [CATALOG_ID],
+      reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/', procedureId: CATALOG_ID, sourceCatalogIds: [CATALOG_ID],
       task: { title: '健康保険の埋葬料（費）を確認する', summary: '加入状況と申請者の関係に応じて、支給条件と必要書類を確認します。',
         stage: 'government', category: 'insurance-benefit', submitTo: '全国健康保険協会', evidenceRequired: true, assetDisposal: false },
       prerequisites: [], requiredDocuments: ['健康保険埋葬料（費）支給申請書', '死亡を確認できる書類', '申請者と亡くなった方の関係を確認できる書類'],
@@ -153,5 +152,7 @@ export function readHackathonComposition(
     researchScope: async () => scope,
     maxSourceAgeMs: 15 * 60_000,
     sourceTimeoutMs: 8_000,
+    // 非本番のハッカソン限定。reviewStatus が draft の Definition でも案内を試せる。
+    allowDraftDefinitions: true,
   }
 }

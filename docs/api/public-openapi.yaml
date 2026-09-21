@@ -9999,6 +9999,12 @@ paths:
                         submitTo:
                           nullable: true
                           type: string
+                        procedureId:
+                          nullable: true
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                          pattern: ^[A-Za-z0-9_-]+$
                         assigneeId:
                           nullable: true
                           type: string
@@ -10353,6 +10359,7 @@ paths:
                         - stage
                         - category
                         - submitTo
+                        - procedureId
                         - assigneeId
                         - dependencyTaskIds
                         - escalation
@@ -10491,6 +10498,12 @@ paths:
                 assetDisposal:
                   default: false
                   type: boolean
+                procedureId:
+                  nullable: true
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
                 assigneeId:
                   nullable: true
                   type: string
@@ -10587,6 +10600,12 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      procedureId:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
                       assigneeId:
                         nullable: true
                         type: string
@@ -10941,6 +10960,7 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - procedureId
                       - assigneeId
                       - dependencyTaskIds
                       - escalation
@@ -11201,6 +11221,12 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      procedureId:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
                       assigneeId:
                         nullable: true
                         type: string
@@ -11555,6 +11581,7 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - procedureId
                       - assigneeId
                       - dependencyTaskIds
                       - escalation
@@ -11724,6 +11751,12 @@ paths:
                   nullable: true
                   type: string
                   maxLength: 120
+                procedureId:
+                  nullable: true
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^[A-Za-z0-9_-]+$
               required:
                 - expectedVersion
               additionalProperties: false
@@ -11776,6 +11809,12 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      procedureId:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
                       assigneeId:
                         nullable: true
                         type: string
@@ -12130,6 +12169,7 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - procedureId
                       - assigneeId
                       - dependencyTaskIds
                       - escalation
@@ -12328,6 +12368,12 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      procedureId:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
                       assigneeId:
                         nullable: true
                         type: string
@@ -12682,6 +12728,7 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - procedureId
                       - assigneeId
                       - dependencyTaskIds
                       - escalation
@@ -12881,6 +12928,12 @@ paths:
                       submitTo:
                         nullable: true
                         type: string
+                      procedureId:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^[A-Za-z0-9_-]+$
                       assigneeId:
                         nullable: true
                         type: string
@@ -13235,6 +13288,7 @@ paths:
                       - stage
                       - category
                       - submitTo
+                      - procedureId
                       - assigneeId
                       - dependencyTaskIds
                       - escalation

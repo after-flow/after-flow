@@ -852,6 +852,7 @@
     },
     {
       "id": "estate-division",
+      "dependencyProcedureIds": ["collect-family-register", "inheritance-choice"],
       "title": "遺産の分け方を話し合う（遺産分割協議）",
       "summary": "相続人全員で遺産の分け方を話し合い、まとまったら遺産分割協議書を作ります。協議書には相続人全員が署名して実印を押し、印鑑登録証明書を添えるのが一般的です。遺言書がある場合は、その内容が基本になります。相続人に未成年の子とその親がいる場合は、家庭裁判所で特別代理人を選ぶ必要があります。",
       "stage": "division",
@@ -870,6 +871,7 @@
     },
     {
       "id": "bank-accounts",
+      "dependencyProcedureIds": ["inheritance-choice"],
       "title": "預貯金の相続手続きをする",
       "summary": "口座のある金融機関に亡くなったことを伝え、相続の手続きをします。遺産分割の前でも、一定額までは引き出せる制度（仮払い）があります。ただし、相続放棄を考えている場合は使わないでください（放棄できなくなるおそれがあります）。相続の方法を決めたあとに行う手続きです。",
       "stage": "transfer",

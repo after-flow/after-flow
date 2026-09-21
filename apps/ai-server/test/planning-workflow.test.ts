@@ -9,7 +9,7 @@ import { scriptedModel } from './helpers/scripted-model.js'
 import { createResearchTools } from '../src/infrastructure/mastra/tools/research.js'
 import { sourceDocument } from './helpers/source-document.js'
 
-const template: ReviewedTaskTemplate = { id: 'template', version: 'v1', reviewedAt: '2026-09-01T00:00:00Z', expiresAt: new Date(Date.now() + 600000).toISOString(), reviewReference: 'synthetic', sourceCatalogIds: ['catalog'],
+const template: ReviewedTaskTemplate = { id: 'template', version: 'v1', reviewedAt: '2026-09-01T00:00:00Z', expiresAt: new Date(Date.now() + 600000).toISOString(), reviewReference: 'synthetic', procedureId: 'kyoukaikenpo-burial-benefit', sourceCatalogIds: ['catalog'],
   task: { title: '合成手続き', summary: '合成窓口に確認', stage: 'government', category: 'fixture', submitTo: '架空機関', evidenceRequired: true, assetDisposal: false },
   prerequisites: [{ group: 'case', field: 'municipality', value: '架空市', state: 'user_reported' }], requiredDocuments: ['合成資料'] }
 const candidate = { id: 'source', catalogId: 'catalog', title: '合成資料', issuer: '架空機関', url: 'https://official.example/fixture' }
@@ -49,7 +49,7 @@ test('planning gates preserve manual tasks and previous rejected/changed titles,
   const validate = (templates = [template]) => validatePlan({ runId: 'run', context, draft, templates, sources: [source] })
   assert.equal(validate([{ ...template, task: { ...template.task, title: '既存の手動手続き' } }]).skipped[0]?.reason, 'EXISTING_TASK')
   assert.equal(validate([{ ...template, prerequisites: [{ ...template.prerequisites[0]!, value: '別の市' }] }]).skipped[0]?.reason, 'PREREQUISITE_UNKNOWN')
-  context.modelInput.planningHistory!.versions.push({ proposalId: 'old', proposalVersion: 1, payloadHash: contentHash({}), title: '過去案', summary: '', targetTitle: template.task.title, supersedesProposalVersion: null })
+  context.modelInput.planningHistory!.versions.push({ proposalId: 'old', proposalVersion: 1, payloadHash: contentHash({}), title: '過去案', summary: '', targetTitle: template.task.title, targetProcedureId: null, supersedesProposalVersion: null })
   assert.equal(validate().skipped[0]?.reason, 'PREVIOUS_PROPOSAL')
   context.modelInput.planningHistory!.versions = []
   assert.throws(() => validatePlan({ runId: 'run', context, draft: { ...draft, tasks: [{ ...draft.tasks[0]!, dependencyTaskIds: ['foreign'] }] }, templates: [template], sources: [source] }), /outside/)

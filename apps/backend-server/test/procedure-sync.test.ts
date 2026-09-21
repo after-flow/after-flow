@@ -38,6 +38,15 @@ describe('planProcedureSync: 空スナップショットからの作成', () => 
     assert.ok(ids.includes('employer-procedures'))
   })
 
+  it('dependencyProcedureIds は同じ Case 内の先行 Task ID へ解決される（遺産分割 → 戸籍収集・相続方法）', () => {
+    const plan = planProcedureSync(PLACEHOLDER_RULE_CATALOG, factsOf(), emptySnapshot())
+    const division = plan.createTasks.find((entry) => entry.task.procedureId === 'estate-division')!
+    assert.deepEqual(division.task.dependencyTaskIds, [initialTaskId(CASE_ID, 'collect-family-register'), initialTaskId(CASE_ID, 'inheritance-choice')])
+    const bank = plan.createTasks.find((entry) => entry.task.procedureId === 'bank-accounts')!
+    assert.deepEqual(bank.task.dependencyTaskIds, [initialTaskId(CASE_ID, 'inheritance-choice')])
+    assert.deepEqual(plan.createTasks.find((entry) => entry.task.procedureId === 'death-notification')!.task.dependencyTaskIds, [])
+  })
+
   it('maybe な手続きは conditional:true で作られる', () => {
     const plan = planProcedureSync(PLACEHOLDER_RULE_CATALOG, factsOf(), emptySnapshot())
     const householdChange = plan.createTasks.find((entry) => entry.task.procedureId === 'household-change')

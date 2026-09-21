@@ -20,6 +20,7 @@ import { inferenceReservation, providerPolicySchema } from '../../orchestration/
 import type { OrchRouter, ProviderGrant, ProviderPolicy } from '../../orchestration/models/policy.js'
 import { createOfficialCatalogProvider, officialCatalogSchema } from '../research/official-catalog.js'
 import type { OfficialCatalog } from '../research/official-catalog.js'
+import { findProcedureDefinition } from '@aftercare/internal-contracts'
 import { reviewedResearchScopeSchema, buildPlanningContext, buildResearchBrief } from '../../orchestration/context/builder.js'
 import { reviewedTaskTemplateSchema } from '../../orchestration/playbooks/planning-output.js'
 import type { ReviewedTaskTemplate } from '../../orchestration/playbooks/planning-output.js'
@@ -45,6 +46,8 @@ interface AiServiceBase {
   researchScope(context: ContextArtifact): Promise<z.infer<typeof reviewedResearchScopeSchema>>
   maxSourceAgeMs: number
   sourceTimeoutMs: number
+  /** 非本番だけ許可。ProcedureDefinition.reviewStatus !== 'reviewed' の案内を許可する。既定 false。本番で true なら起動を拒否する。 */
+  allowDraftDefinitions?: boolean
 }
 
 export type AiServiceComposition = AiServiceBase & (
@@ -69,6 +72,8 @@ export function assertResearchScopeCatalogs(scopeInput: unknown, catalogInputs: 
 /** Real storage/client/handlers/worker wiring. Missing external integrations are errors, never fixture fallbacks. */
 export async function startConfiguredAiService(config: AiServiceComposition, listen: { port: number; hostname?: string; shutdownMs?: number }) {
   if (!config.serviceToken.trim() || (!config.orca && typeof config.orch?.route !== 'function') || typeof config.grant !== 'function' || typeof config.recordMetric !== 'function') throw new Error('Authenticated model/provider composition is required')
+  const allowDraftDefinitions = config.allowDraftDefinitions ?? false
+  if (allowDraftDefinitions && process.env.NODE_ENV === 'production') throw new Error('Draft ProcedureDefinition guidance cannot run in production')
   const policies = z.array(providerPolicySchema).min(2).max(20).parse(config.policies)
   if (new Set(policies.map(p => p.id)).size !== policies.length || new Set(policies.map(p => p.sdkProvider)).size < 2 || new Set(policies.map(p => p.currency)).size !== 1) throw new Error('Distinct providers in one budget currency are required')
   const models = config.orca
@@ -93,6 +98,10 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
   }
   const catalogIds = new Set(catalogs.map(catalog => catalog.id))
   if (templates.some(template => template.sourceCatalogIds.some(id => !catalogIds.has(id)))) throw new Error('Planning template references an unconfigured catalog')
+  for (const template of templates) {
+    const definition = findProcedureDefinition(template.procedureId)
+    if (!definition || template.task.submitTo !== definition.guidance.researchScope.authorityName) throw new Error('Planning template does not match its ProcedureDefinition')
+  }
   validateBackendClientConfig(config.backend)
   const db = createRuntimeFirestore()
   try {
@@ -130,7 +139,10 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
       handlers: {
         task_guidance: createGuidanceHandler({ storage, snapshots, prepare: async session => {
           const prepared = await prepare(session)
-          return { ...prepared, authorizeRoute: async () => ({ routeId: 'procedure-guidance/v1' as const, evidenceId: prepared.evidenceId }) }
+          return { ...prepared, allowDraftDefinitions,
+            // 使った Definition と Context key だけを構造化ログへ残す。値は含めない。
+            recordContextAudit: record => console.info(JSON.stringify({ event: 'ai_guidance_context', runId: session.receipt.runId, jobId: session.receipt.jobId, executionAttempt: session.receipt.executionAttempt, ...record })),
+            authorizeRoute: async () => ({ routeId: 'procedure-guidance/v1' as const, evidenceId: prepared.evidenceId }) }
         } }),
         chat_reply: createChatHandler({ storage, prepare: async session => {
           const prepared = await prepare(session)

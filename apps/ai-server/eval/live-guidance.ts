@@ -96,6 +96,7 @@ for (let repetition = 1; repetition <= repetitions; repetition++) {
         models: { core: core.models, research: researchModel.models }, scope, catalogs: composition.catalogs, research, signal,
         authorizeRoute: async () => ({ routeId: 'procedure-guidance/v1', evidenceId: core.evidenceId }), beforeTool: async () => undefined,
         maxSourceAgeMs: composition.maxSourceAgeMs, timeoutMs: composition.sourceTimeoutMs,
+        allowDraftDefinitions: composition.allowDraftDefinitions ?? false,
         budget: { charge, inferenceChargedByProviderAdapter: true,
           inference: { core: maxReservation('core'), research: maxReservation('research') } },
       }, skillLoading).createRun()).start({ inputData: { resultId: randomUUID() } })

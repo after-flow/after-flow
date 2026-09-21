@@ -13,7 +13,7 @@ const brief = {
 }
 const modelInput = {
   operation: 'task_guidance' as const,
-  data: [{ group: 'task' as const, field: 'title', value: '架空手続き', state: 'unknown' as const }],
+  data: [{ group: 'task' as const, entityRef: 'task-1', field: 'title', value: '架空手続き', state: 'unknown' as const }],
   limitations: ['推定しない'],
 }
 const decision = guidancePlanDecisionSchema.parse({

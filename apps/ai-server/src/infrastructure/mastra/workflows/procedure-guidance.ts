@@ -3,9 +3,9 @@ import { createStep, createWorkflow } from '@mastra/core/workflows'
 import type { ModelWithRetries } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
-import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId } from '@aftercare/internal-contracts'
+import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId, guidanceContextAudit } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
-import { buildCoreContext, assertContextFresh, buildResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
+import { buildCoreContext, assertContextFresh, buildProcedureResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
 import { guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { boundResearchSynthesis, finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
@@ -36,6 +36,10 @@ export interface ProcedureGuidanceDependencies {
   beforeTool: (kind: 'search' | 'read-source') => Promise<void>
   maxSourceAgeMs: number
   timeoutMs: number
+  /** 非本番だけ true。ProcedureDefinition.reviewStatus !== 'reviewed' の案内を許可する。 */
+  allowDraftDefinitions: boolean
+  /** 使った Definition と Context key の記録先。値は含めない。 */
+  recordContextAudit?: (record: ReturnType<typeof guidanceContextAudit>) => void
 }
 
 export const guidanceSkillLoadingModeSchema = z.enum(['staged', 'legacy-all'])
@@ -64,6 +68,7 @@ async function generateStructured<T>(generate: () => Promise<T>, signal: AbortSi
 /** Workflow definition for a durable host; main.ts does not start it in an unmanaged Promise. */
 function buildProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies, skillLoading: GuidanceSkillLoadingMode) {
   const scope = reviewedResearchScopeSchema.parse(deps.scope)
+  const configuredCatalogIds = new Set(deps.catalogs.map(catalog => catalog.id))
   async function checkControl() {
     deps.signal.throwIfAborted()
     if ((await deps.backend.control({ signal: deps.signal })).instruction !== 'CONTINUE') throw new Error('Execution stopped by Backend')
@@ -83,7 +88,8 @@ function buildProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies, ski
     execute: async ({ inputData }) => {
       await checkControl()
       const context = buildCoreContext(inputData.artifact, 'task_guidance')
-      const selection = buildResearchBrief(context, scope)
+      if (context.procedure) deps.recordContextAudit?.(guidanceContextAudit(context.procedure.definition, context.procedure))
+      const selection = buildProcedureResearchBrief(context, { scope, allowDraftDefinitions: deps.allowDraftDefinitions, configuredCatalogIds })
       const modelInput = minimizedModelInput(context, 'task_guidance')
       if (selection.status === 'needs_input') {
         const decision = guidancePlanDecisionSchema.parse({ plan: [{ action: 'NEEDS_INPUT', questionIds: [] }, { action: 'REPORT', questionIds: [] }], nextAction: 'NEEDS_INPUT' })
@@ -310,11 +316,14 @@ function buildProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies, ski
       const latest = buildCoreContext(await deps.backend.context({ signal: deps.signal }), 'task_guidance')
       assertContextFresh(before, latest)
       if (inputData.sources.some(source => Date.now() - Date.parse(source.fetchedAt) > deps.maxSourceAgeMs)) throw new Error('Guidance sources expired before reporting')
-      const target = contextTaskTitle(latest.modelInput.facts)
+      // 表示名は Definition の title。Task の表示名は Context に来ない。
+      const target = latest.procedure?.definition.title ?? null
+      // 適用条件・grounding 規則は、この手続きに対応する審査済み scope のものだけを使う。
+      const scoped = latest.procedure && scope.procedureIds.includes(latest.procedure.definition.id)
       // 適用条件は最新のContextで判定する。モデルの自己申告では確認済みにしない（#162）。
-      const unresolved = unresolvedApplicability(scope.applicabilityChecks ?? [], latest.modelInput.facts)
+      const unresolved = unresolvedApplicability(scoped ? scope.applicabilityChecks ?? [] : [], latest.modelInput.facts)
       const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target, unresolved,
-        rules: scope.groundingRules })
+        ...(scoped && scope.groundingRules ? { rules: scope.groundingRules } : {}) })
       await checkControl()
       const outcome = await deps.backend.result(result, { requestId: inputData.resultId, signal: deps.signal })
       return { resultId: inputData.resultId, ...outcome,
@@ -332,10 +341,4 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
 /** Evaluation-only counterfactual used to quantify the legacy all-Skill prompt cost for #182. */
 export function createProcedureGuidanceWorkflowForEvaluation(deps: ProcedureGuidanceDependencies, mode: GuidanceSkillLoadingMode) {
   return buildProcedureGuidanceWorkflow(deps, guidanceSkillLoadingModeSchema.parse(mode))
-}
-
-function contextTaskTitle(facts: ReturnType<typeof buildCoreContext>['modelInput']['facts']) {
-  const title = facts.find(fact => fact.group === 'task' && fact.field === 'title')?.value
-  if (typeof title !== 'string' || !title || title.length > 200) throw new Error('Task title is unavailable')
-  return title
 }

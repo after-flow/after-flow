@@ -134,11 +134,21 @@ export function assertRuleCatalogUsable(catalog: RuleCatalog): void {
   if (catalog.initialProcedures.length > MAX_INITIAL_PROCEDURES) {
     throw new Error(`初期手続きの件数が上限（${MAX_INITIAL_PROCEDURES}）を超えています。`)
   }
+  const byId = new Map(catalog.initialProcedures.map((procedure) => [procedure.id, procedure]))
   for (const procedure of catalog.initialProcedures) {
     if (procedure.deadlineRuleId && !ruleIds.has(procedure.deadlineRuleId)) {
       throw new Error(`初期手続き ${procedure.id} が参照する期限ルールがありません。`)
     }
     assertProcedureShape(procedure, ruleIds)
+    for (const dependencyId of procedure.dependencyProcedureIds ?? []) {
+      const dependency = byId.get(dependencyId)
+      if (!dependency || dependencyId === procedure.id) {
+        throw new Error(`初期手続き ${procedure.id} が参照する先行手続き ${dependencyId} がありません。`)
+      }
+      if (dependency.applicability.default !== 'yes' || dependency.applicability.rules.length > 0) {
+        throw new Error(`初期手続き ${procedure.id} の先行手続き ${dependencyId} は常に生成される手続きである必要があります。`)
+      }
+    }
   }
   if (catalog.deliberationDeadlineRuleId !== null && !ruleIds.has(catalog.deliberationDeadlineRuleId)) {
     throw new Error('熟慮期間 (deliberationDeadlineRuleId) が参照する期限ルールがありません。')

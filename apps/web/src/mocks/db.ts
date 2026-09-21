@@ -75,6 +75,7 @@ function task(
     conditional: t.conditional ?? false,
     submitToSource: t.submitToSource ?? null,
     targetDate: t.targetDate ?? null,
+    procedureId: t.procedureId ?? null,
     submitTo: null,
     assigneeId: null,
     dependencyTaskIds: [],

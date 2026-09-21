@@ -3,7 +3,7 @@ import { insightEventSchema } from '@aftercare/internal-contracts'
 import type { InsightEvent } from '@aftercare/internal-contracts'
 import { fingerprintOf } from '../../shared/fingerprint.js'
 
-const taskSchema = z.object({ id: z.string(), version: z.number().int().positive(), title: z.string(), summary: z.string(), status: z.string(),
+const taskSchema = z.object({ id: z.string(), version: z.number().int().positive(), title: z.string(), status: z.string(),
   requiredDocuments: z.array(z.object({ id: z.string(), label: z.string(), documentId: z.string().nullable() })) })
 const deadlineSchema = z.object({ id: z.string(), version: z.number().int().positive(), taskId: z.string().nullable(),
   dueDate: z.string().nullable(), confirmation: z.string(), critical: z.boolean(), ruleId: z.string().nullable(), ruleVersion: z.string().nullable() })

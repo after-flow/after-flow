@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+export * from './procedure-definitions.js'
+
 export const INTERNAL_LIMITS = { bodyBytes: 131072, timeoutMs: 10000, authorizationSeconds: 300, requestSeconds: 60 } as const
 /** Shared task-guidance limits used by both model output validation and Backend transport. */
 export const TASK_GUIDANCE_LIMITS = {
@@ -194,6 +196,7 @@ const proposalHistoryItemSchema = proposalActionStateSchema.extend({
   title: z.string().max(120), summary: z.string().max(2000),
   targetTitle: z.string().max(500).nullable(), targetTaskId: internalId.nullable(),
   assetDisposal: z.boolean(), supersedesProposalVersion: z.number().int().positive().nullable(),
+  targetProcedureId: internalId.nullable().default(null),
 }).strict()
 export const planningHistorySchema = z.object({
   complete: z.literal(true),
@@ -202,6 +205,7 @@ export const planningHistorySchema = z.object({
     proposalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
     title: z.string().max(120), summary: z.string().max(2000), targetTitle: z.string().max(500).nullable(),
     supersedesProposalVersion: z.number().int().positive().nullable(),
+    targetProcedureId: internalId.nullable().default(null),
   }).strict()).max(100),
   approvals: z.array(z.object({
     proposalId: internalId, proposalVersion: z.number().int().positive(), payloadHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),

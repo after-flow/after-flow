@@ -104,7 +104,7 @@ export function createGuidanceWorkingState(input: {
   return guidanceWorkingStateSchema.parse({
     goal: '確認済みの公式資料に基づいて対象手続きの案内を作成し、未確認事項を明示する。',
     plan: decision.plan,
-    knownFacts: input.modelInput.data.map(fact => ({ key: `${fact.group}.${fact.field}`, value: String(fact.value).slice(0, 300), state: fact.state })),
+    knownFacts: input.modelInput.data.map(fact => ({ key: `${fact.group}.${fact.entityRef}.${fact.field}`, value: String(fact.value).slice(0, 300), state: fact.state })),
     unknowns, evidence: [], skills: input.skills ?? [], completedActions: [], currentStep: 0,
     nextAction: decision.nextAction, replanCount: 0,
   })
