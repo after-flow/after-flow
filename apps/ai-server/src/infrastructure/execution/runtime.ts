@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
-import { artifactEnvelopeSchema, dispatchSchema, contextProofSchema, runSummarySchema } from '@aftercare/internal-contracts'
-import type { ContextArtifact, ExecutionSnapshotStatus, RunDispatch, RunSummary } from '@aftercare/internal-contracts'
+import { artifactEnvelopeSchema, dispatchSchema, contextProofSchema, runSummarySchema, cancelExecutionSchema } from '@aftercare/internal-contracts'
+import type { ContextArtifact, ExecutionSnapshotStatus, RunDispatch, RunSummary, CancelExecution } from '@aftercare/internal-contracts'
 import type { ExecutionRuntime } from '../../application/ports/execution-runtime.js'
 import { contentHash } from '../../orchestration/context/builder.js'
 import { BackendCallError } from '../backend-client/client.js'
@@ -37,6 +37,7 @@ export interface RuntimeDependencies {
 }
 
 export class DurableExecutionRuntime implements ExecutionRuntime {
+  private readonly active = new Map<string, AbortController>()
   private readonly leaseMs: number
   constructor(private readonly deps: RuntimeDependencies) {
     this.leaseMs = deps.leaseMs ?? 30_000
@@ -65,6 +66,13 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
       state: 'QUEUED', owner: null, leaseUntil: 0, waitRequestId: null, createdAt: now, updatedAt: now, failure: null,
     })
   }
+  async cancel(raw: CancelExecution): Promise<'STOPPED' | 'DUPLICATE'> {
+    const input = cancelExecutionSchema.parse(raw), now = Math.floor(Date.now() / 1000)
+    if (input.issuedAt > now || input.expiresAt <= now || input.expiresAt <= input.issuedAt || input.expiresAt - input.issuedAt > 60) throw new ExecutionRejected('CONFLICT')
+    const status = await this.deps.store.cancel(input)
+    this.active.get(input.jobId)?.abort(new ExecutionRejected('STOPPED'))
+    return status
+  }
   async snapshot(input: Parameters<ExecutionRuntime['snapshot']>[0]): Promise<ExecutionSnapshotStatus> {
     const missing: ExecutionSnapshotStatus = { ...input, state: 'MISSING', snapshotId: null }
     const receipt = await this.deps.store.get(input.jobId)
@@ -91,6 +99,7 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
     const receipt = await this.deps.store.claim(owner, this.leaseMs)
     if (!receipt) return false
     const controller = new AbortController()
+    this.active.set(receipt.jobId, controller)
     const sectionTimeout = AbortSignal.timeout(this.deps.sectionTimeoutMs)
     const signal = AbortSignal.any([shutdown, controller.signal, sectionTimeout])
     const pulseStop = new AbortController()
@@ -138,7 +147,7 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
       }
     } catch (error) {
       pulseStop.abort(); await pulse; controller.abort()
-      const cause = rejected ?? error
+      const cause = controller.signal.reason instanceof ExecutionRejected ? controller.signal.reason : rejected ?? error
       const failure = cause instanceof ExecutionRejected && cause.code === 'BUDGET_EXCEEDED' ? 'BUDGET_EXCEEDED' :
         cause instanceof ExecutionRejected && cause.code === 'STOPPED' ? 'STOPPED' : sectionTimeout.aborted ? 'TIME_LIMIT' : 'EXECUTION_FAILED'
       // Reporting has its own short transport deadline, never another inference/tool allowance.
@@ -173,6 +182,7 @@ export class DurableExecutionRuntime implements ExecutionRuntime {
       catch (finishError) { if (!(finishError instanceof ExecutionRejected && finishError.code === 'STALE_OWNER')) throw finishError }
     } finally {
       pulseStop.abort(); await pulse
+      this.active.delete(receipt.jobId)
     }
     return true
   }

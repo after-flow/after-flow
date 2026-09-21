@@ -246,13 +246,16 @@ export class AgentRunService {
           details: { status: current.status },
         })
       }
+      const cancelId = randomUUID()
+      const cancellation = current.currentJobId ? { cancelId, jobId: current.currentJobId, executionAttempt: current.currentAttemptId } : undefined
       tx.update<AgentRunEntity>(runLocation(caseId, runId), expectedVersion, {
-        status: 'CANCELLED',
+        ...(cancellation ? { cancellation } : {}), status: 'CANCELLED',
         cancelRequestedBy: user.userId,
         finishedAt: new Date().toISOString(),
         // 取消後に届いた古い attempt の結果を受け付けないよう、世代を変える。
         currentAttemptId: randomUUID(),
       })
+      if (cancellation) tx.outbox({ id: cancelId, type: 'agent.cancel', caseId, payload: { runId } })
       await cancelWait(tx, current)
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       tx.audit({

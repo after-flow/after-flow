@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Firestore, Transaction } from '@google-cloud/firestore'
-import { internalId, interruptedResultSchema, runSummarySchema } from '@aftercare/internal-contracts'
-import type { InternalResult, RunSummary } from '@aftercare/internal-contracts'
+import { internalId, interruptedResultSchema, runSummarySchema, cancelExecutionSchema } from '@aftercare/internal-contracts'
+import type { InternalResult, RunSummary, CancelExecution } from '@aftercare/internal-contracts'
 
 import { budgetSchema, emptyBudget, ExecutionRejected, receiptSchema } from '../../application/execution/contracts.js'
 import type { Budget, BudgetCharge, Receipt } from '../../application/execution/contracts.js'
@@ -15,6 +15,7 @@ export class FirestoreExecutions {
   }
   private run(id: string) { return this.db.collection('execution_runs').doc(key(id)) }
   private job(id: string) { return this.db.collection('execution_receipts').doc(key(id)) }
+  private cancellation(id: string) { return this.db.collection('execution_cancellations').doc(key(id)) }
   async get(jobId: string): Promise<Receipt | null> {
     const doc = await this.job(jobId).get()
     return doc.exists ? receiptSchema.parse(doc.data()) : null
@@ -22,7 +23,8 @@ export class FirestoreExecutions {
   async admit(input: Receipt): Promise<'ACCEPTED' | 'DUPLICATE'> {
     const receipt = receiptSchema.parse(input)
     return this.db.runTransaction(async tx => {
-      const [job, run] = await Promise.all([tx.get(this.job(receipt.jobId)), tx.get(this.run(receipt.runId))])
+      const [job, run, cancelled] = await Promise.all([tx.get(this.job(receipt.jobId)), tx.get(this.run(receipt.runId)), tx.get(this.cancellation(receipt.jobId))])
+      if (cancelled.exists) throw new ExecutionRejected('STOPPED')
       if (job.exists) {
         const previous = receiptSchema.parse(job.data())
         if (['runId', 'jobId', 'executionAttempt', 'operation', 'kind', 'workflowName'].some(k => previous[k as keyof Receipt] !== receipt[k as keyof Receipt]) || run.get('jobId') !== receipt.jobId) throw new ExecutionRejected('CONFLICT')
@@ -48,6 +50,28 @@ export class FirestoreExecutions {
       tx.set(this.run(receipt.runId), { jobId: receipt.jobId, executionAttempt: receipt.executionAttempt, operation: receipt.operation,
         used: run.exists ? run.get('used') : emptyBudget(), limits: run.exists ? run.get('limits') : this.limits })
       return 'ACCEPTED'
+    })
+  }
+  async cancel(raw: CancelExecution): Promise<'STOPPED' | 'DUPLICATE'> {
+    const input = cancelExecutionSchema.parse(raw)
+    return this.db.runTransaction(async tx => {
+      const [previous, job] = await Promise.all([tx.get(this.cancellation(input.jobId)), tx.get(this.job(input.jobId))])
+      const matches = (value: { runId: string; jobId: string; executionAttempt: string }) =>
+        value.runId === input.runId && value.jobId === input.jobId && value.executionAttempt === input.executionAttempt
+      if (previous.exists) {
+        if (!matches(cancelExecutionSchema.parse(previous.data()))) throw new ExecutionRejected('CONFLICT')
+        return 'DUPLICATE'
+      }
+      if (job.exists && !matches(receiptSchema.parse(job.data()))) throw new ExecutionRejected('CONFLICT')
+      // Keep a tombstone even if cancel arrives before dispatch. Delayed dispatch cannot resurrect this attempt.
+      tx.create(this.cancellation(input.jobId), input)
+      if (job.exists) {
+        const receipt = receiptSchema.parse(job.data())
+        if (!['COMPLETED', 'FAILED', 'STOPPED'].includes(receipt.state)) tx.update(job.ref, {
+          state: 'STOPPED', failure: 'STOPPED', pendingResult: null, owner: null, leaseUntil: 0, encryptedDispatch: 'erased', updatedAt: this.now(),
+        })
+      }
+      return 'STOPPED'
     })
   }
   async claim(owner: string, leaseMs: number): Promise<Receipt | null> {

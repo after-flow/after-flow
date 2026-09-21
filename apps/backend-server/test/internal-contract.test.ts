@@ -14,7 +14,7 @@ describe('内部契約の分離', () => {
       assert.ok(internal.paths[path])
       assert.equal(publicApi.paths[path], undefined)
     }
-    assert.equal(Object.keys(internal.paths).length, Object.keys(internalRoutes).length + 3)
+    assert.equal(Object.keys(internal.paths).length, Object.keys(internalRoutes).length + 4)
     assert.equal(JSON.stringify(publicApi).includes('X-Execution-Authorization'), false)
   })
   it('dispatchへtenant/Case本文/userBearer/任意promptを追加できない', () => {

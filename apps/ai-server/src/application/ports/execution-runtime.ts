@@ -1,4 +1,4 @@
-import type { ExecutionSnapshotStatus, RunDispatch } from '@aftercare/internal-contracts'
+import type { ExecutionSnapshotStatus, RunDispatch, CancelExecution } from '@aftercare/internal-contracts'
 
 /**
  * Worker boundary. ACCEPTED requires verified Backend capability and a durable receipt.
@@ -7,6 +7,7 @@ import type { ExecutionSnapshotStatus, RunDispatch } from '@aftercare/internal-c
  */
 export interface ExecutionRuntime {
   accept(dispatch: RunDispatch, kind: 'dispatch' | 'resume'): Promise<'ACCEPTED' | 'DUPLICATE'>
+  cancel?(input: CancelExecution): Promise<'STOPPED' | 'DUPLICATE'>
   snapshot(input: {
     runId: string; jobId: string; executionAttempt: string; waitRequestId: string | null
   }): Promise<ExecutionSnapshotStatus>

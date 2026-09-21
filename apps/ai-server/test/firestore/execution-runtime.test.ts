@@ -160,3 +160,21 @@ test('budget interruption persists progress and retries only result delivery aft
     assert.equal((await store.get(dispatch.jobId))!.encryptedDispatch, 'erased')
   } finally { await db.terminate() }
 })
+
+test('durable cancel tombstone stops late dispatch, fences owners and cannot cross attempt identity', options, async () => {
+  const db = createRuntimeFirestore(), store = new FirestoreExecutions(db, limits)
+  try {
+    const input = receipt(), seconds = Math.floor(Date.now() / 1000)
+    const cancel = { cancelId: randomUUID(), runId: input.runId, jobId: input.jobId, executionAttempt: input.executionAttempt, issuedAt: seconds, expiresAt: seconds + 60 }
+    assert.equal(await store.cancel(cancel), 'STOPPED')
+    assert.equal(await store.cancel(cancel), 'DUPLICATE')
+    await assert.rejects(store.admit(input), /STOPPED/)
+    await assert.rejects(store.cancel({ ...cancel, runId: randomUUID() }), /CONFLICT/)
+    const active = receipt()
+    await store.admit(active); await store.claim('cancel-owner', 30000)
+    await assert.rejects(store.cancel({ ...cancel, runId: active.runId, jobId: active.jobId, executionAttempt: 'wrong' }), /CONFLICT/)
+    await store.cancel({ ...cancel, runId: active.runId, jobId: active.jobId, executionAttempt: active.executionAttempt })
+    await assert.rejects(store.charge(active.jobId, 'cancel-owner', { tools: 1 }), /STALE_OWNER/)
+    assert.equal((await store.get(active.jobId))!.encryptedDispatch, 'erased')
+  } finally { await db.terminate() }
+})

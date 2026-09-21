@@ -164,3 +164,12 @@ export type PlanningHistory = z.infer<typeof planningHistorySchema>
 /** Backend-owned case planning pause. null is explicit absence; omission is not permission. */
 export const planningRestrictionSchema = z.object({ reason: z.string().trim().min(1).max(1000) }).strict().nullable()
 export type PlanningRestriction = z.infer<typeof planningRestrictionSchema>
+
+/** Backend-authenticated control message. It contains no business content or execution capability. */
+export const cancelExecutionSchema = z.object({ cancelId: internalId, runId: internalId, jobId: internalId, executionAttempt: internalId,
+  issuedAt: z.number().int().nonnegative(), expiresAt: z.number().int().positive(),
+}).strict()
+export type CancelExecution = z.infer<typeof cancelExecutionSchema>
+export const cancelExecutionAckSchema = z.object({ cancelId: internalId, runId: internalId, jobId: internalId,
+  executionAttempt: internalId, status: z.enum(['STOPPED', 'DUPLICATE']),
+}).strict()

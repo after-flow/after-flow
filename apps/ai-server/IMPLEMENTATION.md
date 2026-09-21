@@ -56,3 +56,9 @@ Devinは着手許可を意味するラベルではない。共有PRの契約・�
 共有予算超過・実行時間切れ・実行エラーは、検証済みの途中経過と残作業を`execution_interrupted`としてBackendへ返す。Backendは現在のoperation・Context・leaseを検証してNEEDS_ATTENTIONにし、公開Run.outcomeへ保存する。途中でCase版が変わった場合は古い途中経過を返さない。
 
 結果をAI側のREPORTING receiptへ先に保存し、通信失敗時は10秒後に同じ結果ID/本文だけを再送する。所有権期限後の再取得でもAgent/Toolを再実行しない。取消・古い認可・Context不一致は停止し、Backend Reconcilerに委ねる。承認待ちを中断結果で上書きしない。結果作成前のContext取得失敗や認可期限切れを、結果配送成功とは扱わない。
+
+### 取消の直接配送
+
+公開取消APIはBackendのRunをCANCELLEDにし、旧job/attemptと取消Outboxを同じトランザクションで保存する。`POST /internal/v1/runs/:runId/cancel`へサービス認証付きで配送し、同意撤回後も停止通知は配送する。AIは取消を永続化して未到着のdispatchも拒否し、同一プロセスの実行をAbortする。別Workerでも次の共有所有権検査で停止する。既に完了した正式変更は戻さない。
+
+取消記録を削除すると遅延dispatchの復活防止を失うため、execution_cancellationsに自動TTLは設定しない。取消payloadは業務本文・ユーザー認証・モデル設定を含まない。

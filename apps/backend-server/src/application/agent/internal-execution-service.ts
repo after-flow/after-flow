@@ -65,6 +65,12 @@ export class InternalExecutionService {
     private readonly consent: ConsentService, private readonly intake: AgentResultIntake,
     private readonly proposals?: ProposalService) {}
 
+  async cancellation(tenantId: string, caseId: string, runId: string, cancelId: string) {
+    const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, runId))
+    if (!run || run.status !== 'CANCELLED' || run.cancellation?.cancelId !== cancelId) throw errors.conflict()
+    return { ...run.cancellation, runId: run.id }
+  }
+
   /** mint/delivery前にも保存済みscope、membership、同意を確認する。 */
   async dispatchClaims(tenantId: string, caseId: string, runId: string, jobId: string): Promise<ExecutionClaims> {
     return this.uow.run({ tenantId, actor: { type: 'SYSTEM', userId: null, agentRunId: runId }, requestId: null }, async tx => {
