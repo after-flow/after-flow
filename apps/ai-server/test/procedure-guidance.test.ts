@@ -260,3 +260,24 @@ test('#163 各項目の引用を出典URLと見出し付きで報告する', asy
     assert.ok(SOURCE_TEXT.includes(citation.quote))
   }
 })
+
+test('#164 構造化出力がスキーマに合わない場合だけ1回再生成し、2回目も合わなければ失敗する', async () => {
+  // 実モデルで見られた失敗: evidenceを別の要素として返す。
+  const malformed = { status: 'complete', missing: [], conflicts: [],
+    answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する' }, { evidence }] }
+  const research = scriptedModel([{ text: JSON.stringify(malformed) }, { text: JSON.stringify(synthesizedFindings) }])
+  const { deps, reported } = setup()
+  deps.models = { ...deps.models, research: research.model }
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
+  assert.equal(research.calls.length, 2)
+  assert.equal(reported[0]?.kind === 'task_guidance' && reported[0].status, 'COMPLETED')
+
+  const twice = scriptedModel([{ text: JSON.stringify(malformed) }, { text: JSON.stringify(malformed) }])
+  const failing = setup()
+  failing.deps.models = { ...failing.deps.models, research: twice.model }
+  const failed = await createProcedureGuidanceWorkflow(failing.deps).createRun()
+  assert.equal((await failed.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
+  assert.equal(twice.calls.length, 2, '再試行は1回まで')
+  assert.equal(failing.reported.length, 0)
+})

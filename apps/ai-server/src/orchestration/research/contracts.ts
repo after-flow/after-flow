@@ -114,9 +114,17 @@ export function validateFindings(input: unknown, brief: ResearchBrief, retrieved
   return result
 }
 
-/** 引用の照合用の正規化。空白の揺れと全角半角の違いだけを吸収し、言い換えは吸収しない。 */
+/**
+ * 引用の照合用の正規化。表記の揺れだけを吸収し、言い換えは吸収しない。
+ *
+ * 実モデルの評価（#164）で、照合に失敗した引用の多くは次の写し間違いだった。
+ * いずれも語の並びは本文と同じなので、同じ引用として扱う。
+ * - 空白と全角半角の違い
+ * - 句読点・括弧の有無（文末に「。」を足す、見出しと本文を「、」でつなぐ）
+ * - 注記の印（「※1」）の有無
+ */
 export function quoteKey(value: string): string {
-  return value.normalize('NFKC').replace(/\s+/g, '')
+  return value.normalize('NFKC').replace(/※\d*/g, '').replace(/[\s\p{P}]+/gu, '')
 }
 
 export interface QuoteCheck { evidence: EvidenceQuote; valid: boolean }
@@ -132,8 +140,13 @@ export function verifyQuote(evidence: EvidenceQuote, sources: ReadonlyMap<string
 /**
  * モデルの調査結果を検証済みの記録にする（#163）。
  *
- * 引用が本文と一致しない回答は根拠が無いものとして捨て、その問いは未確認として残す。
- * 回答を捨てた場合、モデルがcompleteを名乗っていても完了にしない。
+ * 本文と一致しない引用は捨てる。一致する引用が1件も無い回答は根拠が無いものとして捨て、
+ * その問いは未確認として残す。引用を1件でも捨てた場合、モデルがcompleteを名乗っていても完了にしない。
+ *
+ * 当初は一致しない引用を1件でも含む回答を丸ごと捨てていた。実モデルの評価（#164）では、
+ * 1件の写し間違いで正しい引用まで失い、必須事実の再現率を下げる主因になっていた。
+ * 回答のtextは引用と照合していないため、丸ごと捨てても安全性はほとんど上がらない。
+ * 案内の各項目はハーネスが検証済みの引用と照合する（guidance-grounding）。
  */
 export function finalizeResearchSynthesis(input: unknown, brief: ResearchBrief, sources: readonly SourceDocument[]): ResearchFindings {
   const synthesized = researchSynthesisSchema.parse(input)
@@ -142,16 +155,21 @@ export function finalizeResearchSynthesis(input: unknown, brief: ResearchBrief, 
   const questions = new Map(brief.questions.map(question => [question.id, question]))
   const answers: ResearchFindings['answers'] = []
   const unsupported: string[] = []
+  let discardedQuotes = 0
+  const partlySupported: string[] = []
   for (const answer of synthesized.answers) {
     const evidence = answer.evidence.filter(item => verifyQuote(item, retrieved))
-    if (evidence.length !== answer.evidence.length || !evidence.length) {
+    discardedQuotes += answer.evidence.length - evidence.length
+    if (evidence.length && evidence.length < answer.evidence.length) partlySupported.push(questions.get(answer.questionId)?.text ?? '確認できない問い')
+    if (!evidence.length) {
       unsupported.push(questions.get(answer.questionId)?.text ?? '確認できない問い')
       continue
     }
     answers.push({ questionId: answer.questionId, text: answer.text, applicability, evidence,
       sourceIds: [...new Set(evidence.map(item => item.sourceId))] })
   }
-  const missing = [...synthesized.missing, ...unsupported.map(text => `${text}（公式資料の記載と照合できませんでした）`.slice(0, 500))]
-  const status = synthesized.status === 'complete' && unsupported.length ? 'partial' : synthesized.status
+  const missing = [...synthesized.missing, ...unsupported.map(text => `${text}（公式資料の記載と照合できませんでした）`.slice(0, 500)),
+    ...partlySupported.map(text => `${text}（一部の記載は公式資料と照合できませんでした）`.slice(0, 500))]
+  const status = synthesized.status === 'complete' && (unsupported.length || discardedQuotes) ? 'partial' : synthesized.status
   return validateFindings({ status, answers, missing: missing.slice(0, 20), conflicts: synthesized.conflicts }, brief, new Set(retrieved.keys()))
 }
