@@ -89,7 +89,8 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const researchResponse = await researchAgent.generate(JSON.stringify({
         goal: '各questionに公式資料だけで回答し、回答ごとに取得済みsourceIdを付けてください。すべて確認できた場合だけstatusをcompleteにし、確認できない項目はmissingに残してください。',
         brief: selection.brief,
-        sources,
+        // 主要コンテンツを見出し単位で渡す。ナビゲーション等は抽出時に除いている（#165）。
+        sources: sources.map(({ id, title, issuer, url, fetchedAt, sections }) => ({ id, title, issuer, url, fetchedAt, sections })),
       }), {
         maxSteps: 1, toolChoice: 'none', abortSignal: deps.signal,
         structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'strict' },
