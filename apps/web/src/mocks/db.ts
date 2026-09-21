@@ -1,126 +1,99 @@
 /**
  * モックAPI用のインメモリデータ。
- * Backend の Public API が用意できるまでの開発用で、本番コードからは参照しない。
- * 期限計算は本来 Backend の Rule Engine が行うため、ここでは「Rule Engine の代役」として
- * 同じ形のレスポンスを組み立てるだけにとどめる。
+ *
+ * Backend の Public API を呼ばずに画面を試せるようにするためのもので、
+ * 本番コードからは参照しない。フィクスチャの型は contracts の `*Resource` を直接使うため、
+ * 「MSW が返す JSON」が Backend の契約と同じ形であることを typecheck で保証できる。
  */
 import type {
-  Approval,
+  AgentRunResource,
   Asset,
   Benefit,
-  Case,
-  CaseDocument,
-  ChatMessage,
+  CaseResource,
+  ConsentDocumentResource,
   Contract,
-  DeadlineSummary,
-  Evidence,
-  FlowStage,
-  ConsentDocument,
-  InheritanceMethod,
+  DocumentResource,
+  GuidanceResource,
+  InheritanceDecisionResource,
   Insight,
   Liability,
+  MessageResource,
   Person,
-  Task,
+  ProposalResource,
+  ApprovalResource,
+  TaskResource,
 } from '@aftercare/public-contracts'
-import { addDays, addMonthsLegal, syncRuleTasks, todayLocal } from './rules'
-
-const DAY = 86_400_000
-
-// 日付は暦日として扱う。以前は UTC の日付を使っており、日本時間では朝9時まで前日になり、
-// 日数を足した結果も1日早くずれていた。rules.ts の計算にそろえる
-export function todayISO(): string {
-  return todayLocal()
-}
-
-function shift(base: string, days: number): string {
-  return addDays(base, days)
-}
-
-function daysFromToday(iso: string): number {
-  const [ty, tm, td] = todayISO().split('-').map(Number)
-  const [y, m, d] = iso.split('-').map(Number)
-  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(ty, tm - 1, td)) / DAY)
-}
-
-/** Rule Engine 相当：残日数から重大度を決める（3日前＝黄、当日・超過＝赤） */
-export function makeDeadline(
-  args: {
-    id: string
-    taskId?: string
-    taskTitle?: string
-    label: string
-    startDate: string
-    /** 日で決まった期限。月・年で決まった期限は months を使う（90日や365日で近似しない） */
-    days?: number
-    /** 月・年で決まった期限（民法143条どおり暦で数える） */
-    months?: number
-    basisLabel: string
-    critical?: boolean
-    extendable?: boolean
-  },
-): DeadlineSummary {
-  const dueDate =
-    args.months != null ? addMonthsLegal(args.startDate, args.months) : shift(args.startDate, args.days ?? 0)
-  const remaining = daysFromToday(dueDate)
-  const severity =
-    remaining < 0 ? 'OVERDUE' : remaining === 0 ? 'URGENT' : remaining <= 3 ? 'SOON' : 'NORMAL'
-  return {
-    id: args.id,
-    taskId: args.taskId,
-    taskTitle: args.taskTitle,
-    label: args.label,
-    dueDate,
-    basisLabel: args.basisLabel,
-    startDate: args.startDate,
-    daysRemaining: remaining,
-    severity,
-    extendable: args.extendable ?? false,
-    critical: args.critical ?? false,
-  }
-}
-
-export const FLOW_STAGE_LABELS: { id: FlowStage['id']; label: string }[] = [
-  { id: 'immediate', label: '死亡直後の対応（死亡届7日以内）' },
-  { id: 'funeral', label: '葬儀・火葬' },
-  { id: 'government', label: '役所・公的手続（目安14日以内）' },
-  { id: 'contracts', label: '契約・生活の整理' },
-  { id: 'investigation', label: '相続の調査' },
-  { id: 'decision', label: '相続方法の判断（3か月以内）' },
-  { id: 'division', label: '遺産分割' },
-  { id: 'transfer', label: '名義変更・受け取り' },
-  { id: 'tax', label: '税務（準確定申告4か月・相続税10か月）' },
-  { id: 'closing', label: '最終確認・ケースクローズ' },
-]
-
-/* ---------- ストア ---------- */
-
-interface Store {
-  cases: Case[]
-  persons: Person[]
-  documents: CaseDocument[]
-  tasks: Task[]
-  assets: Asset[]
-  liabilities: Liability[]
-  contracts: Contract[]
-  benefits: Benefit[]
-  approvals: Approval[]
-  messages: ChatMessage[]
-  decisions: Record<string, InheritanceMethod | null>
-  evidences: Evidence[]
-  insights: Insight[]
-  consents: ConsentDocument[]
-}
-
-function jpDate(iso: string) {
-  const [y, m, d] = iso.split('-').map(Number)
-  return `${y}年${m}月${d}日`
-}
+import { FLOW_STAGE_LABELS, makeDeadline, shift, taskActions, todayISO, unresolvedDeadline } from './rules'
+import { makeProposalAndApproval } from './proposals'
 
 let seq = 100
 export const nextId = (prefix: string) => `${prefix}_${++seq}`
 
 const DEATH = shift(todayISO(), -5)
 const CASE_ID = 'case_1'
+const SELF_PERSON_ID = 'person_1'
+const NOW = new Date().toISOString()
+
+interface Store {
+  cases: CaseResource[]
+  persons: Person[]
+  documents: DocumentResource[]
+  tasks: TaskResource[]
+  assets: Asset[]
+  liabilities: Liability[]
+  contracts: Contract[]
+  benefits: Benefit[]
+  proposals: ProposalResource[]
+  approvals: ApprovalResource[]
+  decisions: InheritanceDecisionResource[]
+  messages: MessageResource[]
+  insights: Insight[]
+  consents: ConsentDocumentResource[]
+  guidance: Record<string, GuidanceResource>
+  agentRuns: AgentRunResource[]
+}
+
+/**
+ * タスクを既定値で組み立て、いまの状態から `allowedActions`/`blockedActions` を計算する。
+ * 初期フィクスチャの構築時点では相続方法の記録がまだ無い（`decided` は常に false）ため、
+ * `db` 自体（構築中でまだ参照できない）は見ない。
+ */
+function task(
+  t: Pick<TaskResource, 'id' | 'title' | 'summary' | 'status' | 'stage' | 'category' | 'source'> &
+    Partial<TaskResource>,
+): TaskResource {
+  const assetDisposal = t.assetDisposal ?? false
+  const evidenceRequired = t.evidenceRequired ?? false
+  const { allowed, blocked } = taskActions(t.status, {
+    assetDisposal,
+    decided: false,
+    evidenceRequired,
+    hasEvidence: (t.evidences ?? []).length > 0,
+  })
+  return {
+    caseId: CASE_ID,
+    conditional: t.conditional ?? false,
+    submitToSource: t.submitToSource ?? null,
+    targetDate: t.targetDate ?? null,
+    submitTo: null,
+    assigneeId: null,
+    dependencyTaskIds: [],
+    escalation: null,
+    evidenceRequired,
+    assetDisposal,
+    requiredDocuments: [],
+    completionReportedBy: null,
+    completionReportedAt: null,
+    deadline: null,
+    evidences: [],
+    allowedActions: allowed,
+    blockedActions: blocked,
+    version: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...t,
+  }
+}
 
 export const db: Store = {
   cases: [
@@ -133,16 +106,23 @@ export const db: Store = {
       knownAt: DEATH,
       ownerName: '山田 花子',
       relationshipToDeceased: '配偶者',
-      // 質問にはまだ答えていない状態から始める（健康保険の種類だけ分かっている。81歳なので後期高齢者医療）
-      profile: { healthInsurance: 'LATE_ELDERLY' },
+      municipality: '○○市',
+      ownerPersonId: SELF_PERSON_ID,
+      selfPersonId: SELF_PERSON_ID,
+      funeralCompletedAt: null,
+      aiPlanningRestriction: null,
       status: 'ACTIVE',
-      createdAt: new Date().toISOString(),
+      version: 1,
+      caseVersion: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+      allowedActions: ['UPDATE_BASIC_INFO', 'ADMINISTER'],
     },
   ],
 
   persons: [
     {
-      id: 'person_1',
+      id: SELF_PERSON_ID,
       caseId: CASE_ID,
       name: '山田 花子',
       nameKana: 'やまだ はなこ',
@@ -175,90 +155,35 @@ export const db: Store = {
     },
   ],
 
-  documents: [
-    {
-      id: 'doc_1',
-      caseId: CASE_ID,
-      fileName: '死亡診断書.pdf',
-      kind: 'DEATH_CERTIFICATE',
-      kindSource: 'AI',
-      analysisStatus: 'ANALYZED',
-      sizeBytes: 482_112,
-      uploadedAt: new Date(Date.now() - 2 * DAY).toISOString(),
-      myNumberScan: 'CLEAN',
-      agentRunId: 'run_1',
-      extractions: [
-        { id: 'ex_1', label: '氏名', value: '山田 太郎' },
-        { id: 'ex_2', label: '死亡日', value: DEATH },
-        { id: 'ex_3', label: '死亡場所', value: '○○市立病院' },
-      ],
-    },
-    {
-      id: 'doc_2',
-      caseId: CASE_ID,
-      fileName: '預金通帳_表紙.jpg',
-      kind: 'BANK_STATEMENT',
-      kindSource: 'AI',
-      analysisStatus: 'ANALYZED',
-      sizeBytes: 1_204_233,
-      uploadedAt: new Date(Date.now() - 1 * DAY).toISOString(),
-      myNumberScan: 'CLEAN',
-      agentRunId: 'run_2',
-      extractions: [
-        {
-          id: 'ex_4',
-          label: '金融機関',
-          value: '○○銀行 △△支店',
-          approvalId: 'apr_1',
-          targetType: 'ASSET',
-        },
-        { id: 'ex_5', label: '口座種別', value: '普通預金' },
-      ],
-    },
-  ],
+  documents: [],
 
   tasks: [
     task({
       id: 'task_1',
       title: '死亡届を提出する',
-      summary:
-        '死亡診断書と一緒に、市区町村の窓口へ提出します。火葬許可証の交付もあわせて受け取ります。',
+      summary: '死亡診断書と一緒に、市区町村の窓口へ提出します。火葬許可証の交付もあわせて受け取ります。',
       submitTo: '○○市役所 市民課',
       status: 'READY',
-      stage: 'immediate',
+      stage: 'funeral',
       category: '役所手続き',
       source: 'RULE_ENGINE',
       deadline: makeDeadline({
         id: 'dl_1',
         taskId: 'task_1',
-        taskTitle: '死亡届を提出する',
         label: '死亡届',
         startDate: DEATH,
         days: 7,
         basisLabel: '死亡を知った日 ＋ 7日',
+        ruleId: 'death_notice',
         critical: true,
-    }),
+      }),
       requiredDocuments: [
-        { id: 'rd_1', label: '死亡診断書', collected: true, source: 'AI', documentId: 'doc_1' },
-        { id: 'rd_2', label: '届出人の本人確認書類', collected: false, source: 'AI' },
+        { id: 'rd_1', label: '死亡診断書', documentId: null, source: 'AI', collected: false },
+        { id: 'rd_2', label: '届出人の印鑑', documentId: null, source: 'AI', collected: false },
       ],
-      guidance: {
-        where: '○○市役所 市民課（本庁舎1階）',
-        // 2021年9月から戸籍の届出への押印は任意。印鑑は持ち物に含めない
-        bring: ['死亡診断書（原本）', '届出人の本人確認書類'],
-        steps: [
-          '病院などで受け取った死亡診断書の左側（死亡届）に記入します。',
-          '火葬許可申請書と一緒に、市民課の窓口へ提出します。',
-          '火葬許可証を受け取ります（火葬の当日に火葬場へ出します）。',
-        ],
-        note: '窓口の受付時間は自治体によって異なります。夜間・休日窓口の有無は事前にご確認ください。',
-        researchedBy: 'MANUAL',
-        // 自治体未登録の状態から始め、調査を依頼できることを示す
-        research: { status: 'NOT_REQUESTED' },
-      },
-      assigneeId: 'person_1',
+      assigneeId: SELF_PERSON_ID,
       // 準備ができたまま数日たっている（「止まっている手続き」の見本）
-      updatedAt: new Date(Date.now() - 4 * DAY).toISOString(),
+      updatedAt: new Date(Date.now() - 4 * 86_400_000).toISOString(),
     }),
     task({
       id: 'task_2',
@@ -272,63 +197,48 @@ export const db: Store = {
       deadline: makeDeadline({
         id: 'dl_2',
         taskId: 'task_2',
-        taskTitle: '世帯主変更届を出す',
         label: '世帯主変更',
         startDate: DEATH,
         days: 14,
         basisLabel: '死亡日 ＋ 14日',
+        ruleId: 'household',
         critical: true,
       }),
-      requiredDocuments: [{ id: 'rd_3', label: '本人確認書類', collected: false, source: 'AI' }],
-      guidance: {
-        where: '○○市役所 市民課',
-        bring: ['届出人の本人確認書類'],
-      },
+      requiredDocuments: [{ id: 'rd_3', label: '本人確認書類', documentId: null, source: 'AI', collected: false }],
     }),
     task({
       id: 'task_3',
       title: '国民健康保険の資格喪失届を出す',
-      summary: '保険証の返却もあわせて行います。',
+      summary: '保険証の返却もあわせて行います。加入していた保険の種類によって窓口が変わるため、期限は確認中です。',
       submitTo: '○○市役所 保険年金課',
       status: 'COLLECTING_INFORMATION',
       stage: 'government',
       category: '年金・保険',
       source: 'RULE_ENGINE',
-      deadline: makeDeadline({
+      // 起算日（保険の種類）が未入力のため、期限を算定できない見本
+      deadline: unresolvedDeadline({
         id: 'dl_3',
         taskId: 'task_3',
-        taskTitle: '国民健康保険の資格喪失届を出す',
         label: '資格喪失届',
-        startDate: DEATH,
-        days: 14,
-        basisLabel: '死亡日 ＋ 14日',
+        basisLabel: '死亡日 ＋ 14日（加入していた保険の種類による）',
+        ruleId: 'health_insurance',
+        reason: 'MISSING_BASIS_DATE',
       }),
-      requiredDocuments: [
-        { id: 'rd_4', label: '故人の保険証または資格確認書', collected: false, source: 'AI' },
-      ],
+      requiredDocuments: [{ id: 'rd_4', label: '故人の保険証', documentId: null, source: 'AI', collected: false }],
     }),
     task({
       id: 'task_4',
       title: '相続人を調べる（戸籍の収集）',
       summary:
-        '故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続の方法を決める期限（3か月）に間に合うよう、早めに着手します。',
+        '故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続方法の判断（3か月以内）に間に合うよう、早めに着手します。',
       status: 'COLLECTING_INFORMATION',
       stage: 'investigation',
       category: '相続',
       source: 'AI',
       requiredDocuments: [
-        { id: 'rd_5', label: '故人の出生から死亡までの戸籍謄本', collected: false, source: 'AI' },
-        { id: 'rd_6', label: '相続人全員の戸籍謄本', collected: false, source: 'AI' },
+        { id: 'rd_5', label: '故人の出生から死亡までの戸籍謄本', documentId: null, source: 'AI', collected: false },
+        { id: 'rd_6', label: '相続人全員の戸籍謄本', documentId: null, source: 'AI', collected: false },
       ],
-      guidance: {
-        where: '本籍地の市区町村（郵送でも請求できます）',
-        steps: [
-          '故人の本籍地の役所で、死亡の記載がある戸籍を請求します。',
-          'さかのぼって出生までの戸籍をそろえます。',
-          '相続人になる方の戸籍もそろえます。',
-        ],
-        note: 'マイナンバーが記載された書類（住民票の一部など）はアップロードできません。',
-      },
     }),
     task({
       id: 'task_5',
@@ -342,30 +252,25 @@ export const db: Store = {
       deadline: makeDeadline({
         id: 'dl_4',
         taskId: 'task_5',
-        taskTitle: '相続の方法を決める（承認・放棄の判断）',
         label: '相続放棄・限定承認',
         startDate: DEATH,
-        months: 3,
+        days: 90,
         basisLabel: '自分が相続人になったと知った時 ＋ 3か月',
+        ruleId: 'decision',
         critical: true,
         extendable: true,
       }),
-      dependencies: [
-        { type: 'TASK', label: '相続人を調べる（戸籍の収集）が完了していること', satisfied: false, taskId: 'task_4' },
-      ],
+      dependencyTaskIds: ['task_4'],
     }),
     task({
       id: 'task_6',
       title: '故人の預金口座を解約して払い戻しを受ける',
-      summary: '相続の方法が決まったあとに行う手続きです。',
+      summary: '相続方法が確定したあとに行う手続きです。財産の処分にあたるため、全員の相続方法が確定するまで進められません。',
       status: 'NOT_STARTED',
       stage: 'transfer',
       category: '金融機関',
       source: 'AI',
       assetDisposal: true,
-      dependencies: [
-        { type: 'DECISION', label: '相続人全員の相続の方法が決まっていること', satisfied: false },
-      ],
     }),
     task({
       id: 'task_7',
@@ -379,11 +284,11 @@ export const db: Store = {
       deadline: makeDeadline({
         id: 'dl_5',
         taskId: 'task_7',
-        taskTitle: '準確定申告を行う',
         label: '準確定申告',
         startDate: DEATH,
-        months: 4,
+        days: 120,
         basisLabel: '相続開始を知った日の翌日 ＋ 4か月',
+        ruleId: 'final_tax',
         critical: true,
       }),
     }),
@@ -406,6 +311,7 @@ export const db: Store = {
       kind: 'BANK',
       institution: '○○銀行',
       amount: 3_240_000,
+      currency: 'JPY',
       source: 'AI',
       confirmation: 'UNCONFIRMED',
       version: 1,
@@ -417,6 +323,7 @@ export const db: Store = {
       kind: 'REAL_ESTATE',
       source: 'MANUAL',
       confirmation: 'CONFIRMED',
+      confirmationRecord: { state: 'CONFIRMED', confirmedAt: NOW, confirmedBy: SELF_PERSON_ID, confirmedVersion: 1 },
       taxAttention: true,
       note: '土地・建物とも故人名義',
       version: 1,
@@ -431,6 +338,7 @@ export const db: Store = {
       kind: 'CREDIT',
       creditor: '××カード',
       amount: 68_000,
+      currency: 'JPY',
       source: 'AI',
       confirmation: 'UNCONFIRMED',
       version: 1,
@@ -474,14 +382,8 @@ export const db: Store = {
       kind: 'INSURANCE_PAYOUT',
       provider: '□□生命',
       amount: 5_000_000,
+      currency: 'JPY',
       progress: 'NOT_STARTED',
-      deadline: makeDeadline({
-        id: 'dl_6',
-        label: '生命保険金の請求',
-        startDate: DEATH,
-        months: 36,
-        basisLabel: '保険事故発生時 ＋ 3年（時効）',
-      }),
       version: 1,
     },
     {
@@ -491,137 +393,38 @@ export const db: Store = {
       kind: 'PENSION',
       provider: '日本年金機構',
       progress: 'NOT_STARTED',
-      deadline: makeDeadline({
-        id: 'dl_7',
-        label: '遺族年金の請求',
-        startDate: DEATH,
-        months: 60,
-        basisLabel: '受給権発生時 ＋ 原則5年',
-      }),
       version: 1,
     },
   ],
 
-  approvals: [
-    {
-      id: 'apr_0',
-      caseId: CASE_ID,
-      kind: 'TASK_PROPOSAL',
-      status: 'PENDING',
-      title: '故人の情報を登録する',
-      summary: '死亡診断書から、お名前・死亡日・死亡場所を読み取りました。',
-      createdAt: new Date(Date.now() - 44 * 3600_000).toISOString(),
-      sourceDocumentId: 'doc_1',
-      sourceDocumentName: '死亡診断書.pdf',
-      agentRunId: 'run_1',
-      assetDisposal: false,
-      possibleDuplicate: {
-        documentName: '死亡診断書（写し）.pdf',
-        takenInAt: new Date(Date.now() - 68 * 3600_000).toISOString(),
-      },
-      diff: [
-        {
-          field: '故人のお名前',
-          before: '山田 太郎',
-          after: '山田 太郎',
-          editable: true,
-          confidence: 'HIGH',
-          sourceBox: { x: 0.2, y: 0.17, w: 0.42, h: 0.045 },
-        },
-        {
-          field: '死亡日',
-          before: null,
-          after: DEATH,
-          editable: true,
-          confidence: 'HIGH',
-          sourceBox: { x: 0.2, y: 0.29, w: 0.5, h: 0.045 },
-        },
-        {
-          field: '死亡場所',
-          before: null,
-          after: '○○市立病院',
-          editable: true,
-          // 読み取れなかったものを、読み取れたものと同じ顔で出さない
-          confidence: 'LOW',
-          sourceBox: { x: 0.2, y: 0.41, w: 0.44, h: 0.045 },
-        },
-      ],
-    },
-    {
-      id: 'apr_1',
-      caseId: CASE_ID,
-      kind: 'ASSET_PROPOSAL',
-      status: 'PENDING',
-      title: '預金口座を財産として登録する',
-      summary: '預金通帳の画像から、○○銀行の普通預金口座を見つけました。',
-      createdAt: new Date(Date.now() - 20 * 3600_000).toISOString(),
-      sourceDocumentId: 'doc_2',
-      sourceDocumentName: '預金通帳_表紙.jpg',
-      agentRunId: 'run_2',
-      assetDisposal: false,
-      diff: [
-        {
-          field: '名称',
-          before: null,
-          after: '○○銀行 △△支店 普通預金',
-          editable: true,
-          confidence: 'HIGH',
-          sourceBox: { x: 0.22, y: 0.22, w: 0.52, h: 0.05 },
-        },
-        { field: '種別', before: null, after: '預金', confidence: 'HIGH' },
-        {
-          field: '金融機関',
-          before: null,
-          after: '○○銀行',
-          editable: true,
-          confidence: 'HIGH',
-          sourceBox: { x: 0.22, y: 0.36, w: 0.34, h: 0.05 },
-        },
-      ],
-    },
-    {
-      id: 'apr_2',
-      caseId: CASE_ID,
-      kind: 'TASK_PROPOSAL',
-      status: 'PENDING',
-      title: '預金口座の解約・払い戻しを手続きとして追加する',
-      summary:
-        '見つかった預金口座について、解約と払い戻しの手続きを追加する提案です。財産の処分にあたる可能性があります。',
-      createdAt: new Date(Date.now() - 19 * 3600_000).toISOString(),
-      sourceDocumentId: 'doc_2',
-      sourceDocumentName: '預金通帳_表紙.jpg',
-      agentRunId: 'run_2',
-      assetDisposal: true,
-      diff: [
-        { field: '手続き名', before: null, after: '故人の預金口座を解約して払い戻しを受ける' },
-        { field: '提出先', before: null, after: '○○銀行 △△支店' },
-      ],
-    },
-    {
-      id: 'apr_3',
-      caseId: CASE_ID,
-      kind: 'DOCUMENT_REQUEST',
-      status: 'PENDING',
-      title: '戸籍謄本の追加をお願いしたい',
-      summary: '相続人を確定するため、故人の出生から死亡までの戸籍が必要です。',
-      createdAt: new Date(Date.now() - 5 * 3600_000).toISOString(),
-      agentRunId: 'run_3',
-      assetDisposal: false,
-      diff: [{ field: '必要書類', before: null, after: '故人の出生から死亡までの戸籍謄本' }],
-    },
-  ],
+  proposals: [],
+  approvals: [],
+
+  decisions: [],
 
   messages: [],
-
-  decisions: {},
-
-  evidences: [],
 
   /*
     AIが監視・解析の中で自分で見つけた気づき。
     いずれも事実の指摘までに留め、法的・税務的な性質の断定はしない。
     判断を伴うものは requiresProfessional を立てる。
   */
+  insights: [
+    {
+      id: 'ins_3',
+      caseId: CASE_ID,
+      kind: 'PROFESSIONAL_NEEDED',
+      body: '相続人に未成年の方が含まれています。遺産分割を進める場面では、通常とは異なる手続きが必要になる場合があります。',
+      evidence: [
+        { label: '登録されている相続人', value: '山田 みどり 様（長女・17歳）' },
+        { label: '該当する手続き', value: '遺産分割' },
+      ],
+      detectedAt: new Date(Date.now() - 30 * 3600_000).toISOString(),
+      requiresProfessional: true,
+      status: 'NEW',
+    },
+  ],
+
   /* 文面は仮置き。弁護士確認後に差し替える前提。 */
   consents: [
     {
@@ -637,6 +440,7 @@ export const db: Store = {
       required: true,
       agreedVersion: null,
       agreedAt: null,
+      satisfied: false,
     },
     {
       kind: 'PRIVACY',
@@ -651,6 +455,7 @@ export const db: Store = {
       required: true,
       agreedVersion: null,
       agreedAt: null,
+      satisfied: false,
     },
     {
       kind: 'CROSS_BORDER_AI',
@@ -666,94 +471,163 @@ export const db: Store = {
       required: false,
       agreedVersion: null,
       agreedAt: null,
+      satisfied: false,
     },
   ],
 
-  insights: [
-    {
-      id: 'ins_1',
-      caseId: CASE_ID,
-      kind: 'POSSIBLE_CONTRACT',
-      body: '通帳に毎月同じ金額の引き落としが続いています。まだ登録されていない契約があるかもしれません。心当たりがあれば、契約の一覧に追加しておくと漏れを防げます。',
-      evidence: [
-        {
-          label: '引き落とし',
-          value: '毎月27日 ・ 4,980円 ・ 摘要「ＮＴＴセキュリティ」',
-          documentId: 'doc_2',
-          documentName: '預金通帳_表紙.jpg',
-        },
-        { label: '登録済みの契約', value: '電気・携帯電話の2件のみ' },
-      ],
-      detectedAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
-      agentRunId: 'run_4',
-      requiresProfessional: false,
-      status: 'NEW',
-    },
-    {
-      id: 'ins_2',
-      caseId: CASE_ID,
-      kind: 'DEADLINE_RISK',
-      body: '戸籍の取り寄せは郵送だと2〜3週間かかることがあります。相続の方法を決める期限から逆算すると、今月中に請求を始めないと間に合わなくなるおそれがあります。',
-      evidence: [
-        { label: '相続の方法を決める期限', value: jpDate(addMonthsLegal(DEATH, 3)) },
-        { label: '戸籍の収集', value: '未着手（必要書類 2件が未取得）', taskId: 'task_4' },
-      ],
-      detectedAt: new Date(Date.now() - 26 * 3600_000).toISOString(),
-      agentRunId: 'run_4',
-      relatedTaskId: 'task_4',
-      relatedTaskTitle: '相続人を調べる（戸籍の収集）',
-      requiresProfessional: false,
-      status: 'NEW',
-    },
-    {
-      id: 'ins_3',
-      caseId: CASE_ID,
-      kind: 'PROFESSIONAL_NEEDED',
-      body: '相続人に未成年の方が含まれています。遺産分割を進める場面では、通常とは異なる手続きが必要になる場合があります。',
-      evidence: [
-        { label: '登録されている相続人', value: '山田 みどり 様（長女・17歳）' },
-        { label: '該当する手続き', value: '遺産分割' },
-      ],
-      detectedAt: new Date(Date.now() - 30 * 3600_000).toISOString(),
-      agentRunId: 'run_4',
-      // 未成年者がいる場合の取り扱いは法的判断を伴うため、断定せず専門家へ回す
-      requiresProfessional: true,
-      status: 'NEW',
-    },
-  ],
+  guidance: {},
+
+  agentRuns: [],
 }
 
-function task(
-  t: Omit<Task, 'caseId' | 'updatedAt' | 'assetDisposal' | 'evidences'> & {
-    assetDisposal?: boolean
-    updatedAt?: string
+/* ---------- 初期の書類・確認待ち（見本） ---------- */
+
+const RUN_2_STARTED = new Date(Date.now() - 20 * 3600_000).toISOString()
+const RUN_2_FINISHED = new Date(Date.now() - 20 * 3600_000 + 25_000).toISOString()
+
+db.agentRuns.push({
+  id: 'run_2',
+  caseId: CASE_ID,
+  operation: 'document_analysis',
+  status: 'SUCCEEDED',
+  targetType: 'DOCUMENT',
+  targetId: 'doc_2',
+  attempt: 1,
+  waiting: false,
+  waitingFor: null,
+  failureReason: null,
+  outcome: {
+    resultId: 'result_2',
+    attemptId: 'attempt_2',
+    caseVersion: 1,
+    summary: '「預金通帳_表紙.jpg」を解析し、2件の提案を作成しました。',
+    completed: ['金融機関名の読み取り', '口座種別の読み取り'],
+    questions: [],
+    remaining: [],
   },
-): Task {
-  return {
+  caseVersionAtAccept: 1,
+  startedAt: RUN_2_STARTED,
+  finishedAt: RUN_2_FINISHED,
+  allowedActions: [],
+  version: 1,
+  createdAt: RUN_2_STARTED,
+  updatedAt: RUN_2_FINISHED,
+})
+
+const { proposal: assetProposal, approval: assetApproval } = makeProposalAndApproval({
+  id: 'prop_1',
+  caseId: CASE_ID,
+  kind: 'ASSET_PROPOSAL',
+  title: '預金口座を財産として登録する',
+  summary: '預金通帳の画像から、○○銀行の普通預金口座を見つけました。',
+  payload: { fields: { name: '○○銀行 △△支店 普通預金', kind: 'BANK', institution: '○○銀行', amount: 3_240_000 } },
+  basis: [{ type: 'DOCUMENT', id: 'doc_2', version: 1, label: '預金通帳_表紙.jpg' }],
+  agentRunId: 'run_2',
+  createdAt: new Date(Date.now() - 19 * 3600_000).toISOString(),
+})
+const { proposal: taskProposal, approval: taskApproval } = makeProposalAndApproval({
+  id: 'prop_2',
+  caseId: CASE_ID,
+  kind: 'TASK_PROPOSAL',
+  title: '預金口座の解約・払い戻しを手続きとして追加する',
+  summary: '見つかった預金口座について、解約と払い戻しの手続きを追加する提案です。財産の処分にあたる可能性があります。',
+  payload: {
+    title: '故人の預金口座を解約して払い戻しを受ける',
+    summary: '相続方法が確定したあとに行う手続きです。',
+    stage: 'transfer',
+    category: '金融機関',
+    submitTo: '○○銀行 △△支店',
+    assetDisposal: true,
+  },
+  basis: [{ type: 'DOCUMENT', id: 'doc_2', version: 1, label: '預金通帳_表紙.jpg' }],
+  agentRunId: 'run_2',
+  assetDisposal: true,
+  createdAt: new Date(Date.now() - 18 * 3600_000).toISOString(),
+})
+const { proposal: docRequestProposal, approval: docRequestApproval } = makeProposalAndApproval({
+  id: 'prop_3',
+  caseId: CASE_ID,
+  kind: 'DOCUMENT_REQUEST',
+  title: '戸籍謄本の追加をお願いしたい',
+  summary: '相続人を確定するため、故人の出生から死亡までの戸籍が必要です。',
+  payload: { documents: [{ label: '故人の出生から死亡までの戸籍謄本' }] },
+  basis: [{ type: 'TASK', id: 'task_4', version: 1, label: '相続人を調べる（戸籍の収集）' }],
+  createdAt: new Date(Date.now() - 5 * 3600_000).toISOString(),
+})
+
+db.proposals.push(assetProposal, taskProposal, docRequestProposal)
+db.approvals.push(assetApproval, taskApproval, docRequestApproval)
+
+db.documents.push(
+  {
+    id: 'doc_1',
     caseId: CASE_ID,
-    updatedAt: new Date().toISOString(),
-    assetDisposal: false,
-    evidences: [],
-    ...t,
-  }
-}
+    fileName: '死亡診断書.pdf',
+    contentType: 'application/pdf',
+    sizeBytes: 482_112,
+    sha256: 'seed_doc_1',
+    kind: 'DEATH_CERTIFICATE',
+    kindSource: 'AI',
+    storageState: 'STORED',
+    inspection: { status: 'PASSED', completed: true, findings: [] },
+    analysis: { state: 'COMPLETED', agentRunId: null, canRequest: false, blockedReasons: [], run: null },
+    extractionCandidates: [],
+    proposalRefs: [],
+    approvalRefs: [],
+    evidenceRefs: [],
+    archived: false,
+    archivedAt: null,
+    version: 1,
+    createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    updatedAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+  },
+  {
+    id: 'doc_2',
+    caseId: CASE_ID,
+    fileName: '預金通帳_表紙.jpg',
+    contentType: 'image/jpeg',
+    sizeBytes: 1_204_233,
+    sha256: 'seed_doc_2',
+    kind: 'BANK_STATEMENT',
+    kindSource: 'AI',
+    storageState: 'STORED',
+    inspection: { status: 'PASSED', completed: true, findings: [] },
+    analysis: { state: 'COMPLETED', agentRunId: 'run_2', canRequest: false, blockedReasons: [], run: null },
+    extractionCandidates: [
+      {
+        id: assetProposal.id,
+        proposalVersion: assetProposal.proposalVersion,
+        kind: assetProposal.kind,
+        title: assetProposal.title,
+        payload: assetProposal.payload,
+        status: assetProposal.status,
+        basis: assetProposal.basis,
+      },
+      {
+        id: taskProposal.id,
+        proposalVersion: taskProposal.proposalVersion,
+        kind: taskProposal.kind,
+        title: taskProposal.title,
+        payload: taskProposal.payload,
+        status: taskProposal.status,
+        basis: taskProposal.basis,
+      },
+    ],
+    proposalRefs: [
+      { id: assetProposal.id, proposalVersion: assetProposal.proposalVersion, kind: assetProposal.kind, status: assetProposal.status, source: assetProposal.source },
+      { id: taskProposal.id, proposalVersion: taskProposal.proposalVersion, kind: taskProposal.kind, status: taskProposal.status, source: taskProposal.source },
+    ],
+    approvalRefs: [
+      { id: assetApproval.id, proposalId: assetApproval.proposalId, proposalVersion: assetApproval.proposalVersion, status: assetApproval.status, applicationStatus: assetApproval.applicationStatus },
+      { id: taskApproval.id, proposalId: taskApproval.proposalId, proposalVersion: taskApproval.proposalVersion, status: taskApproval.status, applicationStatus: taskApproval.applicationStatus },
+    ],
+    evidenceRefs: [],
+    archived: false,
+    archivedAt: null,
+    version: 1,
+    createdAt: new Date(Date.now() - 1 * 86_400_000).toISOString(),
+    updatedAt: RUN_2_FINISHED,
+  },
+)
 
-/**
- * 規則（rules.ts）から作った手続きと、規則の対応。
- * 初期データの手続きもここに登録し、規則で洗い出すときに二重に作らないようにする。
- */
-export const ruleKeys = new Map<string, string>([
-  ['task_1', 'death_notice'],
-  ['task_2', 'household'],
-  ['task_3', 'health_insurance'],
-  ['task_4', 'heirs'],
-  ['task_5', 'decision'],
-  ['task_6', 'bank_accounts'],
-  ['task_7', 'final_tax'],
-  ['task_8', 'utilities'],
-])
-
-// 初期データのケースにも、規則どおりの手続きと期限をそろえる
-db.tasks = syncRuleTasks(db.cases[0], db.tasks, ruleKeys, nextId)
-
-export { CASE_ID, DEATH, DAY }
+export { CASE_ID, DEATH, SELF_PERSON_ID, FLOW_STAGE_LABELS }

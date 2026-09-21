@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api/client'
-import { useCaseOverview, useTasks, useUpdateCase } from '@/lib/api/queries'
-import type { CaseProfile, Paginated, Task, YesNoUnknown } from '@aftercare/public-contracts'
+import { useCaseOverview, useTasks, useUpdateCase, type CaseProfileInput } from '@/lib/api/queries'
+import type { CaseProfileResource, TaskResource } from '@aftercare/public-contracts'
 import { Button, ErrorState, Field, LinkButton, Loading, Page, PageHeader, inputClass } from '@/kit/kit'
 import { useCaseBase } from '@/kit/domain'
 import { toast } from '@/kit/toast'
@@ -12,32 +12,33 @@ import { toast } from '@/kit/toast'
  *
  * 必要な手続きは人によって違う（年金を受け取っていたか、持ち家があるか…）。
  * 何も聞かないと関係の無い手続きまで並ぶか、逆に漏れる。
- * ここで答えてもらい、Rule Engine があてはまる手続きだけを洗い出す。
+ * ここで答えてもらい、Backend の Rule Engine があてはまる手続きだけを洗い出す。
  *
  * どれも「わからない」で構わない。わからない項目は、あてはまる可能性があるものとして扱い、
- * 手続きの説明に「あてはまる場合に必要です」と添える。
+ * 手続きに「あてはまる場合」と添えられる（Task.conditional）。
  */
+type Answers = Partial<Omit<CaseProfileResource, 'answeredAt'>>
 type Choice<T extends string> = { value: T; label: string }
 
-const HEALTH: Choice<NonNullable<CaseProfile['healthInsurance']>>[] = [
+const HEALTH: Choice<CaseProfileResource['healthInsurance']>[] = [
   { value: 'NATIONAL', label: '国民健康保険' },
   { value: 'EMPLOYEE', label: '会社の健康保険（家族として入っていた場合も）' },
   { value: 'LATE_ELDERLY', label: '後期高齢者医療（75歳以上）' },
   { value: 'UNKNOWN', label: 'わからない' },
 ]
-const PENSION: Choice<NonNullable<CaseProfile['pension']>>[] = [
+const PENSION: Choice<CaseProfileResource['pension']>[] = [
   { value: 'EMPLOYEES', label: '受け取っていた（厚生年金を含む）' },
   { value: 'NATIONAL_ONLY', label: '受け取っていた（国民年金だけ）' },
   { value: 'NONE', label: '受け取っていなかった' },
   { value: 'UNKNOWN', label: 'わからない' },
 ]
-const WORK: Choice<NonNullable<CaseProfile['occupation']>>[] = [
+const WORK: Choice<CaseProfileResource['occupation']>[] = [
   { value: 'EMPLOYEE', label: '会社員・公務員として働いていた' },
   { value: 'SELF_EMPLOYED', label: '自営業だった' },
   { value: 'NONE', label: '働いていなかった' },
   { value: 'UNKNOWN', label: 'わからない' },
 ]
-const YES_NO: Choice<YesNoUnknown>[] = [
+const YES_NO: Choice<CaseProfileResource['realEstate']>[] = [
   { value: 'YES', label: 'はい' },
   { value: 'NO', label: 'いいえ' },
   { value: 'UNKNOWN', label: 'わからない' },
@@ -53,28 +54,31 @@ export function SetupScreen() {
   if (overview.isError) return <ErrorState message="読み込めませんでした。" onRetry={() => void overview.refetch()} />
   if (!overview.data) return <Loading />
 
+  const { case: c } = overview.data
+  const firstTime = !c.profile
   // 読み込み後に初期値を決めたいので、フォームは中の部品に任せる
   return (
     <SetupForm
       key={caseId}
-      initialBirth={overview.data.case.dateOfBirth ?? ''}
-      initial={overview.data.case.profile ?? {}}
-      deathDate={overview.data.case.dateOfDeath}
-      firstTime={!overview.data.case.profile?.answeredAt}
+      initialBirth={c.dateOfBirth ?? ''}
+      initial={c.profile ?? {}}
+      deathDate={c.dateOfDeath}
+      firstTime={firstTime}
       busy={update.isPending}
       onSkip={() => navigate(base)}
-      onSubmit={async (dateOfBirth, profile) => {
-        const firstTime = !overview.data?.case.profile?.answeredAt
+      onSubmit={async (dateOfBirth, answers) => {
         const before = tasks.data?.items
+        const profile: CaseProfileInput = { ...answers, answeredAt: new Date().toISOString() }
         await update.mutateAsync({
+          expectedVersion: c.version,
           // 空にしたら消す（null を送る）。undefined だと前の生年月日が残る
           dateOfBirth: dateOfBirth || null,
-          profile: { ...profile, answeredAt: new Date().toISOString() },
+          profile,
         })
         // 何が変わったかを一言で知らせる（増えた手続き・不要になった手続き）
         try {
           if (!before) throw new Error('答える前の一覧が無いので比べられない')
-          const after = (await api.get<Paginated<Task>>(`/cases/${caseId}/tasks`)).items
+          const after = (await api.list<TaskResource>(`/cases/${caseId}/tasks`)).items
           toast(describeChange(before, after))
         } catch {
           toast('答えにあわせて、必要な手続きを洗い出しました')
@@ -88,7 +92,7 @@ export function SetupScreen() {
 }
 
 /** 答える前と後の手続きを比べて、変化を一言にする */
-function describeChange(before: Task[], after: Task[]) {
+function describeChange(before: TaskResource[], after: TaskResource[]) {
   const was = new Set(before.map((t) => t.id))
   const now = new Set(after.map((t) => t.id))
   const added = after.filter((t) => !was.has(t.id))
@@ -111,17 +115,17 @@ function SetupForm({
   base,
 }: {
   initialBirth: string
-  initial: CaseProfile
+  initial: Answers
   deathDate: string
   firstTime: boolean
   busy: boolean
   onSkip: () => void
-  onSubmit: (dateOfBirth: string, profile: CaseProfile) => Promise<void>
+  onSubmit: (dateOfBirth: string, answers: Answers) => Promise<void>
   base: string
 }) {
   const [birth, setBirth] = useState(initialBirth)
-  const [profile, setProfile] = useState<CaseProfile>(initial)
-  const set = <K extends keyof CaseProfile>(k: K, v: CaseProfile[K]) => setProfile((prev) => ({ ...prev, [k]: v }))
+  const [answers, setAnswers] = useState<Answers>(initial)
+  const set = <K extends keyof Answers>(k: K, v: Answers[K]) => setAnswers((prev) => ({ ...prev, [k]: v }))
   const birthError = birth && birth > deathDate ? '生年月日が、ご逝去日より後になっています' : undefined
 
   return (
@@ -155,7 +159,7 @@ function SetupForm({
           title="入っていた健康保険"
           hint="保険証に書いてある名前で分かります。"
           choices={HEALTH}
-          value={profile.healthInsurance}
+          value={answers.healthInsurance}
           onChange={(v) => set('healthInsurance', v)}
         />
         <Question
@@ -163,37 +167,25 @@ function SetupForm({
           title="年金を受け取っていましたか"
           hint="会社員として働いた期間があれば、厚生年金を受け取っていることが多いです。"
           choices={PENSION}
-          value={profile.pension}
+          value={answers.pension}
           onChange={(v) => set('pension', v)}
         />
-        <Question
-          no={4}
-          title="亡くなる前のお仕事"
-          choices={WORK}
-          value={profile.occupation}
-          onChange={(v) => set('occupation', v)}
-        />
+        <Question no={4} title="亡くなる前のお仕事" choices={WORK} value={answers.occupation} onChange={(v) => set('occupation', v)} />
         <Question
           no={5}
           title="故人名義の家や土地はありますか"
           hint="あれば、名義を変える手続き（相続登記）が義務になります。"
           choices={YES_NO}
-          value={profile.realEstate}
+          value={answers.realEstate}
           onChange={(v) => set('realEstate', v)}
         />
-        <Question
-          no={6}
-          title="故人名義の自動車はありますか"
-          choices={YES_NO}
-          value={profile.car}
-          onChange={(v) => set('car', v)}
-        />
+        <Question no={6} title="故人名義の自動車はありますか" choices={YES_NO} value={answers.car} onChange={(v) => set('car', v)} />
         <Question
           no={7}
           title="住宅ローンはありましたか"
           hint="保険で残りが返済されることがあります。"
           choices={YES_NO}
-          value={profile.mortgage}
+          value={answers.mortgage}
           onChange={(v) => set('mortgage', v)}
         />
 
@@ -203,7 +195,7 @@ function SetupForm({
             size="lg"
             className="sm:flex-1"
             disabled={busy || Boolean(birthError)}
-            onClick={() => void onSubmit(birth, profile)}
+            onClick={() => void onSubmit(birth, answers)}
           >
             {busy ? '洗い出しています…' : 'この内容で手続きを洗い出す'}
           </Button>
@@ -255,9 +247,7 @@ function Question<T extends string>({
               aria-checked={on}
               onClick={() => onChange(c.value)}
               className={`flex min-h-12 items-center gap-2.5 rounded-md border px-3.5 py-2 text-left text-[0.94rem] ${
-                on
-                  ? 'border-rd-primary bg-rd-primary-soft font-bold text-rd-primary-text'
-                  : 'border-rd-border hover:bg-rd-shade'
+                on ? 'border-rd-primary bg-rd-primary-soft font-bold text-rd-primary-text' : 'border-rd-border hover:bg-rd-shade'
               }`}
             >
               <span

@@ -155,7 +155,7 @@ export const taskSpecs = {
     path: '/cases/:caseId/tasks/initialize',
     summary: '初期手続きを生成する',
     description:
-      '同じ定義から二度作らない。独立Outbox workerによる自動生成と、この明示的APIのどちらから呼んでも冪等に動く。',
+      '通常は Case 作成の Transaction 内で同期生成されるため、ここは補正・再実行用（冪等。同じ定義から二度作らない）。',
     tags: ['tasks'],
     auth: 'user',
     request: { params: caseIdParamsSchema },
@@ -174,15 +174,21 @@ export const taskSpecs = {
     operationId: 'reevaluateDeadlines',
     method: 'post',
     path: '/cases/:caseId/deadlines/reevaluate',
-    summary: '起算日の変更を期限へ反映する',
-    description: '死亡日や「知った日」の訂正後に、影響する期限を版付きで作り直す。',
+    summary: '起算日・故人の状況の変更を手続きと期限へ反映する',
+    description:
+      '死亡日・「知った日」・生年月日・profile の訂正後に、影響する手続きと期限を作り直す。' +
+      '作成・PATCH 時にも同じ処理が同じ Transaction で同期実行されるため、ここはカタログ差し替え後などの再実行用。',
     tags: ['tasks'],
     auth: 'user',
     request: { params: caseIdParamsSchema },
     success: {
       status: 200,
-      description: '更新した期限のID',
-      schema: successEnvelope(z.object({ updated: z.array(z.string()) })),
+      description: '変更した手続き・期限のID',
+      schema: successEnvelope(z.object({
+        updated: z.array(z.string()),
+        created: z.array(z.string()),
+        removed: z.array(z.string()),
+      })),
     },
     failures: [
       'VALIDATION_FAILED',

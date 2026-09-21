@@ -152,6 +152,13 @@ export class DocumentService {
    * UPLOADING で確定し、原本を置いてから STORED にする。
    * 途中で失敗した場合は UPLOADING のまま残り、同じ冪等性キーの再送で
    * 続きから進める。孤立した原本は回収処理が片付ける。
+   *
+   * 外部AI同意（CROSS_BORDER_AI）が無ければ、新規の登録・進行中の
+   * 再送（UPLOADING の続き）は保存前に拒否する（fail-closed）。ただし
+   * 既に STORED／REJECTED まで完了した同一キーの再送は、新たな提供を
+   * 発生させない応答喪失時の再送であり、`docs/architecture.md` の
+   * 冪等性契約（同一キー・同一payloadは既存結果を返す）を優先して
+   * 既存結果を返す。
    */
   async register(
     user: AuthenticatedUser,
@@ -167,12 +174,20 @@ export class DocumentService {
       })
     }
 
+    const documentId = documentIdFrom(caseId, `${user.userId.length}:${user.userId}/${meta.idempotency.key}`)
+    const location = documentLocation(caseId, documentId)
+
+    const priorAttempt = await this.read.get<DocumentEntity>(user.tenantId, location)
+    const priorAttemptDone = priorAttempt?.storageState === 'STORED' || priorAttempt?.inspection.status === 'REJECTED'
+    if (!priorAttemptDone) {
+      // 副作用（ハッシュ計算・Storage・検査・監査・Outbox）より前に検査する。
+      await this.consent.assertExternalAiAllowed(user)
+    }
+
     // 申告ではなく実体で形式を判定する。
     const contentType = assertSupportedDocument(input.declaredContentType, input.content)
     const sha256 = createHash('sha256').update(input.content).digest('hex')
-    const documentId = documentIdFrom(caseId, `${user.userId.length}:${user.userId}/${meta.idempotency.key}`)
     const objectKey = `${objectKeyFor(user.tenantId, caseId, documentId)}/${randomUUID()}`
-    const location = documentLocation(caseId, documentId)
 
     const alreadyStored = await this.uow.run(
       // 冪等性記録は使わない。原本を置く前の状態を結果として固定しないため。

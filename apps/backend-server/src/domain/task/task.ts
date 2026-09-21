@@ -35,11 +35,16 @@ export type TaskStatus =
 
 export type TaskSource = 'MANUAL' | 'AI' | 'RULE_ENGINE'
 
+/** submitTo の出所。洗い出しが上書きしてよいのは RULE のときだけ。 */
+export type SubmitToSource = 'RULE' | 'RESEARCH' | 'MANUAL'
+
 export interface RequiredDocumentRef {
   id: string
   label: string
   documentId: string | null
   source: TaskSource
+  /** 窓口で消し込む「用意できた」印。書類の紐付けとは独立。legacy 欠落 → false。 */
+  collected?: boolean
 }
 
 export interface TaskEntity extends EntityBase {
@@ -75,4 +80,10 @@ export interface TaskEntity extends EntityBase {
   /** 完了を報告した利用者と日時。外部機関による確認ではない。 */
   completionReportedBy: string | null
   completionReportedAt: string | null
+  /** 「わからない」「未回答」であてはまる可能性ありとして残している手続き。手動・AI 由来は常に false。legacy 欠落 → false。 */
+  conditional?: boolean
+  /** submitTo の出所。legacy 欠落 → source==='RULE_ENGINE' なら RULE、それ以外は MANUAL。 */
+  submitToSource?: SubmitToSource | null
+  /** title/summary の出所。利用者が直したら MANUAL になり、洗い出しで戻さない。legacy 欠落 → submitToSource と同じ規則。 */
+  textSource?: 'RULE' | 'MANUAL' | null
 }

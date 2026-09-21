@@ -2,12 +2,15 @@
 COMPOSE ?= docker compose
 PNPM ?= pnpm
 
-.PHONY: help up up-data data-check down build logs ps restart check install dev test test-firestore production-check dev-auth dev-token dev-seed
+.PHONY: help up up-data data-check down build logs ps restart check install dev test test-firestore production-check dev-auth dev-token dev-verify-email dev-seed
 
 # ローカル開発用の認証・seed。USER は shell の変数と衝突するので DEV_ を付ける。
 DEV_USER ?= demo-user
 DEV_TENANT ?= after-flow-demo
 DEV_TOKEN_TTL ?= 28800
+# make dev-token / dev-verify-email（Auth Emulator）用。static-jwks経路（DEV_USER/DEV_TENANT）とは別。
+DEV_EMAIL ?= demo@example.com
+DEV_PASSWORD ?= after-flow-dev-password
 
 help: ## コマンド一覧
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -62,17 +65,22 @@ install: ## ローカル開発用の依存をインストール
 dev: ## ローカルで3サービスを起動
 	$(PNPM) dev
 
-dev-auth: ## Swagger用の開発認証鍵を生成し、static-jwks設定を .env に追記（秘密鍵は .dev-auth/）
+dev-auth: ## [代替] static-jwksの開発認証鍵を生成し.envに追記（既定のfirebase-emulatorを上書きする。docs/runbooks/local-swagger.md参照）
 	@if grep -qs '^AUTH_MODE=' .env; then echo ".env に AUTH_MODE が既にあります。認証設定の行を消してから再実行してください。"; exit 1; fi
 	@mkdir -p .dev-auth
 	$(COMPOSE) run --rm --no-deps -T --user "$$(id -u):$$(id -g)" -v "$$PWD/.dev-auth:/dev-auth" \
 	  backend-server node apps/backend-server/scripts/dev-auth.mjs keys --out /dev-auth >> .env
 	@echo ".env に追記しました。make up で Backend に反映されます。"
 
-dev-token: ## 開発用JWTを表示（例: make dev-token DEV_USER=demo-user DEV_TENANT=after-flow-demo）
-	@$(COMPOSE) run --rm --no-deps -T --user "$$(id -u):$$(id -g)" -v "$$PWD/.dev-auth:/dev-auth:ro" \
-	  backend-server node apps/backend-server/scripts/dev-auth.mjs token --key /dev-auth/private.jwk.json \
-	  --user "$(DEV_USER)" --tenant "$(DEV_TENANT)" --ttl "$(DEV_TOKEN_TTL)"
+# make up 済み（data profileでfirebase-auth-emulatorが起動済み）が前提。
+# --no-depsではfirebase-auth-emulatorへ到達できないため、execを使う。
+dev-token: ## 開発用IDトークンを表示（要make up。例: make dev-token DEV_EMAIL=demo@example.com DEV_PASSWORD=...）
+	@$(COMPOSE) --profile data exec -T backend-server node apps/backend-server/scripts/dev-firebase.mjs token \
+	  --email "$(DEV_EMAIL)" --password "$(DEV_PASSWORD)"
+
+dev-verify-email: ## Auth Emulator上のアカウントのメール確認を済ませる（要make up。例: make dev-verify-email DEV_EMAIL=demo@example.com）
+	@$(COMPOSE) --profile data exec -T backend-server node apps/backend-server/scripts/dev-firebase.mjs verify-email \
+	  --email "$(DEV_EMAIL)"
 
 dev-seed: ## 開発用tenant memberをFirestore Emulatorへ作成（例: make dev-seed DEV_USER=demo-user）
 	$(COMPOSE) --profile data exec -T backend-server pnpm --filter @aftercare/backend-server exec tsx \

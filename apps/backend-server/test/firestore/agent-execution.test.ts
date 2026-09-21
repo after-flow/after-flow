@@ -8,7 +8,9 @@ import { CaseLeaseService } from '../../src/application/agent/lease-service.js'
 import { OutboxDispatcher, backoffMs } from '../../src/application/agent/outbox-dispatcher.js'
 import { caseTaskHandler } from '../../src/application/agent/outbox-worker.js'
 import { TaskService } from '../../src/application/task/task-service.js'
+import { ProcedureSyncService } from '../../src/application/task/procedure-sync-service.js'
 import { PLACEHOLDER_RULE_CATALOG } from '../../src/domain/task/rule-catalog.js'
+import { inclusionOf } from '../../src/domain/task/procedure-conditions.js'
 import type { OutboxEvent } from '../../src/domain/shared/outbox.js'
 import { PLACEHOLDER_CATALOG } from '../../src/domain/consent/catalog.js'
 import { INFRASTRUCTURE_COLLECTIONS } from '../../src/domain/shared/collections.js'
@@ -120,6 +122,7 @@ describeFirestore('AI実行の受付', () => {
 
     assert.equal(response.status, 403)
     assert.equal(response.body.error.code, 'CONSENT_REQUIRED')
+    assert.equal(response.body.error.details.requiredConsent, 'CROSS_BORDER_AI')
     // 手動管理は引き続き使えることを伝える。
     assert.ok(response.body.error.details.availableFeatures.length > 0)
   })
@@ -448,20 +451,29 @@ describeFirestore('Outbox の配送', () => {
     const { tenantId, app, caseId } = await setup({ agreeExternalAi: false })
     const access = new AccessService(readRepository())
     const consent = new ConsentService(PLACEHOLDER_CATALOG, access, readRepository(), unitOfWork())
-    const local = caseTaskHandler(new TaskService(PLACEHOLDER_RULE_CATALOG, access, readRepository(), unitOfWork()))
+    const procedureSync = new ProcedureSyncService(PLACEHOLDER_RULE_CATALOG, readRepository())
+    const local = caseTaskHandler(new TaskService(PLACEHOLDER_RULE_CATALOG, access, readRepository(), unitOfWork(), procedureSync))
     const dispatcher = new OutboxDispatcher(firestore(), new HttpAgentJobClient({
       baseUrl: ai.url, serviceToken: SERVICE_TOKEN, timeoutMs: 1000, audience: 'ai-server',
     }), consent, 120_000, local)
     assert.ok((await dispatcher.dispatchBatch(tenantId)).delivered.length > 0)
     const before = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/tasks`).get()
-    assert.equal(before.size, PLACEHOLDER_RULE_CATALOG.initialProcedures.length)
+    // Case 作成 tx で既に同期生成済み（profile 未回答なので default 'no' の5件は出ない）。
+    // Outbox 経由の再同期（case.created）は補正経路のため冪等で件数は増えない。
+    const expectedInitialCount = PLACEHOLDER_RULE_CATALOG.initialProcedures.filter(
+      (procedure) => inclusionOf(procedure, { dateOfDeath: '2026-01-01', knownAt: null, dateOfBirth: null, profile: null }) !== 'no',
+    ).length
+    assert.equal(before.size, expectedInitialCount)
     const current = await call(app, `/cases/${caseId}`)
     assert.equal((await call(app, `/cases/${caseId}`, jsonRequest('PATCH', {
       expectedVersion: current.body.data.version, knownAt: '2026-05-01',
     }))).status, 200)
     await dispatcher.dispatchBatch(tenantId)
-    const dates = await call(app, `/cases/${caseId}/deadlines`)
-    assert.ok(dates.body.data.every((deadline: Json) => deadline.startDate === '2026-05-01'))
+    const dates = await call(app, `/cases/${caseId}/deadlines?limit=50`)
+    // knownAt を起算日とするルールだけ '2026-05-01' に動く。死亡日基準のルールは影響を受けない。
+    const knownAtBased = dates.body.data.filter((deadline: Json) => deadline.basisLabel.includes('知った日'))
+    assert.ok(knownAtBased.length > 0)
+    assert.ok(knownAtBased.every((deadline: Json) => deadline.startDate === '2026-05-01'))
     // 古いcase.createdを再配送しても重複せず、当時の起算日へ戻らない。
     const original = (await outboxDocs(tenantId, 'case.created'))[0]!.data() as OutboxEvent
     await local.deliverLocal(original)

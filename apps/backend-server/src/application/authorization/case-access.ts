@@ -129,22 +129,24 @@ export class AccessService {
   constructor(private readonly read: ReadRepository) {}
 
   /**
-   * トークンの主張を membership で裏取りする。
+   * 認証済み identity から、指定された tenant の membership を裏取りする。
    *
-   * Provider によってはカスタムクレームを利用者側で設定できる。
-   * tenant クレームだけを信じると、別 tenant を名乗れてしまう。
+   * tenant はトークンの主張からではなく、呼び出し側（`authentication`
+   * middleware。配備単位の `AUTH_TENANT_ID`）が渡す。membership が無い
+   * 利用者は null を返す（未登録。`POST /me` へ誘導する 403 は route 層が
+   * 組み立てる）。停止済みの利用者だけをここで forbidden にする。
    */
-  async authenticate(identity: VerifiedIdentity): Promise<AuthenticatedUser> {
-    const tenantId = identity.claimedTenantId
+  async resolveUser(identity: VerifiedIdentity, tenantId: string): Promise<AuthenticatedUser | null> {
     const member = await this.read.get<TenantMember>(tenantId, {
       collection: collections.members,
       caseId: null,
       id: identity.subject,
     })
-    if (!member || !member.active) {
+    if (!member) return null
+    if (!member.active) {
       throw errors.forbidden({
-        message: 'この利用者に割り当てられた領域がありません。',
-        internal: { reason: 'no active tenant membership' },
+        message: 'この利用者は停止されています。',
+        details: { reason: 'MEMBERSHIP_INACTIVE' },
       })
     }
     return { userId: identity.subject, tenantId }

@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import type { RequiredDocument } from '@aftercare/public-contracts'
+import type { TaskRequiredDocumentResource as RequiredDocument } from '@aftercare/public-contracts'
 import { mergeBringRows } from './bring'
 
-const doc = (id: string, label: string, collected = false): RequiredDocument => ({ id, label, collected, source: 'RULE_ENGINE' })
+const doc = (id: string, label: string, collected = false): RequiredDocument => ({
+  id,
+  label,
+  collected,
+  documentId: null,
+  source: 'RULE_ENGINE',
+})
 
 it('treats an item that differs only by a trailing note as the same item', () => {
   const rows = mergeBringRows([doc('d1', '死亡診断書', true)], ['死亡診断書（原本）', '届出人の本人確認書類'])

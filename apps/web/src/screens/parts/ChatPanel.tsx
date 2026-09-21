@@ -1,6 +1,6 @@
-import { useEffect, useRef, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { useMessages, useSendMessage } from '@/lib/api/queries'
+import { CHAT_REPLY_POLL_TIMEOUT_MS, useMessages, useSendMessage } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { formatDateTime } from '@/lib/format'
 import { Button, Loading, textareaClass } from '@/kit/kit'
@@ -22,13 +22,21 @@ const SUGGESTIONS = [
  * compact：横の窓（幅が狭い）で使うときの詰めた表示
  */
 export function ChatPanel({ caseId, base, compact }: { caseId: string; base: string; compact?: boolean }) {
-  const { data, isLoading } = useMessages(caseId)
+  // 送信は 202 で受け付けられ、返答は後から履歴に現れる。受け付けられてから返答が来るまで（上限あり）だけ履歴を追いかける
+  const [awaitingSince, setAwaitingSince] = useState<number | null>(null)
+  const { data, isLoading } = useMessages(caseId, { refetchInterval: awaitingSince ? 2_000 : false })
   const send = useSendMessage(caseId)
   const { input, setInput, pendingFocus, focusHandled } = useChatDock()
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const messages = data?.items ?? []
+  const messages = data ?? []
   const consent = useAiConsent()
+
+  useEffect(() => {
+    if (!awaitingSince) return
+    const replied = messages.some((m) => m.role === 'assistant' && Date.parse(m.createdAt) >= awaitingSince)
+    if (replied || Date.now() - awaitingSince > CHAT_REPLY_POLL_TIMEOUT_MS) setAwaitingSince(null)
+  }, [messages, awaitingSince])
 
   // 会話の枠の中だけをスクロールする（scrollIntoView だと、横の窓を開いたときにページごと動いてしまう）
   useEffect(() => {
@@ -53,7 +61,8 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
     if (!body || send.isPending || !consent.allowed) return
     // 例の質問を押したときは、書きかけ（手続きの画面からの書き出しを含む）を消さない
     if (text == null) setInput('')
-    await send.mutateAsync(body)
+    const accepted = await send.mutateAsync(body)
+    if (accepted.runAccepted) setAwaitingSince(Date.now() - 1_000)
   }
 
   return (
@@ -108,9 +117,9 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
                       この点は個別の法律・税務の判断が必要です。専門家にご相談ください。
                     </p>
                   )}
-                  {m.escalationApprovalId && (
+                  {m.escalationProposalId && (
                     <Link
-                      to={`${base}/approvals/${m.escalationApprovalId}`}
+                      to={`${base}/approvals`}
                       className="mt-2 inline-flex h-9 items-center rounded-md border border-rd-border px-3 text-[0.86rem] font-bold text-rd-text hover:bg-rd-shade"
                     >
                       専門家への相談について確かめる

@@ -8,6 +8,7 @@ import { AccessService } from '../../src/application/authorization/case-access.j
 import type { DocLocation, ReadRepository } from '../../src/application/ports/persistence.js'
 import { FirestoreReadRepository } from '../../src/infrastructure/firestore/read-repository.js'
 import type { CaseMember } from '../../src/domain/authorization/case-role.js'
+import { PLACEHOLDER_RULE_CATALOG } from '../../src/domain/task/rule-catalog.js'
 import type { RuleCatalog } from '../../src/domain/task/rule-engine.js'
 import { agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
 import type { Json, TestAppOptions } from './helpers/app.js'
@@ -41,7 +42,7 @@ describeFirestore('集約のスナップショット整合性', () => {
       }
     }
     const read = new InterleavedRead(firestore())
-    const snapshot = await new CaseOverviewService(new AccessService(read), read)
+    const snapshot = await new CaseOverviewService(new AccessService(read), read, REVIEWED_CATALOG)
       .get({ tenantId, userId }, caseId)
     assert.equal(snapshot.consistency, 'SNAPSHOT')
     assert.deepEqual(snapshot.taskCounts, before.body.data.taskCounts)
@@ -54,74 +55,113 @@ describeFirestore('集約のスナップショット整合性', () => {
 })
 
 /** 業務レビュー済みという前提の架空ルール。実際の法定期限ではない。 */
+const FIXTURE_DEADLINE_RULES: RuleCatalog['deadlineRules'] = [
+  {
+    id: 'fixture-confirmed',
+    version: '1.0.0',
+    label: '架空の確定した期限',
+    basis: 'KNOWN_AT',
+    period: { unit: 'DAY', count: 7, includeFirstDay: false },
+    basisLabel: '相続の開始を知った日の翌日から数えて7日以内',
+    knownAtLabel: '相続の開始を知った日',
+    legalNature: 'JURISDICTIONAL',
+    jurisdiction: '架空市',
+    reviewed: true,
+    sourceUrl: 'https://example.test/fixture',
+    sourceCheckedAt: '2026-09-20T00:00:00+09:00',
+    extendable: false,
+    critical: true,
+    reviewedBy: { name: 'テスト 司法書士', qualification: 'JUDICIAL_SCRIVENER' },
+  },
+  {
+    id: 'fixture-unreviewed',
+    version: '0.0.0-draft',
+    label: '架空の未レビュー期限',
+    basis: 'KNOWN_AT',
+    period: { unit: 'DAY', count: 14, includeFirstDay: false },
+    basisLabel: '相続の開始を知った日の翌日から数えて14日以内',
+    knownAtLabel: '相続の開始を知った日',
+    legalNature: 'JURISDICTIONAL',
+    jurisdiction: '架空市',
+    reviewed: false,
+    sourceUrl: null,
+    sourceCheckedAt: null,
+    extendable: null,
+    critical: false,
+    reviewedBy: null,
+  },
+]
+
+const FIXTURE_ALWAYS: RuleCatalog['initialProcedures'][number]['applicability'] = { default: 'yes', rules: [] }
+
+const FIXTURE_INITIAL_PROCEDURES: RuleCatalog['initialProcedures'] = [
+  {
+    id: 'fixture-a',
+    title: '架空の手続きA',
+    summary: '',
+    stage: 'immediate',
+    category: '行政手続き',
+    submitTo: null,
+    evidenceRequired: false,
+    assetDisposal: false,
+    requiredDocuments: [],
+    deadlineRuleId: 'fixture-confirmed',
+    applicability: FIXTURE_ALWAYS,
+    variants: [],
+    targetDate: null,
+  },
+  {
+    id: 'fixture-b',
+    title: '架空の手続きB',
+    summary: '',
+    stage: 'immediate',
+    category: '行政手続き',
+    submitTo: null,
+    evidenceRequired: false,
+    assetDisposal: false,
+    requiredDocuments: [],
+    deadlineRuleId: 'fixture-unreviewed',
+    applicability: FIXTURE_ALWAYS,
+    variants: [],
+    targetDate: null,
+  },
+  {
+    id: 'fixture-c',
+    title: '架空の手続きC',
+    summary: '',
+    stage: 'government',
+    category: '書類収集',
+    submitTo: null,
+    evidenceRequired: false,
+    assetDisposal: false,
+    requiredDocuments: [],
+    deadlineRuleId: null,
+    applicability: FIXTURE_ALWAYS,
+    variants: [],
+    targetDate: null,
+  },
+]
+
+const FIXTURE_REVIEWER = { name: 'テスト 司法書士', qualification: 'JUDICIAL_SCRIVENER' } as const
+const FIXTURE_REVIEWED_AT = '2026-09-20T00:00:00+09:00'
+
 const REVIEWED_CATALOG: RuleCatalog = {
   placeholder: false,
-  deadlineRules: [
-    {
-      id: 'fixture-confirmed',
-      version: '1.0.0',
-      label: '架空の確定した期限',
-      basis: 'KNOWN_AT',
-      offsetDays: 7,
-      jurisdiction: '架空市',
-      reviewed: true,
-      sourceUrl: 'https://example.test/fixture',
-      sourceCheckedAt: '2026-09-20T00:00:00+09:00',
-      extendable: false,
-      critical: true,
-    },
-    {
-      id: 'fixture-unreviewed',
-      version: '0.0.0-draft',
-      label: '架空の未レビュー期限',
-      basis: 'KNOWN_AT',
-      offsetDays: 14,
-      jurisdiction: '架空市',
-      reviewed: false,
-      sourceUrl: null,
-      sourceCheckedAt: null,
-      extendable: null,
-      critical: false,
-    },
-  ],
-  initialProcedures: [
-    {
-      id: 'fixture-a',
-      title: '架空の手続きA',
-      summary: '',
-      stage: 'immediate',
-      category: '行政手続き',
-      submitTo: null,
-      evidenceRequired: false,
-      assetDisposal: false,
-      requiredDocuments: [],
-      deadlineRuleId: 'fixture-confirmed',
-    },
-    {
-      id: 'fixture-b',
-      title: '架空の手続きB',
-      summary: '',
-      stage: 'immediate',
-      category: '行政手続き',
-      submitTo: null,
-      evidenceRequired: false,
-      assetDisposal: false,
-      requiredDocuments: [],
-      deadlineRuleId: 'fixture-unreviewed',
-    },
-    {
-      id: 'fixture-c',
-      title: '架空の手続きC',
-      summary: '',
-      stage: 'government',
-      category: '書類収集',
-      submitTo: null,
-      evidenceRequired: false,
-      assetDisposal: false,
-      requiredDocuments: [],
-      deadlineRuleId: null,
-    },
-  ],
+  deadlineRules: FIXTURE_DEADLINE_RULES,
+  initialProcedures: FIXTURE_INITIAL_PROCEDURES,
+  deliberationDeadlineRuleId: 'fixture-confirmed',
+  reviewedBy: FIXTURE_REVIEWER,
+  reviewedAt: FIXTURE_REVIEWED_AT,
+}
+
+/** 熟慮期間のルールが業務レビュー未了である場合の架空カタログ。 */
+const UNCONFIRMED_DELIBERATION_CATALOG: RuleCatalog = {
+  placeholder: false,
+  deadlineRules: FIXTURE_DEADLINE_RULES,
+  initialProcedures: FIXTURE_INITIAL_PROCEDURES,
+  deliberationDeadlineRuleId: 'fixture-unreviewed',
+  reviewedBy: FIXTURE_REVIEWER,
+  reviewedAt: FIXTURE_REVIEWED_AT,
 }
 
 let keyCounter = 0
@@ -180,18 +220,22 @@ async function setRunStatus(
 }
 
 describeFirestore('案件の概要', () => {
-  it('作成直後は手続きが無く、段階を完了にしない', async () => {
+  it('作成直後から手続きが同期生成され、段階を完了にしない', async () => {
     const { app, caseId } = await setup()
     const response = await call(app, `/cases/${caseId}/overview`)
 
     assert.equal(response.status, 200)
-    assert.equal(response.body.data.totalTasks, 0)
+    // Case 作成のトランザクション内で初期手続きが同期生成される（フィクスチャ3件は
+    // すべて applicability.default:'yes' なので、初回応答から totalTasks に出る）。
+    assert.equal(response.body.data.totalTasks, FIXTURE_INITIAL_PROCEDURES.length)
     assert.equal(response.body.data.flowStages.length, 10)
-    // 手続きが 0 件の段階を完了にしない。
+    const stagesWithFixtures = new Set(FIXTURE_INITIAL_PROCEDURES.map((p) => p.stage))
     for (const stage of response.body.data.flowStages) {
-      assert.equal(stage.state, 'NO_TASKS', `${stage.id} が完了扱いになっている`)
+      const expected = stagesWithFixtures.has(stage.id) ? 'NOT_STARTED' : 'NO_TASKS'
+      assert.equal(stage.state, expected, `${stage.id} が想定と違う状態になっている`)
     }
     assert.ok(response.body.data.aggregatedAt)
+    // 同期生成は作成 Transaction 内でのみ起き caseVersion を進めない。
     assert.equal(response.body.data.caseVersion, 1)
   })
 
@@ -240,9 +284,12 @@ describeFirestore('案件の概要', () => {
     }
 
     const response = await call(app, `/cases/${caseId}/overview`)
-    assert.equal(response.body.data.totalTasks, 12)
-    assert.equal(response.body.data.taskCounts.NOT_STARTED, 12)
+    // 12件を手動追加した Case でも、同期生成されたフィクスチャ3件が加わる。
+    const total = 12 + FIXTURE_INITIAL_PROCEDURES.length
+    assert.equal(response.body.data.totalTasks, total)
+    assert.equal(response.body.data.taskCounts.NOT_STARTED, total)
 
+    // フィクスチャの手続きは contracts 段階に無いので、この段階の件数は手動分だけ。
     const contracts = response.body.data.flowStages.find((stage: Json) => stage.id === 'contracts')
     assert.equal(contracts.totalTasks, 12)
   })
@@ -258,6 +305,66 @@ describeFirestore('案件の概要', () => {
     assert.equal(response.body.data.upcomingDeadlines[0].confirmation, 'CONFIRMED')
     // 算定できていない期限の存在を隠さない。
     assert.equal(response.body.data.unresolvedDeadlineCount, 1)
+  })
+
+  it('熟慮期間の残日数を返す（申し送り3-4）', async () => {
+    const tenantId = newTenantId()
+    const userId = 'user-owner'
+    await seedTenantMember(tenantId, userId)
+    const app = buildApp(tenantId, userId, {
+      ruleCatalog: REVIEWED_CATALOG,
+      clock: { now: () => '2026-04-05T00:00:00+09:00' },
+    })
+    await agreeRequiredConsents(app)
+    const created = await call(app, '/cases', jsonRequest('POST', caseBody, nextKey('idem-case')))
+    const caseId = created.body.data.id as string
+
+    // Case 作成 tx で初期手続き・期限が同期生成される。熟慮期間はそれとは別に、
+    // Case の日付からその場算定される（永続 Deadline の集計に含まれない）。
+    const response = await call(app, `/cases/${caseId}/overview`)
+    const deliberation = response.body.data.inheritanceDecision.deliberationDeadline
+    assert.ok(deliberation)
+    assert.equal(deliberation.id, 'deliberation-period')
+    assert.equal(deliberation.taskId, null)
+    // 知った日 2026-04-03 + 7日
+    assert.equal(deliberation.dueDate, '2026-04-10')
+    assert.equal(deliberation.daysRemaining, 5)
+    assert.equal(deliberation.severity, 'SOON')
+    assert.equal(deliberation.confirmation, 'CONFIRMED')
+    // upcomingDeadlines / unresolvedDeadlineCount は永続 Deadline の集計のまま。
+    // 熟慮期間を二重に数えない（同期生成された fixture-a/b の期限が1件ずつ数えられる）。
+    assert.equal(response.body.data.upcomingDeadlines.length, 1)
+    assert.equal(response.body.data.unresolvedDeadlineCount, 1)
+  })
+
+  it('熟慮期間のルールが業務レビュー未了なら未確定として返す', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: UNCONFIRMED_DELIBERATION_CATALOG })
+    const response = await call(app, `/cases/${caseId}/overview`)
+    const deliberation = response.body.data.inheritanceDecision.deliberationDeadline
+    assert.ok(deliberation)
+    assert.equal(deliberation.confirmation, 'UNCONFIRMED')
+    assert.equal(deliberation.dueDate, null)
+    assert.equal(deliberation.daysRemaining, null)
+    assert.equal(deliberation.severity, null)
+    assert.equal(deliberation.unresolvedReason, 'RULE_UNCONFIRMED')
+  })
+
+  it('カタログに熟慮期間のルールが無ければ null を返す', async () => {
+    const { app, caseId } = await setup({
+      ruleCatalog: { ...REVIEWED_CATALOG, deliberationDeadlineRuleId: null },
+    })
+    const response = await call(app, `/cases/${caseId}/overview`)
+    assert.equal(response.body.data.inheritanceDecision.deliberationDeadline, null)
+  })
+
+  it('placeholderカタログでもSTATUTORYなルールなら熟慮期間をCONFIRMEDで返す', async () => {
+    const { app, caseId } = await setup({ ruleCatalog: PLACEHOLDER_RULE_CATALOG })
+    const response = await call(app, `/cases/${caseId}/overview`)
+    const deliberation = response.body.data.inheritanceDecision.deliberationDeadline
+    assert.ok(deliberation)
+    assert.equal(deliberation.confirmation, 'CONFIRMED')
+    // 知った日 2026-04-03 + 3か月（民法143条: 04-04起算、応当日07-04の前日）
+    assert.equal(deliberation.dueDate, '2026-07-03')
   })
 
   it('承認の受付と反映を別に数える', async () => {
@@ -446,7 +553,9 @@ describeFirestore('案件の概要', () => {
     const another = await call(app, '/cases', jsonRequest('POST', caseBody, nextKey('idem-case')))
     const response = await call(app, `/cases/${another.body.data.id}/overview`)
 
-    assert.equal(response.body.data.totalTasks, 0)
-    assert.equal(response.body.data.upcomingDeadlines.length, 0)
+    // 同じフィクスチャカタログから作成した別 Case でも、自分の同期生成分（3件・期限1件）
+    // だけを持つ。最初の Case（同じく3件・期限1件）と合算されていれば値がずれて壊れる。
+    assert.equal(response.body.data.totalTasks, FIXTURE_INITIAL_PROCEDURES.length)
+    assert.equal(response.body.data.upcomingDeadlines.length, 1)
   })
 })

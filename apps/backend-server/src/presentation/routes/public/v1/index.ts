@@ -27,6 +27,8 @@ import { contractsSpecs, createContractRoutes } from './contracts.js'
 import type { InsightService } from '../../../../application/insights/insight-service.js'
 import { insightsSpecs, createInsightRoutes } from './insights.js'
 import { healthRoute, healthSpec } from './health.js'
+import type { RegistrationService } from '../../../../application/identity/registration-service.js'
+import { createMeRoutes, meSpecs } from './me.js'
 
 /**
  * 公開 API v1 の契約一覧。
@@ -36,6 +38,8 @@ import { healthRoute, healthSpec } from './health.js'
  */
 export const publicV1Specs: RouteSpec[] = [
   healthSpec,
+  meSpecs.getMe,
+  meSpecs.registerMe,
   ...Object.values(personsSpecs),
   ...Object.values(estateSpecs),
   ...Object.values(contractsSpecs),
@@ -76,6 +80,7 @@ export const publicV1Specs: RouteSpec[] = [
 ]
 
 export interface PublicRouteDependencies {
+  registrationService: RegistrationService
   personService: PersonService
   estateService: EstateService
   contractService: ContractService
@@ -115,6 +120,7 @@ export function createPublicV1Routes(
   }
   return [
     healthRoute,
+    ...createMeRoutes(dependencies.registrationService),
     ...createPersonRoutes(dependencies.personService),
     ...createEstateRoutes(dependencies.estateService),
     ...createContractRoutes(dependencies.contractService),

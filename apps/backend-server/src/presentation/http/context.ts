@@ -1,14 +1,16 @@
 import type { Context } from 'hono'
-import type { AuthenticatedUser } from '../../application/ports/identity.js'
+import type { AuthenticatedUser, VerifiedIdentity } from '../../application/ports/identity.js'
 
 /**
  * Hono の context に載せる値。
  *
- * `user` は認証 middleware が検証した結果だけを入れる。
+ * `identity` はトークン検証だけを通った結果（tenant の membership 未確認）。
+ * `user` は `identity` を tenant の membership で裏取りできた結果だけを入れる。
  * 要求本文から組み立てた値をここへ入れない。
  */
 export interface AppVariables {
   requestId: string
+  identity?: VerifiedIdentity
   user?: AuthenticatedUser
 }
 

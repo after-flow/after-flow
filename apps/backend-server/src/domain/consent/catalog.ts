@@ -32,7 +32,7 @@ export const PLACEHOLDER_CATALOG: ConsentCatalog = {
       title: '外部AIへの提供（未確定の仮文面）',
       summary: [
         '提供先の事業者と所在国は未確定です。',
-        'この同意が無くても、手動での案件・書類・手続きの管理は利用できます。',
+        'この同意が無くても、手続きと期限の管理は利用できます。書類の追加・AIへの相談・窓口の自動調査には同意が必要です。',
       ],
       url: '/legal/cross-border-ai',
       required: false,

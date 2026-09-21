@@ -34,7 +34,7 @@ export interface ConsentStatusView {
  * 「使えない」とだけ返すと、利用者は手動管理まで諦めてしまう。
  */
 export interface ConsentPolicyDecision {
-  /** 手動での案件・書類・手続き管理を使えるか。 */
+  /** 手動での案件・手続き管理を使えるか。 */
   manualManagement: boolean
   /** 外部 AI へデータを提供する処理を起動してよいか。 */
   externalAi: boolean
@@ -211,13 +211,18 @@ export class ConsentService {
   }
 
   /**
-   * 現在の同意から何が使えるかを判定する。
+   * 同意状態から何が使えるかを判定する純粋関数。
    *
    * 任意の外部 AI 同意が無くても、必須同意があれば手動管理は使える。
    * 機能全体を止めない。
+   *
+   * カタログに CROSS_BORDER_AI の定義が無い運用（外国にある第三者への
+   * 提供が発生しない設定）では、この同意を要求しない。Web の
+   * `useAiConsent()` も「同意の対象として出ていない（＝移転が無い運用）
+   * なら妨げない」という同じ判断をしている。意図的な仕様であり、
+   * カタログ設定の誤りは `composition.ts` の起動時検査で別途検出する。
    */
-  async policy(user: AuthenticatedUser, tx?: Tx): Promise<ConsentPolicyDecision> {
-    const status = await this.status(user, tx)
+  private decide(status: ConsentStatusView): ConsentPolicyDecision {
     const missingRequired = status.documents
       .filter((document) => document.required && !document.satisfied)
       .map((document) => document.kind)
@@ -231,6 +236,11 @@ export class ConsentService {
       missingRequired,
       missingOptional,
     }
+  }
+
+  /** 現在の同意から何が使えるかを判定する。 */
+  async policy(user: AuthenticatedUser, tx?: Tx): Promise<ConsentPolicyDecision> {
+    return this.decide(await this.status(user, tx))
   }
 
   /** 必須同意が揃っていなければ業務 API を止める。 */
@@ -250,16 +260,39 @@ export class ConsentService {
    * 外部 AI へデータを提供する処理の可否。
    *
    * 拒否のときも、その状態で使える機能を理由に添える。
+   *
+   * `details.requiredConsent` は CROSS_BORDER_AI の不足（未同意・撤回・
+   * 版ずれ）が拒否理由に含まれるときだけ付与する。この判定は
+   * `AgentRunService.accept` / `MessageService.post` / `DocumentService.register`
+   * の 3 入口だけでなく、`AgentRunService.answerQuestions` / `retry` と
+   * `InternalExecutionService.assertAccess`（内部 API・Outbox 配送時の
+   * tx 内再検査、consentGate を経由しない）からも呼ばれる。後者の経路では
+   * TERMS/PRIVACY の撤回・改定だけで `externalAi=false` になり得るため、
+   * `requiredConsent` を固定値で返すと CROSS_BORDER_AI 自体は満たして
+   * いるのに矛盾した応答になる。
    */
   async assertExternalAiAllowed(user: AuthenticatedUser, tx?: Tx): Promise<void> {
-    const decision = await this.policy(user, tx)
+    const status = await this.status(user, tx)
+    const decision = this.decide(status)
     if (decision.externalAi) return
+
+    const crossBorderMissing = decision.missingOptional.includes('CROSS_BORDER_AI')
+    const crossBorder = status.documents.find((document) => document.kind === 'CROSS_BORDER_AI')
+
     throw errors.consentRequired({
-      message: '外部AIを利用する処理には追加の同意が必要です。手動での管理は引き続き利用できます。',
+      message: '外部のAI事業者への情報の提供に同意すると利用できます。同意しなくても、手続きと期限の管理は利用できます。',
       details: {
+        ...(crossBorderMissing
+          ? {
+              requiredConsent: 'CROSS_BORDER_AI' as const,
+              currentVersion: crossBorder?.version ?? null,
+              agreedVersion: crossBorder?.agreedVersion ?? null,
+            }
+          : {}),
         missingRequired: decision.missingRequired,
         missingOptional: decision.missingOptional,
-        availableFeatures: ['manual-case-management', 'manual-document-management', 'task-management'],
+        // 書類の新規登録は同意が無い間止まるため、外部AI利用と合わせて外す。
+        availableFeatures: ['manual-case-management', 'task-management'],
       },
     })
   }

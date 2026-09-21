@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import type { DeadlineSummary, FlowStage, FlowStageId, InheritanceMethod, Task } from '@aftercare/public-contracts'
+import type {
+  DeadlineResource as DeadlineSummary,
+  FlowStageId,
+  FlowStageResource as FlowStage,
+  InheritanceMethod,
+  TaskResource as Task,
+} from '@aftercare/public-contracts'
 import { useCaseOverview, useTasks, useUpdateCase } from '@/lib/api/queries'
 import { formatDate } from '@/lib/format'
 import { Icon } from '@/kit/Icon'
@@ -158,7 +164,10 @@ export function FlowScreen() {
                 busy: updateCase.isPending,
                 onChange: (done) =>
                   void updateCase
-                    .mutateAsync({ funeralCompletedAt: done ? new Date().toISOString() : null })
+                    .mutateAsync({
+                      expectedVersion: overview.data!.case.version,
+                      funeralCompletedAt: done ? new Date().toISOString() : null,
+                    })
                     .catch(() => {}),
               }
             : undefined
@@ -444,7 +453,9 @@ function taskDue(task: Task, all: Task[]): Due | null {
 function nearestDue(tasks: Task[], all: Task[]): Due | null {
   const dues = tasks.map((t) => taskDue(t, all)).filter((d): d is Due => d != null)
   const dated = dues.flatMap((d) => ('deadline' in d ? [d.deadline] : []))
-  if (dated.length > 0) return { deadline: dated.reduce((a, b) => (b.daysRemaining < a.daysRemaining ? b : a)) }
+  // 期限を算定できていない（daysRemaining が null）ものは、確定した期限より後ろに回す
+  const remaining = (d: DeadlineSummary) => d.daysRemaining ?? Number.POSITIVE_INFINITY
+  if (dated.length > 0) return { deadline: dated.reduce((a, b) => (remaining(b) < remaining(a) ? b : a)) }
   return dues.length > 0 ? { prep: true } : null
 }
 

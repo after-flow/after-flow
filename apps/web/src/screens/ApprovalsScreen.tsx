@@ -1,11 +1,18 @@
 import { Link, useSearchParams } from 'react-router-dom'
-import { useApprovals, useInsights, useUpdateInsightStatus } from '@/lib/api/queries'
-import type { Approval, Insight } from '@aftercare/public-contracts'
+import {
+  useAcknowledgeInsight,
+  useApprovals,
+  useDismissInsight,
+  useInsights,
+  useProposals,
+} from '@/lib/api/queries'
+import type { Insight } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
 import { formatDateTime } from '@/lib/format'
 import { isDisplayableInsight } from '@/lib/insights'
 import { INSIGHT_KIND_META } from '@/lib/labels'
-import { APPROVAL_KIND_WORD } from '@/kit/words'
+import { approvalKindWord } from '@/kit/words'
+import { joinApprovals, type ApprovalView } from '@/lib/model/approval'
 import { Badge, Button, Empty, ErrorState, Loading, Page, PageHeader, Tabs } from '@/kit/kit'
 import { useCaseBase } from '@/kit/domain'
 
@@ -23,21 +30,31 @@ type Tab = 'pending' | 'insights' | 'done'
 export function ApprovalsScreen() {
   const { caseId, base } = useCaseBase()
   const approvals = useApprovals(caseId)
+  const proposals = useProposals(caseId)
   const insights = useInsights(caseId)
   const [params, setParams] = useSearchParams()
   const tab = (params.get('tab') as Tab | null) ?? 'pending'
 
-  if (approvals.isError)
-    return <ErrorState message="AIからの確認を読み込めませんでした。" onRetry={() => void approvals.refetch()} />
-  if (!approvals.data) return <Loading />
+  if (approvals.isError || proposals.isError)
+    return (
+      <ErrorState
+        message="AIからの確認を読み込めませんでした。"
+        onRetry={() => {
+          void approvals.refetch()
+          void proposals.refetch()
+        }}
+      />
+    )
+  if (!approvals.data || !proposals.data) return <Loading />
 
-  const pending = approvals.data.items
-    .filter((a) => a.status === 'PENDING')
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const decided = approvals.data.items
-    .filter((a) => a.status !== 'PENDING')
-    .sort((a, b) => (b.decidedAt ?? '').localeCompare(a.decidedAt ?? ''))
-  const shownInsights = (insights.data?.items ?? []).filter(
+  const views = joinApprovals(approvals.data, proposals.data)
+  const pending = views
+    .filter((v) => v.approval.status === 'PENDING')
+    .sort((a, b) => a.approval.createdAt.localeCompare(b.approval.createdAt))
+  const decided = views
+    .filter((v) => v.approval.status !== 'PENDING')
+    .sort((a, b) => (b.approval.decidedAt ?? '').localeCompare(a.approval.decidedAt ?? ''))
+  const shownInsights = (insights.data ?? []).filter(
     (i) => i.status !== 'DISMISSED' && isDisplayableInsight(i),
   )
   const newInsights = shownInsights.filter((i) => i.status === 'NEW').length
@@ -85,35 +102,41 @@ export function ApprovalsScreen() {
   )
 }
 
-function ApprovalList({ items, base }: { items: Approval[]; base: string }) {
+function ApprovalList({ items, base }: { items: ApprovalView[]; base: string }) {
   return (
     <ul>
-      {items.map((a) => (
-        <li key={a.id} className="border-b border-rd-border-2 last:border-b-0">
-          <Link to={`${base}/approvals/${a.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-rd-bg">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-rd-primary-soft text-rd-primary-text">
-              <Icon name={a.kind === 'DOCUMENT_REQUEST' ? 'document' : 'seal'} size={19} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[0.82rem] font-bold text-rd-text-3">{APPROVAL_KIND_WORD[a.kind]}</span>
-                {a.assetDisposal && <Badge tone="red" icon="warning">財産の処分に関わる</Badge>}
-                {a.possibleDuplicate && a.status === 'PENDING' && <Badge tone="yellow">同じ書類かも</Badge>}
+      {items.map(({ approval, proposal }) => {
+        const docBasis = proposal?.basis.find((b) => b.type === 'DOCUMENT')
+        return (
+          <li key={approval.id} className="border-b border-rd-border-2 last:border-b-0">
+            <Link to={`${base}/approvals/${approval.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-rd-bg">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-rd-primary-soft text-rd-primary-text">
+                <Icon name={proposal?.kind === 'DOCUMENT_REQUEST' ? 'document' : 'seal'} size={19} />
               </span>
-              <span className="text-[0.97rem] font-bold leading-snug">{a.title}</span>
-              <span className="block truncate text-[0.82rem] text-rd-text-2">
-                {a.sourceDocumentName ? `${a.sourceDocumentName} から` : 'AIの提案'}・{formatDateTime(a.createdAt)}
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[0.82rem] font-bold text-rd-text-3">
+                    {proposal ? approvalKindWord(proposal.kind) : '確認'}
+                  </span>
+                  {approval.assetDisposal && <Badge tone="red" icon="warning">財産の処分に関わる</Badge>}
+                </span>
+                <span className="text-[0.97rem] font-bold leading-snug">
+                  {proposal?.title ?? '提案の内容を読み込めませんでした'}
+                </span>
+                <span className="block truncate text-[0.82rem] text-rd-text-2">
+                  {docBasis ? `${docBasis.label} から` : 'AIの提案'}・{formatDateTime(approval.createdAt)}
+                </span>
               </span>
-            </span>
-            {a.status === 'APPROVED' && <Badge tone="green" icon="check">登録しました</Badge>}
-            {a.status === 'REJECTED' && <Badge>登録しませんでした</Badge>}
-            {a.status === 'PENDING' && (
-              <span className="hidden text-[0.9rem] font-bold text-rd-primary-text sm:block">確認する</span>
-            )}
-            <Icon name="chevron-right" size={16} className="text-rd-text-3" />
-          </Link>
-        </li>
-      ))}
+              {approval.status === 'APPROVED' && <Badge tone="green" icon="check">登録しました</Badge>}
+              {approval.status === 'REJECTED' && <Badge>登録しませんでした</Badge>}
+              {approval.status === 'PENDING' && (
+                <span className="hidden text-[0.9rem] font-bold text-rd-primary-text sm:block">確認する</span>
+              )}
+              <Icon name="chevron-right" size={16} className="text-rd-text-3" />
+            </Link>
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -123,7 +146,8 @@ function ApprovalList({ items, base }: { items: Approval[]; base: string }) {
  * 根拠の無いものは出さない／専門家確認の注記は消せない／反映の操作は持たせない。
  */
 function InsightList({ caseId, base, items }: { caseId: string; base: string; items: Insight[] }) {
-  const update = useUpdateInsightStatus(caseId)
+  const acknowledge = useAcknowledgeInsight(caseId)
+  const dismiss = useDismissInsight(caseId)
   if (items.length === 0) return <Empty icon="star" title="いまAIが気づいたことはありません" />
 
   return (
@@ -186,11 +210,11 @@ function InsightList({ caseId, base, items }: { caseId: string; base: string; it
                     </Link>
                   )}
                   {isNew && (
-                    <Button size="sm" onClick={() => void update.mutateAsync({ id: ins.id, status: 'ACKNOWLEDGED' })}>
+                    <Button size="sm" onClick={() => void acknowledge.mutateAsync({ id: ins.id })}>
                       読みました
                     </Button>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => void update.mutateAsync({ id: ins.id, status: 'DISMISSED' })}>
+                  <Button size="sm" variant="ghost" onClick={() => void dismiss.mutateAsync({ id: ins.id })}>
                     非表示にする
                   </Button>
                 </div>

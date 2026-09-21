@@ -10,9 +10,11 @@ import type { TenantMember } from '../../../src/application/authorization/case-a
 import { CaseService } from '../../../src/application/case/case-service.js'
 import { ConsentService } from '../../../src/application/consent/consent-service.js'
 import { DocumentService } from '../../../src/application/document/document-service.js'
+import { RegistrationService } from '../../../src/application/identity/registration-service.js'
 import type { InheritanceDecisionReader } from '../../../src/application/task/task-service.js'
 import { AgentRunService } from '../../../src/application/agent/agent-run-service.js'
 import type { AgentOperation } from '../../../src/domain/agent/agent-run.js'
+import type { Clock } from '../../../src/application/ports.js'
 import {
   InheritanceDecisionService,
   StoredInheritanceDecisionReader,
@@ -26,6 +28,7 @@ import { entityProposalAppliers } from '../../../src/application/proposal/entity
 import { taskActionProposalAppliers } from '../../../src/application/proposal/task-action-appliers.js'
 import type { ProposalApplier } from '../../../src/application/proposal/proposal-service.js'
 import { TaskService } from '../../../src/application/task/task-service.js'
+import { ProcedureSyncService } from '../../../src/application/task/procedure-sync-service.js'
 import { PLACEHOLDER_RULE_CATALOG } from '../../../src/domain/task/rule-catalog.js'
 import type { RuleCatalog } from '../../../src/domain/task/rule-engine.js'
 import { PLACEHOLDER_CATALOG } from '../../../src/domain/consent/catalog.js'
@@ -66,10 +69,14 @@ export interface TestAppOptions {
   connectedOperations?: AgentOperation[]
   /** 内部APIのサービストークン。未指定なら内部APIを公開しない。 */
   serviceToken?: string
+  /** CaseService の時計。未指定なら実時刻。日付境界のテストで固定時刻を注入する。 */
+  clock?: Clock
 }
 
 export function buildApp(tenantId: string, userId: string, options: TestAppOptions = {}) {
   const access = new AccessService(readRepository())
+  const ruleCatalog = options.ruleCatalog ?? PLACEHOLDER_RULE_CATALOG
+  const procedureSync = new ProcedureSyncService(ruleCatalog, readRepository())
   const consentService = new ConsentService(
     options.catalog ?? PLACEHOLDER_CATALOG,
     access,
@@ -88,8 +95,9 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
   )
 
   const routes = createPublicV1Routes({
+    registrationService: new RegistrationService(tenantId, readRepository(), unitOfWork()),
     ...createBusinessServices(access, readRepository(), unitOfWork()),
-    caseService: new CaseService(access, readRepository(), unitOfWork()),
+    caseService: new CaseService(access, readRepository(), unitOfWork(), options.clock, procedureSync),
     consentService,
     documentService: new DocumentService(
       access,
@@ -101,20 +109,25 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       options.aiConnected ?? false,
     ),
     taskService: new TaskService(
-      options.ruleCatalog ?? PLACEHOLDER_RULE_CATALOG,
+      ruleCatalog,
       access,
       readRepository(),
       unitOfWork(),
+      procedureSync,
       options.decisions ?? new StoredInheritanceDecisionReader(readRepository()),
     ),
     agentRunService,
     proposalService: new ProposalService(access, readRepository(), unitOfWork(), options.proposalAppliers ?? [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers]),
     decisionService: new InheritanceDecisionService(access, readRepository(), unitOfWork()),
-    messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService),
+    messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService, consentService),
     overviewService: new CaseOverviewService(
       access,
       readRepository(),
-      (options.connectedOperations ?? []).length > 0,
+      options.ruleCatalog ?? PLACEHOLDER_RULE_CATALOG,
+      {
+        aiConnected: (options.connectedOperations ?? []).length > 0,
+        clock: options.clock,
+      },
     ),
   })
 
@@ -190,6 +203,26 @@ export async function agreeRequiredConsents(
   const response = await call(app, '/consents', jsonRequest('POST', { agreements }, idempotencyKey))
   if (response.status !== 200) {
     throw new Error(`必須同意の記録に失敗した: ${JSON.stringify(response.body)}`)
+  }
+}
+
+/** 外部AI（CROSS_BORDER_AI）への提供同意を済ませた状態にする。 */
+export async function agreeExternalAiConsent(
+  app: ReturnType<typeof createApp>,
+  catalog: ConsentCatalog = PLACEHOLDER_CATALOG,
+  idempotencyKey = `idem-consent-ai-${Math.random().toString(36).slice(2, 12)}`,
+): Promise<void> {
+  const definition = catalog.documents.find((document) => document.kind === 'CROSS_BORDER_AI')
+  if (!definition) {
+    throw new Error('カタログに CROSS_BORDER_AI の定義が無い')
+  }
+  const response = await call(
+    app,
+    '/consents',
+    jsonRequest('POST', { agreements: [{ kind: definition.kind, version: definition.version }] }, idempotencyKey),
+  )
+  if (response.status !== 200) {
+    throw new Error(`外部AI同意の記録に失敗した: ${JSON.stringify(response.body)}`)
   }
 }
 

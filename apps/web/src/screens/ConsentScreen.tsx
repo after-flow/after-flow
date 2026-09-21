@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAgreeConsents, useConsents } from '@/lib/api/queries'
-import type { ConsentDocument } from '@aftercare/public-contracts'
+import type { ConsentDocumentResource } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
 import { Badge, Button, ErrorState, LinkButton, Loading, Modal, Notice } from '@/kit/kit'
 import { LEGAL_DOCS, legalDocId } from '@/lib/legalDocs'
@@ -29,13 +29,14 @@ export function ConsentScreen() {
   const { data, isLoading, isError, refetch } = useConsents()
   const agree = useAgreeConsents()
   const [checked, setChecked] = useState<Record<string, boolean>>({})
-  const [reading, setReading] = useState<ConsentDocument | null>(null)
+  const [reading, setReading] = useState<ConsentDocumentResource | null>(null)
 
   if (isLoading) return <Loading label="確認事項を読み込み中" />
   if (isError || !data)
     return <ErrorState message="確認事項を読み込めませんでした。" onRetry={() => void refetch()} />
 
-  const pending = data.documents.filter((d) => d.agreedVersion !== d.version)
+  // 版ずれの判定は自分で計算しない。satisfied をそのまま使う
+  const pending = data.documents.filter((d) => !d.satisfied)
   const requiredPending = pending.filter((d) => d.required)
   const allRequiredChecked = requiredPending.every((d) => checked[d.kind])
   const anyChecked = pending.some((d) => checked[d.kind])
@@ -134,7 +135,7 @@ function ConsentItem({
   onChange,
   onRead,
 }: {
-  doc: ConsentDocument
+  doc: ConsentDocumentResource
   checked: boolean
   onChange: (v: boolean) => void
   onRead: () => void
@@ -152,7 +153,7 @@ function ConsentItem({
         </div>
 
         <ul className="mt-2.5 flex flex-col gap-1.5">
-          {doc.summary.map((line, i) => (
+          {doc.summary.map((line: string, i: number) => (
             <li key={i} className="flex gap-2 text-[0.94rem] leading-relaxed">
               <Icon name="check" size={16} className="mt-1 shrink-0 text-rd-primary-text" />
               <span>{line}</span>
@@ -192,7 +193,7 @@ function ConsentItem({
 }
 
 /** 全文。本文が画面側に無い文書（新しく増えたものなど）は、規約の画面を別のタブで開く道だけ出す */
-function FullTextDialog({ doc, onClose }: { doc: ConsentDocument | null; onClose: () => void }) {
+function FullTextDialog({ doc, onClose }: { doc: ConsentDocumentResource | null; onClose: () => void }) {
   const id = doc ? legalDocId(doc.url) : null
   const body = id ? LEGAL_DOCS[id] : null
   return (

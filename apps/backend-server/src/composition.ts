@@ -21,6 +21,7 @@ import { taskProposalApplier } from './application/proposal/task-applier.js'
 import { entityProposalAppliers } from './application/proposal/entity-appliers.js'
 import { taskActionProposalAppliers } from './application/proposal/task-action-appliers.js'
 import { TaskService } from './application/task/task-service.js'
+import { ProcedureSyncService } from './application/task/procedure-sync-service.js'
 import {
   notConfiguredCheck,
   objectStorageReadinessCheck,
@@ -29,6 +30,7 @@ import {
 } from './application/operations/readiness-service.js'
 import type { ReadinessCheck } from './application/operations/readiness-service.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
+import { RegistrationService } from './application/identity/registration-service.js'
 import { readAgentClientConfig } from './infrastructure/agent/http-agent-client.js'
 import { ScopedHttpAgentJobClient } from './infrastructure/agent/scoped-http-agent-client.js'
 import { createAiConnectivityReadinessCheck } from './infrastructure/agent/readiness-check.js'
@@ -72,8 +74,9 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   }
 
   const access = new AccessService(database.read)
+  const consentCatalog = readConsentCatalog(env)
   const consentService = new ConsentService(
-    readConsentCatalog(env),
+    consentCatalog,
     access,
     database.read,
     database.uow,
@@ -87,18 +90,37 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     })
   }
 
+  const ruleCatalog = readRuleCatalog(env)
+  const procedureSync = new ProcedureSyncService(ruleCatalog, database.read)
+  const enabledOperations = connectedOperations(env)
+  if (enabledOperations.size > 0 && !consentCatalog.documents.some((document) => document.kind === 'CROSS_BORDER_AI')) {
+    // 接続済みのふりをしない、と対にする検査。AI へ渡す操作を接続していながら
+    // カタログに CROSS_BORDER_AI が無い設定は、外国にある第三者への提供を
+    // 同意なしで許してしまう fail-open になりうる（個人情報保護法28条）。
+    // カタログ定義そのものは変えず、設定ミスを起動時に見えるようにする。
+    logger.warn('consent catalog has no CROSS_BORDER_AI while AI operations are connected', {
+      effect: 'external AI operations proceed without cross-border transfer consent enforcement',
+      connectedOperations: [...enabledOperations],
+    })
+  }
+
   const agentRunService = new AgentRunService(
     access,
     database.read,
     database.uow,
     consentService,
-    connectedOperations(env),
+    enabledOperations,
   )
 
   const proposalService = new ProposalService(access, database.read, database.uow, [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers])
+  // tenant は配備単位で固定する（authConfig.tenantId と同じ値。`AUTH_TENANT_ID`）。
+  // ここでは readAuthConfig() を呼ばない。呼ぶと AUTH_ISSUER 等が未設定の環境で
+  // 起動そのものが失敗し、「認証未設定は 401 全拒否」という既存の起動方針が壊れる。
+  const registrationService = new RegistrationService(env.AUTH_TENANT_ID ?? '', database.read, database.uow)
   const routes = createPublicV1Routes({
+    registrationService,
     ...createBusinessServices(access, database.read, database.uow),
-    caseService: new CaseService(access, database.read, database.uow),
+    caseService: new CaseService(access, database.read, database.uow, undefined, procedureSync),
     consentService,
     documentService: documentStorage ? new DocumentService(
       access,
@@ -113,10 +135,11 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     ) : null,
     // 放棄前ロックは保存済みの確定状況で判定する。未記録は未確定のまま。
     taskService: new TaskService(
-      readRuleCatalog(env),
+      ruleCatalog,
       access,
       database.read,
       database.uow,
+      procedureSync,
       new StoredInheritanceDecisionReader(database.read),
     ),
     // 接続済みの業務操作は設定で管理する。AI Server が未設定なら空集合で、
@@ -126,11 +149,12 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     // 種類ごとの反映は担当 Issue が登録する。未登録の種類は反映できない。
     proposalService,
     decisionService: new InheritanceDecisionService(access, database.read, database.uow),
-    messageService: new MessageService(access, database.read, database.uow, agentRunService),
+    messageService: new MessageService(access, database.read, database.uow, agentRunService, consentService),
     overviewService: new CaseOverviewService(
       access,
       database.read,
-      connectedOperations(env).size > 0,
+      ruleCatalog,
+      { aiConnected: enabledOperations.size > 0 },
     ),
   })
 
@@ -168,13 +192,14 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     })
   }
 
+  const authConfig = readAuthConfig(env)
   return createApp({
     routes,
     consentGate,
     apiDocs,
     ...(internalApp ? { internalApp } : {}),
     ...(readinessApp ? { readinessApp } : {}),
-    authentication: authentication(createTokenVerifier(readAuthConfig(env)), access),
+    authentication: authentication(createTokenVerifier(authConfig), access, authConfig.tenantId),
   })
 }
 
@@ -268,10 +293,26 @@ function readinessChecks(
       } catch {
         return { ok: false, reason: 'NOT_CONFIGURED' }
       }
-      // static-jwksは試験・ローカル専用（readAuthConfigもNODE_ENV=productionでは拒否する）。
+      // static-jwks・firebase-emulatorは試験・ローカル専用
+      // （readAuthConfigもNODE_ENV=productionでは拒否する）。
       // readinessはNODE_ENVに関係なく、本番相当の設定でなければ ready を返さない。
       if (config.mode === 'static-jwks') return { ok: false, reason: 'STATIC_JWKS_NOT_PRODUCTION_GRADE' }
+      if (config.mode === 'firebase-emulator') return { ok: false, reason: 'EMULATOR_NOT_PRODUCTION_GRADE' }
       return { ok: true }
+    }),
+  )
+
+  checks.push(
+    // ADR 0001 §5: 失効・停止確認（Admin SDK の revoke 確認等）は未対応。
+    // 認証が設定されている限り、実装済みになるまで恒常的に not_ready を返し、
+    // 本番公開前に対応が必要な既知の欠落として見える状態を保つ。
+    syncCheck('session_revocation', () => {
+      try {
+        readAuthConfig(env)
+      } catch {
+        return { ok: false, reason: 'NOT_CONFIGURED' }
+      }
+      return { ok: false, reason: 'SESSION_REVOCATION_NOT_ENFORCED' }
     }),
   )
 

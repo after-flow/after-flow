@@ -2,11 +2,13 @@ import { listActiveHeirs } from '../decision/decision-service.js'
 import type { Person } from '../../domain/person/person.js'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { CaseEntity } from '../../domain/case/case.js'
+import { businessToday } from '../../domain/case/case-dates.js'
+import { deliberationDeadlineOf } from '../../domain/decision/deliberation-period.js'
 import type { InheritanceDecisionEntity } from '../../domain/decision/inheritance-decision.js'
 import { isDecisionConfirmed } from '../../domain/decision/inheritance-decision.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { DeadlineEntity } from '../../domain/task/deadline.js'
-import { RULE_TIMEZONE } from '../../domain/task/rule-engine.js'
+import type { BasisDates, RuleCatalog } from '../../domain/task/rule-engine.js'
 import type { FlowStageId, TaskStatus } from '../../domain/task/task.js'
 import { errors } from '../../shared/app-error.js'
 import type { AgentRunView } from '../agent/agent-run-service.js'
@@ -14,6 +16,7 @@ import { toAgentRunView } from '../agent/agent-run-service.js'
 import type { AccessService } from '../authorization/case-access.js'
 import type { CaseResource } from '@aftercare/public-contracts'
 import { toCaseResource } from '../case/case-service.js'
+import type { Clock } from '../ports.js'
 import type { AuthenticatedUser } from '../ports/identity.js'
 import type { ReadRepository, SnapshotReader } from '../ports/persistence.js'
 import type { DeadlineView } from '../task/task-service.js'
@@ -91,6 +94,15 @@ export interface CaseOverviewView {
     /** Person が未登録のため判定できない状態。 */
     unknown: boolean
     perHeir: DecisionSummaryView[]
+    /**
+     * 熟慮期間（民法915条）の期限。永続 Deadline ではなく、Case の日付から
+     * 毎回その場で算定する（`domain/decision/deliberation-period.ts`）。
+     * `id` は固定値 `deliberation-period`、`taskId` は常に null。
+     * Task 側の期限（`inheritance-choice` ルール）と同じルールから算定する
+     * ため、再評価後は必ず一致する（再評価前は一時的に不一致になりうる）。
+     * カタログに `deliberationDeadlineRuleId` が無ければ null。
+     */
+    deliberationDeadline: DeadlineView | null
   }
   recentAgentRuns: AgentRunView[]
   /**
@@ -100,24 +112,33 @@ export interface CaseOverviewView {
   aiConnected: boolean
 }
 
-function todayIso(): string {
-  // 期限の算定と同じ業務タイムゾーンで「今日」を決める。
-  return new Intl.DateTimeFormat('en-CA', { timeZone: RULE_TIMEZONE }).format(new Date())
-}
-
 /**
  * ダッシュボードの集約（仕様書 6.2）。
  *
  * 一覧の 1 ページ目だけを数えない。Task と期限の件数は Firestore の
  * 集計クエリで求め、文書数が増えても途中で打ち切らない。
  */
+export interface CaseOverviewServiceOptions {
+  /** AI が接続されているか。未接続なら活動が無いことの理由になる。 */
+  aiConnected?: boolean
+  /** 「今日」の決め方。未指定なら実時刻。日付境界の試験で固定時刻を注入する。 */
+  clock?: Clock
+}
+
 export class CaseOverviewService {
+  private readonly aiConnected: boolean
+  private readonly clock: Clock
+
   constructor(
     private readonly access: AccessService,
     private readonly read: SnapshotReader,
-    /** AI が接続されているか。未接続なら活動が無いことの理由になる。 */
-    private readonly aiConnected: boolean = false,
-  ) {}
+    /** 熟慮期間（3-4）を算定するための期限ルールカタログ。 */
+    private readonly catalog: RuleCatalog,
+    options: CaseOverviewServiceOptions = {},
+  ) {
+    this.aiConnected = options.aiConnected ?? false
+    this.clock = options.clock ?? { now: () => new Date().toISOString() }
+  }
 
   async get(user: AuthenticatedUser, caseId: string): Promise<CaseOverviewView> {
     const access = await this.access.authorizeCase(user, caseId, 'case.read')
@@ -170,8 +191,10 @@ export class CaseOverviewService {
         ]),
       ])
 
-    const today = todayIso()
+    const today = businessToday(new Date(this.clock.now()))
     const upcoming = upcomingDeadlines.items.map((entity) => toDeadlineView(entity, today))
+    const dates: BasisDates = { dateOfDeath: caseEntity.dateOfDeath, knownAt: caseEntity.knownAt }
+    const deliberationFacts = deliberationDeadlineOf(this.catalog, dates)
 
     return {
       case: toCaseResource(caseEntity, access),
@@ -186,7 +209,12 @@ export class CaseOverviewService {
       unresolvedDeadlineCount,
       pendingApprovalCount,
       appliedApprovalCount,
-      inheritanceDecision: this.buildDecisionSummary(decisions, heirs),
+      inheritanceDecision: {
+        ...this.buildDecisionSummary(decisions, heirs),
+        // 熟慮期間はupcomingDeadlines/unresolvedDeadlineCountの集計に含めない
+        // （永続 Deadline の集計であり、その場算定のここを二重に数えない）。
+        deliberationDeadline: deliberationFacts ? toDeadlineView(deliberationFacts, today) : null,
+      },
       recentAgentRuns: runs.items.map(toAgentRunView),
       aiConnected: this.aiConnected,
     }
@@ -304,7 +332,7 @@ export class CaseOverviewService {
   private buildDecisionSummary(
     decisions: InheritanceDecisionEntity[],
     heirs: Person[],
-  ): CaseOverviewView['inheritanceDecision'] {
+  ): Omit<CaseOverviewView['inheritanceDecision'], 'deliberationDeadline'> {
     const byPerson = new Map(decisions.map(decision => [decision.personId, decision]))
     const perHeir: DecisionSummaryView[] = heirs.map(person => {
       const decision = byPerson.get(person.id)

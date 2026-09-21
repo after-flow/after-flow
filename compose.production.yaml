@@ -11,6 +11,13 @@ services:
     build:
       context: .
       target: web-production
+      args:
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY-}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID-}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN-}
+        # 本番ビルドで設定しない。main.tsx の bootstrap がこの変数の存在自体を
+        # 「本番ビルドなのに Emulator を指している」として fail-closed する。
+        VITE_FIREBASE_AUTH_EMULATOR_URL: ${VITE_FIREBASE_AUTH_EMULATOR_URL-}
     image: after-flow-web:${IMAGE_TAG:-production-local}
     environment:
       BACKEND_ORIGIN: http://backend-server:8080

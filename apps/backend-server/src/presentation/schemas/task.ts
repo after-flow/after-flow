@@ -93,11 +93,15 @@ export const taskResourceSchema = z.object({
       label: z.string(),
       documentId: z.string().nullable(),
       source: z.enum(['MANUAL', 'AI', 'RULE_ENGINE']),
+      collected: z.boolean(),
     }),
   ),
   completionReportedBy: z.string().nullable(),
   completionReportedAt: isoDateTimeSchema.nullable(),
   deadline: deadlineResourceSchema.nullable(),
+  conditional: z.boolean(),
+  submitToSource: z.enum(['RULE', 'RESEARCH', 'MANUAL']).nullable(),
+  targetDate: deadlineResourceSchema.nullable(),
   evidences: z.array(
     z.object({
       id: z.string(),
@@ -121,6 +125,7 @@ const taskReferences = {
   dependencyTaskIds: z.array(idSchema).max(50).optional(),
   requiredDocuments: z.array(z.object({
     id: idSchema, label: z.string().trim().min(1).max(120), documentId: idSchema.nullable(),
+    collected: z.boolean().optional(),
   }).strict()).max(50).optional(),
 }
 

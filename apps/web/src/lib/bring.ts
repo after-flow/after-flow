@@ -1,4 +1,4 @@
-import type { RequiredDocument } from '@aftercare/public-contracts'
+import type { TaskRequiredDocumentResource as RequiredDocument } from '@aftercare/public-contracts'
 
 export interface BringRow {
   label: string

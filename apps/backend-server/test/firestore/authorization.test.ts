@@ -20,10 +20,12 @@ interface TestCase extends EntityBase {
   deceasedName: string
 }
 
-function identityFor(userId: string, tenantId: string): VerifiedIdentity {
+function identityFor(userId: string): VerifiedIdentity {
   return {
     subject: userId,
-    claimedTenantId: tenantId,
+    email: null,
+    emailVerified: true,
+    authTime: null,
     issuer: 'https://issuer.example.test/',
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   }
@@ -83,27 +85,28 @@ function service(): AccessService {
 }
 
 describeFirestore('tenant membership による裏取り', () => {
-  it('membership があるトークンだけを受け入れる', async () => {
+  it('membership がある tenant では認証済み利用者を返す', async () => {
     const tenantId = newTenantId()
     await seedTenantMember(tenantId, 'user-1')
-    const user = await service().authenticate(identityFor('user-1', tenantId))
+    const user = await service().resolveUser(identityFor('user-1'), tenantId)
     assert.deepEqual(user, { userId: 'user-1', tenantId })
   })
 
-  it('別 tenant を名乗るトークンを拒否する', async () => {
+  it('membership が無い tenant では null を返す（未登録。route 層が NOT_REGISTERED にする）', async () => {
     const tenantA = newTenantId()
     const tenantB = newTenantId()
     await seedTenantMember(tenantA, 'user-1')
-    // 署名は正しいが、主張した tenant に membership が無い。
-    const error = await rejection(() => service().authenticate(identityFor('user-1', tenantB)))
-    assert.equal(error.code, 'FORBIDDEN')
+    // 別 tenant には membership が無い。
+    const user = await service().resolveUser(identityFor('user-1'), tenantB)
+    assert.equal(user, null)
   })
 
   it('停止済みの利用者を拒否する', async () => {
     const tenantId = newTenantId()
     await seedTenantMember(tenantId, 'user-1', false)
-    const error = await rejection(() => service().authenticate(identityFor('user-1', tenantId)))
+    const error = await rejection(() => service().resolveUser(identityFor('user-1'), tenantId))
     assert.equal(error.code, 'FORBIDDEN')
+    assert.equal(error.details?.reason, 'MEMBERSHIP_INACTIVE')
   })
 })
 

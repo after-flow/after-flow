@@ -48,7 +48,7 @@ export const messageSpecs = {
     path: '/cases/:caseId/messages',
     summary: '発言して回答を依頼する',
     description:
-      '202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を受け付けられない場合も発言は残し、理由を返す。',
+      '202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を接続未了で受け付けられない場合も発言は残し、理由を返す。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は発言を保存する前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。',
     tags: ['chat'],
     auth: 'user',
     request: { params: caseIdParamsSchema, body: postMessageBodySchema },
@@ -75,7 +75,7 @@ export const messageSpecs = {
     path: '/cases/:caseId/tasks/:taskId/guidance/requests',
     summary: '手続きの案内を依頼する',
     description:
-      '公開された業務操作としてのみ受け付ける。任意のAgent・モデル・Prompt・URLは指定できない。',
+      '公開された業務操作としてのみ受け付ける。任意のAgent・モデル・Prompt・URLは指定できない。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は保存前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。',
     tags: ['chat'],
     auth: 'user',
     request: { params: taskGuidanceParamsSchema },

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 import { createServer } from '../src/composition.js'
+import { PRODUCTION_MIN_CATALOG } from './helpers/production-catalog-fixture.js'
 
 const TOKEN = 'ops-readiness-token-0123456789'
 
@@ -25,7 +26,13 @@ async function readiness(env: NodeJS.ProcessEnv) {
 
 function ruleCatalogFixture(dir: string, overrides: Partial<{ placeholder: boolean }> = {}) {
   const file = path.join(dir, 'rules.json')
-  writeFileSync(file, JSON.stringify({ placeholder: false, deadlineRules: [], initialProcedures: [], ...overrides }))
+  writeFileSync(
+    file,
+    JSON.stringify({
+      ...PRODUCTION_MIN_CATALOG,
+      ...overrides,
+    }),
+  )
   return file
 }
 
@@ -85,6 +92,7 @@ describe('composition: 内部readiness endpointの組み立て', () => {
       AUTH_MODE: 'static-jwks',
       AUTH_ISSUER: 'https://issuer.example.test/',
       AUTH_AUDIENCE: 'aud',
+      AUTH_TENANT_ID: 'after-flow-demo',
       AUTH_STATIC_JWKS: JSON.stringify({ keys: [] }),
     })
     const auth = checksOf(body).auth
@@ -92,14 +100,49 @@ describe('composition: 内部readiness endpointの組み立て', () => {
     assert.equal(auth?.reason, 'STATIC_JWKS_NOT_PRODUCTION_GRADE')
   })
 
+  it('AUTH_MODE=firebase-emulator は起動できてもreadinessでは本番相当ではないとして失敗する', async () => {
+    const { body } = await readiness({
+      ...baseEnv,
+      AUTH_MODE: 'firebase-emulator',
+      AUTH_ISSUER: 'https://securetoken.google.com/demo-after-flow',
+      AUTH_AUDIENCE: 'demo-after-flow',
+      AUTH_TENANT_ID: 'after-flow-demo',
+      FIREBASE_AUTH_EMULATOR_HOST: 'firebase-auth-emulator:9099',
+    })
+    const auth = checksOf(body).auth
+    assert.equal(auth?.status, 'fail')
+    assert.equal(auth?.reason, 'EMULATOR_NOT_PRODUCTION_GRADE')
+  })
+
   it('jwks modeで必須設定が揃えばauthはokになる（JWKSへの実疎通はしない）', async () => {
     const { body } = await readiness({
       ...baseEnv,
       AUTH_ISSUER: 'https://issuer.example.test/',
       AUTH_AUDIENCE: 'aud',
+      AUTH_TENANT_ID: 'after-flow-demo',
       AUTH_JWKS_URI: 'https://issuer.example.test/jwks',
     })
     assert.equal(checksOf(body).auth?.status, 'ok')
+  })
+
+  it('認証が設定されていれば、失効・停止確認は未対応としてsession_revocationがfailし続ける', async () => {
+    const { body } = await readiness({
+      ...baseEnv,
+      AUTH_ISSUER: 'https://issuer.example.test/',
+      AUTH_AUDIENCE: 'aud',
+      AUTH_TENANT_ID: 'after-flow-demo',
+      AUTH_JWKS_URI: 'https://issuer.example.test/jwks',
+    })
+    const check = checksOf(body).session_revocation
+    assert.equal(check?.status, 'fail')
+    assert.equal(check?.reason, 'SESSION_REVOCATION_NOT_ENFORCED')
+  })
+
+  it('認証が未設定ならsession_revocationはNOT_CONFIGURED', async () => {
+    const { body } = await readiness(baseEnv)
+    const check = checksOf(body).session_revocation
+    assert.equal(check?.status, 'fail')
+    assert.equal(check?.reason, 'NOT_CONFIGURED')
   })
 
   it('同意カタログが仮文面(placeholder)のままならfailする', async () => {
@@ -123,6 +166,13 @@ describe('composition: 内部readiness endpointの組み立て', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'after-flow-readiness-'))
     const { body } = await readiness({ ...baseEnv, DEADLINE_RULES_PATH: ruleCatalogFixture(dir) })
     assert.equal(checksOf(body).deadline_rules?.status, 'ok')
+  })
+
+  it('NODE_ENV=productionでDEADLINE_RULES_PATH未設定ならreadinessはNOT_CONFIGUREDに丸め込む', async () => {
+    // readRuleCatalog自体は起動を止める例外を投げるが、readinessの検査はそれを
+    // 汎用のNOT_CONFIGUREDとして報告する（consent_catalogと同じ扱い）。
+    const { body } = await readiness({ ...baseEnv, NODE_ENV: 'production' })
+    assert.equal(checksOf(body).deadline_rules?.reason, 'NOT_CONFIGURED')
   })
 
   describe('AI操作が有効な場合だけAI検査を追加する', () => {

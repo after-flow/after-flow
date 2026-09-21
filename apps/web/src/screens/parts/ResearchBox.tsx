@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import type { Task } from '@aftercare/public-contracts'
-import { RESEARCH_POLL_TIMEOUT_MS, useRequestGuidanceResearch, useUpdateCase } from '@/lib/api/queries'
+import type { TaskResource } from '@aftercare/public-contracts'
+import { RESEARCH_POLL_TIMEOUT_MS, useRequestGuidance, useTaskGuidance, useUpdateCase } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { daysSince, formatDate, formatDateTime, msSince } from '@/lib/format'
 import { safeExternalUrl, urlHostname } from '@/lib/url'
@@ -16,32 +16,36 @@ const STALE_DAYS = 90
  * 調べた結果をそのまま信じさせないため、次のことを必ず見せる。
  *  - いま調べているのか
  *  - 出典と確認日
- *  - 確からしさが低い・調べきれなかった項目
+ *  - 調べきれなかった項目
  *  - 情報が古くなったこと
  */
 export function ResearchBox({
   caseId,
   task,
   municipality,
+  caseVersion,
 }: {
   caseId: string
-  task: Task
-  municipality?: string
+  task: TaskResource
+  municipality?: string | null
+  /** 市区町村の登録に使う Case の版。取得前は未定義で、その間は登録入口を無効にする。 */
+  caseVersion?: number
 }) {
-  const research = task.guidance?.research
-  const sources = task.guidance?.sources ?? []
-  const request = useRequestGuidanceResearch(caseId)
+  const guidance = useTaskGuidance(caseId, task.id)
+  const g = guidance.data
+  const sources = g?.sources ?? []
+  const request = useRequestGuidance(caseId)
   const updateCase = useUpdateCase(caseId)
   const [draft, setDraft] = useState('')
-  const status = research?.status ?? 'NOT_REQUESTED'
+  const status = g?.status ?? 'NOT_REQUESTED'
   const consent = useAiConsent()
   const again = () => {
     if (consent.allowed) void request.mutateAsync(task.id)
   }
-  const target = research?.target ?? municipality ?? 'お住まいの自治体'
+  const target = g?.target ?? municipality ?? 'お住まいの自治体'
 
-  if (status === 'RESEARCHING') {
-    const elapsed = msSince(research?.startedAt)
+  if (status === 'RESEARCHING' || status === 'WAITING') {
+    const elapsed = msSince(g?.updatedAt)
     if (elapsed != null && elapsed > RESEARCH_POLL_TIMEOUT_MS) {
       return (
         <Notice
@@ -89,9 +93,10 @@ export function ResearchBox({
           />
           <Button
             variant="primary"
-            disabled={!draft.trim() || updateCase.isPending || request.isPending}
+            disabled={!draft.trim() || caseVersion == null || updateCase.isPending || request.isPending}
             onClick={async () => {
-              await updateCase.mutateAsync({ municipality: draft.trim() })
+              if (caseVersion == null) return
+              await updateCase.mutateAsync({ expectedVersion: caseVersion, municipality: draft.trim() })
               await request.mutateAsync(task.id)
             }}
           >
@@ -120,7 +125,7 @@ export function ResearchBox({
         title="自治体の案内を確認できませんでした"
         action={<Button size="sm" disabled={request.isPending} onClick={again}>もう一度調べる</Button>}
       >
-        {research?.failureReason ?? '公開されている案内を見つけられませんでした。'}
+        {g?.failureReason ?? '公開されている案内を見つけられませんでした。'}
         お出かけ前に{municipality}の窓口へ直接ご確認ください。
       </Notice>
     )
@@ -130,7 +135,7 @@ export function ResearchBox({
   const latest = sources.map((s) => s.checkedAt).sort().at(-1)
   const staleDays = daysSince(latest)
   const stale = staleDays != null && staleDays > STALE_DAYS
-  const missing = research?.missing ?? []
+  const missing = g?.missing ?? []
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -138,9 +143,6 @@ export function ResearchBox({
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[0.86rem] font-bold text-rd-text-2">調べた情報のもと</span>
           <Badge tone="blue" icon="pin">AIが{target}について調べました</Badge>
-          {research?.confidence === 'HIGH' && <Badge tone="green">公式の案内で確認</Badge>}
-          {research?.confidence === 'MEDIUM' && <Badge tone="yellow">一部はAIの推測</Badge>}
-          {research?.confidence === 'LOW' && <Badge tone="red">確認できた情報が少なめ</Badge>}
         </div>
         {sources.length > 0 ? (
           <ul className="mt-2 flex flex-col gap-1 text-[0.9rem]">
@@ -167,7 +169,7 @@ export function ResearchBox({
         )}
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[0.82rem] text-rd-text-3">
           <span>
-            {research?.completedAt && `${formatDateTime(research.completedAt)}に調査。`}
+            {g?.updatedAt && `${formatDateTime(g.updatedAt)}に調査。`}
             内容が変わっている場合があります。
           </span>
           {consent.allowed && (
@@ -186,11 +188,6 @@ export function ResearchBox({
             ))}
           </ul>
           この点は窓口へお電話でご確認ください。
-        </Notice>
-      )}
-      {research?.confidence === 'LOW' && (
-        <Notice tone="warning" title="この案内はそのまま信じず、窓口でご確認ください">
-          確認できた情報が少なく、正しくない可能性があります。
         </Notice>
       )}
       {stale && (

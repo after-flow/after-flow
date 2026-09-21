@@ -1,65 +1,15 @@
 /**
- * ケースに入る前の画面（ログイン・ケース一覧・ケース作成）。
+ * ケースに入る前の画面（ケース一覧・ケース作成）。ログインは screens/AuthScreens.tsx。
  * サイドバーは出さず、中央にひとつのことだけを置く。
  */
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { api, setToken } from '@/lib/api/client'
 import { useCases, useCreateCase } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { formatDate } from '@/lib/format'
 import { useLogout } from '@/lib/useLogout'
 import { Button, Checkbox, ErrorState, Field, Loading, Notice, inputClass } from '@/kit/kit'
 import { Centered, Logo } from './parts/EntryLayout'
-
-/* ---------- ログイン ---------- */
-
-export function LoginScreen() {
-  const navigate = useNavigate()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setBusy(true)
-    try {
-      const res = await api.post<{ token: string }>('/auth/login', { email, password })
-      setToken(res.token)
-      navigate('/cases')
-    } catch {
-      setError('メールアドレスまたはパスワードが正しくありません。')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Centered>
-      <div className="mt-[8vh] flex flex-col items-center text-center">
-        <Logo />
-        <p className="mt-3 text-[0.94rem] leading-relaxed text-rd-text-2">
-          ご家族を亡くされたあとの手続きを、期限とあわせて整理します。
-        </p>
-      </div>
-      <form onSubmit={(e) => void onSubmit(e)} className="mt-6 flex flex-col gap-4 rounded-lg border border-rd-border bg-rd-card p-6">
-        <h1 className="text-[1.05rem] font-bold">ログイン</h1>
-        {error && <Notice tone="danger" role="alert">{error}</Notice>}
-        <Field label="メールアドレス" required>
-          {(id) => <input id={id} type="email" autoComplete="email" className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} />}
-        </Field>
-        <Field label="パスワード" required>
-          {(id) => <input id={id} type="password" autoComplete="current-password" className={inputClass} value={password} onChange={(e) => setPassword(e.target.value)} />}
-        </Field>
-        <Button type="submit" variant="primary" size="lg" disabled={busy || !email || !password}>
-          {busy ? 'ログインしています…' : 'ログイン'}
-        </Button>
-      </form>
-    </Centered>
-  )
-}
 
 /* ---------- ケース一覧 ---------- */
 
@@ -173,17 +123,9 @@ export function CaseNewScreen() {
       knownAt: f.knownAt || undefined,
       ownerName: f.ownerName.trim(),
       relationshipToDeceased: f.relationshipToDeceased.trim(),
+      // ownerName / relationshipToDeceased を使って、作成者本人を Person として同時登録する
+      ownerPerson: { isHeir },
     })
-    try {
-      await api.post(`/cases/${created.id}/persons`, {
-        name: f.ownerName.trim(),
-        relationship: f.relationshipToDeceased.trim(),
-        role: isHeir ? 'HEIR_CANDIDATE' : 'RELATED',
-        isHeir,
-      })
-    } catch {
-      // ケースはできているので先へ進む。家族画面からあとで登録できる
-    }
     // 続けて、あてはまる手続きを洗い出すための質問へ
     navigate(`/cases/${created.id}/setup`)
   }

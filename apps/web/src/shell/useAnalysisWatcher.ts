@@ -1,8 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import type { DocumentResource } from '@aftercare/public-contracts'
 import { qk, useDocuments } from '@/lib/api/queries'
-import type { Approval, Paginated } from '@aftercare/public-contracts'
+import { pendingApprovalRefCount } from '@/lib/model/document'
 import { toast } from '@/kit/toast'
+
+function isAnalyzing(d: DocumentResource): boolean {
+  return d.analysis.state === 'QUEUED' || d.analysis.state === 'RUNNING'
+}
 
 /**
  * 書類の読み取りの終わりを見張る。
@@ -17,7 +22,7 @@ import { toast } from '@/kit/toast'
 export function useAnalysisWatcher(caseId: string) {
   const qc = useQueryClient()
   const docs = useDocuments(caseId, {
-    refetchInterval: (q) => (q.state.data?.items.some((d) => d.analysisStatus === 'ANALYZING') ? 3_000 : false),
+    refetchInterval: (q) => (q.state.data?.items.some(isAnalyzing) ? 3_000 : false),
     // スマホで書類を撮ったあと、別のアプリへ切り替えて待つことが多い。
     // 画面が裏にある間も読み取りの終わりを取り込み、戻ったときに件数が合っているようにする（読み取り中の間だけ）
     refetchIntervalInBackground: true,
@@ -28,7 +33,7 @@ export function useAnalysisWatcher(caseId: string) {
   useEffect(() => {
     const items = docs.data?.items
     if (!items) return
-    const now = new Set(items.filter((d) => d.analysisStatus === 'ANALYZING').map((d) => d.id))
+    const now = new Set(items.filter(isAnalyzing).map((d) => d.id))
     const before = analyzing.current
     analyzing.current = now
     // 初回は基準を取るだけ（画面を開いた時点ですでに終わっているものは知らせない）
@@ -37,34 +42,31 @@ export function useAnalysisWatcher(caseId: string) {
     const finished = items.filter((d) => before.has(d.id) && !now.has(d.id))
     if (finished.length === 0) return
 
-    const others = [
+    for (const key of [
       qk.insights(caseId),
       qk.overview(caseId),
       qk.tasks(caseId),
       qk.assets(caseId),
       qk.liabilities(caseId),
       qk.contracts(caseId),
-      ['documents'],
-      ['tasks'],
-    ]
-    for (const key of others) void qc.invalidateQueries({ queryKey: key })
+      qk.approvals(caseId),
+    ]) {
+      void qc.invalidateQueries({ queryKey: key })
+    }
 
-    // 確認（Approval）を取り直してから、書類ごとに何件届いたかを数えて知らせる。
-    // 読み取っても確認が1件も無いことはあるので、「届いています」と決めつけない
-    void qc.invalidateQueries({ queryKey: qk.approvals(caseId) }).then(() => {
-      const approvals = qc.getQueryData<Paginated<Approval>>(qk.approvals(caseId))?.items ?? []
-      for (const d of finished) {
-        if (d.analysisStatus === 'NEEDS_REVIEW') {
-          toast(`「${d.fileName}」は読み取れませんでした。「書類」から内容を確かめてください。`, 'error')
-          continue
-        }
-        const n = approvals.filter((a) => a.sourceDocumentId === d.id && a.status === 'PENDING').length
-        toast(
-          n > 0
-            ? `「${d.fileName}」の読み取りが終わりました。「AIからの確認」に${n}件届いています。`
-            : `「${d.fileName}」の読み取りが終わりました。確認していただくものはありませんでした。`,
-        )
+    // DocumentResource は自分に紐づく approvalRefs を持つため、Approval を取り直さなくても
+    // 直近の一覧取得（このフックが追いかけている docs）だけで件数を数えられる
+    for (const d of finished) {
+      if (d.analysis.state === 'FAILED') {
+        toast(`「${d.fileName}」は読み取れませんでした。「書類」から内容を確かめてください。`, 'error')
+        continue
       }
-    })
+      const n = pendingApprovalRefCount(d)
+      toast(
+        n > 0
+          ? `「${d.fileName}」の読み取りが終わりました。「AIからの確認」に${n}件届いています。`
+          : `「${d.fileName}」の読み取りが終わりました。確認していただくものはありませんでした。`,
+      )
+    }
   }, [docs.data, caseId, qc])
 }

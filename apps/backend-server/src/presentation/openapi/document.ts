@@ -120,7 +120,8 @@ function operationOf(spec: RouteSpec) {
     summary: spec.summary,
     ...(spec.description ? { description: spec.description } : {}),
     tags: spec.tags,
-    security: spec.auth === 'user' ? [{ bearerAuth: [] }] : [],
+    // 'identity' もトークン検証は必須（tenant membership の裏取りだけが無くてよい）。
+    security: spec.auth === 'user' || spec.auth === 'identity' ? [{ bearerAuth: [] }] : [],
     parameters: parametersOf(spec),
     ...(request.body
       ? {

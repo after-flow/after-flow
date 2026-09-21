@@ -2,15 +2,16 @@ import { useState } from 'react'
 import {
   useCaseOverview,
   useCreatePerson,
-  useDeletePerson,
+  useExcludePerson,
   usePersons,
-  useSetInheritanceDecision,
+  useRecordAndConfirmDecision,
+  useRecordDecision,
   useTasks,
   useUpdatePerson,
 } from '@/lib/api/queries'
-import type { InheritanceMethod, Person } from '@aftercare/public-contracts'
+import type { CreatePersonRequest, InheritanceMethod, Person } from '@aftercare/public-contracts'
 import { Icon } from '@/kit/Icon'
-import { daysUntil, formatDate } from '@/lib/format'
+import { formatDate } from '@/lib/format'
 import { INHERITANCE_METHOD_LABEL, SPECIAL_CIRCUMSTANCE_META } from '@/lib/labels'
 import { GLOSSARY } from '@/lib/terms'
 import {
@@ -50,8 +51,9 @@ export function FamilyScreen() {
   const overview = useCaseOverview(caseId)
   const tasks = useTasks(caseId)
   const persons = usePersons(caseId)
-  const setDecision = useSetInheritanceDecision(caseId)
-  const del = useDeletePerson(caseId)
+  const recordDecision = useRecordDecision(caseId)
+  const recordAndConfirm = useRecordAndConfirmDecision(caseId)
+  const exclude = useExcludePerson(caseId)
 
   const [editing, setEditing] = useState<Person | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Person | null>(null)
@@ -59,11 +61,11 @@ export function FamilyScreen() {
 
   if (!persons.data || !overview.data) return <Loading />
 
-  const all = persons.data.items
+  const all = persons.data
   const heirs = all.filter((p) => p.isHeir)
   const decision = overview.data.inheritanceDecision
   const decidedCount = decision.perHeir.filter((h) => h.method != null).length
-  const left = daysUntil(decision.deliberationDeadline)
+  const deadline = decision.deliberationDeadline
   // 「相続の方法を決める」手続き。全員の記録が済んだら、そちらも完了にできるよう案内する
   const decisionTask = tasks.data?.items.find((t) => t.stage === 'decision' && t.status !== 'COMPLETED')
 
@@ -87,10 +89,12 @@ export function FamilyScreen() {
       <Panel
         title="相続の方法"
         action={
-          decision.deliberationDeadline && (
+          deadline?.dueDate && (
             <span className="text-[0.86rem] text-rd-text-2">
-              決める期限 <strong className="text-rd-text">{formatDate(decision.deliberationDeadline, { weekday: true })}</strong>
-              {left != null && left >= 0 && <span className={left <= 14 ? 'ml-1 font-bold text-rd-danger-text' : 'ml-1'}>（あと{left}日）</span>}
+              決める期限 <strong className="text-rd-text">{formatDate(deadline.dueDate, { weekday: true })}</strong>
+              {deadline.daysRemaining != null && deadline.daysRemaining >= 0 && (
+                <span className={deadline.daysRemaining <= 14 ? 'ml-1 font-bold text-rd-danger-text' : 'ml-1'}>（あと{deadline.daysRemaining}日）</span>
+              )}
             </span>
           )
         }
@@ -223,10 +227,22 @@ export function FamilyScreen() {
         }
         description={choosing?.method ? GLOSSARY[GLOSSARY_KEY[choosing.method]]?.plain : undefined}
         confirmLabel="記録する"
-        busy={setDecision.isPending}
+        busy={recordDecision.isPending || recordAndConfirm.isPending}
         onClose={() => setChoosing(null)}
         onConfirm={async () => {
-          if (choosing) await setDecision.mutateAsync({ personId: choosing.person.id, method: choosing.method })
+          if (choosing) {
+            // 本人が自分で方法を選んだときだけ、記録と確定を1手で行える（放棄前ロックの解除条件）
+            const isSelf = choosing.person.id === overview.data?.case.selfPersonId
+            if (choosing.method && isSelf) {
+              await recordAndConfirm.mutateAsync({ personId: choosing.person.id, method: choosing.method })
+            } else {
+              await recordDecision.mutateAsync({
+                personId: choosing.person.id,
+                method: choosing.method,
+                state: choosing.method ? 'REPORTED' : 'DRAFT',
+              })
+            }
+          }
           setChoosing(null)
         }}
       >
@@ -256,10 +272,10 @@ export function FamilyScreen() {
         title={`${deleting?.name ?? ''}さんの登録を削除しますか？`}
         confirmLabel="削除する"
         danger
-        busy={del.isPending}
+        busy={exclude.isPending}
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
-          if (deleting) await del.mutateAsync(deleting.id)
+          if (deleting) await exclude.mutateAsync({ id: deleting.id, expectedVersion: deleting.version })
           setDeleting(null)
         }}
       />
@@ -307,7 +323,7 @@ function PersonDialog({ caseId, person, onClose }: { caseId: string; person: Per
       disabled={!name.trim()}
       onClose={onClose}
       onConfirm={async () => {
-        const payload: Partial<Person> = {
+        const payload: CreatePersonRequest = {
           name: name.trim(),
           relationship: relationship.trim() || '—',
           role: isHeir ? 'HEIR_CANDIDATE' : 'RELATED',
@@ -316,7 +332,7 @@ function PersonDialog({ caseId, person, onClose }: { caseId: string; person: Per
           contact: contact.trim() || undefined,
           note: note.trim() || undefined,
         }
-        if (person) await update.mutateAsync({ id: person.id, ...payload })
+        if (person) await update.mutateAsync({ id: person.id, expectedVersion: person.version, ...payload })
         else await create.mutateAsync(payload)
         onClose()
       }}

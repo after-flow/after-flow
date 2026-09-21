@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { INFRASTRUCTURE_COLLECTIONS, collections } from '../../src/domain/shared/collections.js'
 import type { CaseMember } from '../../src/domain/authorization/case-role.js'
-import { seedHeir, agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
+import { seedHeir, agreeExternalAiConsent, agreeRequiredConsents, buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
 import type { Json, TestAppOptions } from './helpers/app.js'
 import { describeFirestore, firestore, newTenantId, unitOfWork, workContext } from './helpers/emulator.js'
 
@@ -118,12 +118,15 @@ describeFirestore('Proposalの不変履歴と案件版', () => {
     const approval = await requestApproval(app, caseId, proposal)
     const changed = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { ...taskPayload, title: '別の業務変更' }))
     assert.equal(changed.status, 201, JSON.stringify(changed.body))
+    // 既定カタログで Case 作成時に同期生成された手続きの分も含めた、承認前の件数を基準にする。
+    const beforeApprove = await call(app, `/cases/${caseId}/tasks?limit=50`)
     const result = await call(app, `/cases/${caseId}/approvals/${approval.id}/approve`, jsonRequest('POST', {
       expectedVersion: approval.version, proposalVersion: approval.proposalVersion, payloadHash: approval.payloadHash,
     }))
     assert.equal(result.status, 409)
     assert.equal(result.body.error.details.reason, 'STALE_PROPOSAL')
-    assert.equal((await call(app, `/cases/${caseId}/tasks`)).body.data.length, 1)
+    const afterApprove = await call(app, `/cases/${caseId}/tasks?limit=50`)
+    assert.equal(afterApprove.body.data.length, beforeApprove.body.data.length, '拒否された提案でTaskが増えない')
   })
 })
 
@@ -243,6 +246,7 @@ describeFirestore('Entity別Proposal適用', () => {
 describeFirestore('書類要求・根拠・専門家引継ぎのProposal', () => {
   async function prepare() {
     const env = await setup()
+    await agreeExternalAiConsent(env.app)
     const task = await call(env.app, `/cases/${env.caseId}/tasks`, jsonRequest('POST', {
       title: '架空手続き', category: '手動', stage: 'immediate', evidenceRequired: true,
     }))
@@ -275,7 +279,7 @@ describeFirestore('書類要求・根拠・専門家引継ぎのProposal', () =>
     assert.equal((await approve(app, caseId, approval)).status, 200)
     const task = (await call(app, `/cases/${caseId}/tasks/${taskId}`)).body.data
     assert.equal(task.status, 'WAITING_DOCUMENTS')
-    assert.deepEqual(task.requiredDocuments, [{ ...documents[0], documentId: null, source: 'MANUAL' }])
+    assert.deepEqual(task.requiredDocuments, [{ ...documents[0], documentId: null, source: 'MANUAL', collected: false }])
   })
 
   it('根拠の登録は承認後だけに行い、Taskを自動完了しない', async () => {

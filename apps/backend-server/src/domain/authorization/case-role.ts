@@ -66,7 +66,7 @@ export interface CaseMember extends EntityBase {
   active: boolean
   /**
    * この membership が紐付く Case 内の Person。
-   * 本人確認を要する操作の根拠になる。紐付けは #13 が登録する。
+   * 本人確認を要する操作の根拠になる。Case 作成時の本人登録、または #13 が登録する。
    */
   personId: string | null
 }
