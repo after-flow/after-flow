@@ -11,17 +11,35 @@ const planActionSchema = z.object({
 }).strict()
 
 /** The Core Agent chooses only from this finite plan surface. It does not emit reasoning text. */
-export const guidancePlanDecisionSchema = z.object({
-  plan: z.array(planActionSchema).min(1).max(4),
-  nextAction: guidanceActionSchema.exclude(['DONE']),
+const emptyQuestionIds = z.array(z.string()).length(0)
+const researchPlanDecisionSchema = z.object({
+  plan: z.tuple([
+    z.object({ action: z.literal('REQUEST_RESEARCH'), questionIds: z.array(z.string().min(1).max(128)).max(12) }).strict(),
+    z.object({ action: z.literal('GENERATE_GUIDANCE'), questionIds: emptyQuestionIds }).strict(),
+    z.object({ action: z.literal('REPORT'), questionIds: emptyQuestionIds }).strict(),
+  ]),
+  nextAction: z.literal('REQUEST_RESEARCH'),
+}).strict()
+const needsInputPlanDecisionSchema = z.object({
+  plan: z.tuple([
+    z.object({ action: z.literal('NEEDS_INPUT'), questionIds: emptyQuestionIds }).strict(),
+    z.object({ action: z.literal('REPORT'), questionIds: emptyQuestionIds }).strict(),
+  ]),
+  nextAction: z.literal('NEEDS_INPUT'),
+}).strict()
+/** Provider-facing schema for the branch where the harness has already approved research. */
+export const guidanceResearchPlanDecisionSchema = z.object({
+  plan: z.array(planActionSchema).length(3),
+  nextAction: z.literal('REQUEST_RESEARCH'),
 }).strict().superRefine((decision, ctx) => {
-  if (decision.plan[0]?.action !== decision.nextAction) {
-    ctx.addIssue({ code: 'custom', message: 'nextAction must be the first planned action' })
+  if (decision.plan.map(item => item.action).join(',') !== 'REQUEST_RESEARCH,GENERATE_GUIDANCE,REPORT') {
+    ctx.addIssue({ code: 'custom', message: 'Unsupported research plan' })
   }
-  const actions = decision.plan.map(item => item.action)
-  const valid = actions.join(',') === 'REQUEST_RESEARCH,GENERATE_GUIDANCE,REPORT' || actions.join(',') === 'NEEDS_INPUT,REPORT'
-  if (!valid) ctx.addIssue({ code: 'custom', message: 'Unsupported guidance plan' })
 })
+export const guidancePlanDecisionSchema = z.discriminatedUnion('nextAction', [
+  researchPlanDecisionSchema,
+  needsInputPlanDecisionSchema,
+])
 export type GuidancePlanDecision = z.infer<typeof guidancePlanDecisionSchema>
 
 const knownFactSchema = z.object({
@@ -59,7 +77,7 @@ export const guidanceWorkingStateSchema = z.object({
 export type GuidanceWorkingState = z.infer<typeof guidanceWorkingStateSchema>
 
 export function createGuidanceWorkingState(input: {
-  decision: GuidancePlanDecision
+  decision: unknown
   brief: ResearchBrief | null
   modelInput: MinimizedModelInput
   missing?: readonly string[]
@@ -119,7 +137,7 @@ export function completeGuidanceAction(
 
 export async function replanGuidanceState(
   stateInput: GuidanceWorkingState,
-  decisionInput: GuidancePlanDecision,
+  decisionInput: unknown,
   charge: (cost: { replans: number }) => Promise<void>,
 ): Promise<GuidanceWorkingState> {
   const state = guidanceWorkingStateSchema.parse(stateInput)

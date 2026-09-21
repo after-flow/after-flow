@@ -76,7 +76,7 @@ test('two roles have narrow tool sets and all playbooks resolve required skills'
 
 test('actual Mastra delegation excludes parent secrets and validates structured research output', async () => {
   const { coreAgent, research, core, researchEvidence } = setup([
-    { tool: 'agent-researchAgent', input: { prompt: JSON.stringify(request) } },
+    { tool: 'agent-researchAgent', input: { prompt: JSON.stringify([request]) } },
     { text: '資料の確認が必要です。' },
   ])
   const context = new RequestContext([['token', 'credential-MUST-NOT-LEAK'], ['case', { name: 'PRIVATE-PERSON' }]])

@@ -82,7 +82,7 @@ export function readHackathonComposition(
     dataClasses: ['minimized_case', 'public_research'] as ('minimized_case' | 'public_research')[],
     approvedAt, expiresAt, reviewReference: REVIEW_REFERENCE, trainingUse: false as const, retentionDays: 0,
     capabilities: { tools: true as const, structuredOutput: true as const, japanese: true as const },
-    currency: 'USD', maxInputTokens: 16_000, maxOutputTokens: 1_000,
+    currency: 'USD', maxInputTokens: 16_000, maxOutputTokens: 4_000,
     // Conservative demo reservation bounds, not a billing quote.
     inputMicrosPerToken: 10, outputMicrosPerToken: 20,
   }))
@@ -120,15 +120,15 @@ export function readHackathonComposition(
       insecureHttpAllowedHosts: [new URL(input.BACKEND_INTERNAL_URL).hostname],
     },
     runtimeEncryptionKey: input.AI_RUNTIME_ENCRYPTION_KEY,
-    budget: { tools: 20, research: 2, searches: 6, reads: 12, inferenceAttempts: 8, replans: 2,
-      tokens: 136_000, costMicros: 1_440_000, activeMs: 120_000 },
+    budget: { tools: 20, research: 2, searches: 6, reads: 12, inferenceAttempts: 12, replans: 2,
+      tokens: 240_000, costMicros: 2_880_000, activeMs: 120_000 },
     sectionTimeoutMs: 120_000,
     policies,
     orca: { apiKey: input.ORCAROUTER_API_KEY, timeoutMs: 30_000 },
     // The Backend control endpoint is rechecked by session.guard before every transfer.
     // This local provider list is a hackathon assumption, never a production consent record.
     grant: async () => ({ revision: 'hackathon-v1', providerPolicyIds: [...POLICY_IDS],
-      dataClasses: ['minimized_case', 'public_research'], expiresAt: new Date(Date.now() + 30_000).toISOString(), maxRetentionDays: 0 }),
+      dataClasses: ['minimized_case', 'public_research'], expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), maxRetentionDays: 0 }),
     recordMetric: async (metric: ProviderMetric, identity) => writeMetric({ event: 'ai_provider_attempt', ...identity, ...metric }),
     catalogs: [{
       id: CATALOG_ID, version: '2026-09-21', reviewedAt: approvedAt, expiresAt,
