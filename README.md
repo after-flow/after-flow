@@ -179,6 +179,7 @@ Firestoreの永続化処理を変更した場合は、`pnpm test:firestore` に�
 - [AIエージェント構成](docs/agent-architecture.md)
 - [FrontendからBackendへの引き継ぎ](docs/backend-handoff-2026-09-21.md)
 - [CI/CD運用](docs/ci-cd.md)
+- [ローカルでSwagger UIから業務APIを試す](docs/runbooks/local-swagger.md)
 - [APIドキュメント](docs/api)
 - [ADR](docs/adr)
 - [Runbook](docs/runbooks)

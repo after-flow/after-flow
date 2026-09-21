@@ -153,6 +153,8 @@ pnpm --filter @aftercare/backend-server dev
 
 Firestoreや認証を設定していない場合もhealth endpointは起動しますが、対応する業務APIはfail closedします。
 
+ローカルでSwagger UIから業務APIを呼ぶ手順（開発用の固定鍵認証とseed）は [Local Swagger Runbook](../../docs/runbooks/local-swagger.md) を参照してください。
+
 ## テストと検証
 
 ```bash
