@@ -59,7 +59,7 @@ AI専用のRuntime Firestoreを使用する場合も、Business Firestoreとはp
 - model allowlist、budget processor、fallback policy
 - fixture評価と比較command
 
-ただし、標準の `src/main.ts` は本番向けのRuntime、Worker、AI Provider、Orchestratorをまだ注入していません。そのため、processのlivenessは確認できても、AI処理が利用可能とは限りません。Runtime未接続時の実行endpointは `AI_EXECUTION_NOT_CONNECTED` を返します。
+標準の `src/main.ts` は、開発環境で `ORCAROUTER_API_KEY` とAI専用Runtime設定がある場合、ハッカソン用のOrcaRouterモデル、公式資料Catalog、予算、永続Runtime、Workerを組み立てます。設定が無い場合はlivenessだけで起動し、実行endpointとreadinessは `AI_EXECUTION_NOT_CONNECTED` を返します。ハッカソン構成は `NODE_ENV=production` では起動できません。
 
 ## Internal API
 
@@ -68,6 +68,7 @@ Base pathは `/internal/v1` です。AI ServerのportはDocker hostへ公開し�
 | Method / Path | 用途 |
 | --- | --- |
 | `GET /health` | processのliveness確認。AI機能のreadinessではありません。 |
+| `GET /ready` | Runtime/Workerが接続された場合だけ200を返すreadiness。モデル品質の保証ではありません。 |
 | `POST /runs/:runId/dispatch` | 新しい実行依頼の受付 |
 | `POST /runs/:runId/resume` | 待機中実行の再開 |
 | `GET /runs/:runId/snapshot-status` | Backend reconciler向けsnapshot状態確認 |
@@ -122,7 +123,7 @@ pnpm --filter @aftercare/ai-server dev
 
 ## 設定
 
-現在の標準entrypointで使用する設定:
+標準entrypointで使用する主な設定:
 
 | 環境変数 | 用途 |
 | --- | --- |
@@ -130,8 +131,17 @@ pnpm --filter @aftercare/ai-server dev
 | `PORT` | listen port。既定は `8081` |
 | `AI_SERVICE_TOKEN` | Backend WorkerからのBearer service token |
 | `AI_SERVICE_AUDIENCE` | 想定audience。既定は `ai-server` |
+| `AI_RUNTIME_MODE` | `auto` / `disabled` / `hackathon`。Docker開発環境の既定は `auto` |
+| `ORCAROUTER_API_KEY` | OrcaRouterのAPIキー。AIコンテナだけへ渡す |
+| `AI_ORCA_CORE_MODEL` | 第1モデル。開発既定は `openai/gpt-4o-mini` |
+| `AI_ORCA_FALLBACK_MODEL` | 第2モデル。開発既定は `google/gemini-2.5-flash` |
+| `BACKEND_INTERNAL_URL` | AIからBackend内部APIを呼ぶorigin |
+| `BACKEND_INTERNAL_SERVICE_TOKEN` | AIからBackendへ送る専用サービス資格情報 |
+| `AI_RUNTIME_ENCRYPTION_KEY` | receipt内の一時資格情報を暗号化するAI専用256-bit鍵 |
 
-Runtimeをcompositionする際は、`AI_RUNTIME_PROJECT_ID`、`AI_RUNTIME_DATABASE_ID`、必要に応じて `AI_RUNTIME_EMULATOR_HOST` をAI専用データ領域に設定します。`FIRESTORE_*`、`DOCUMENT_STORAGE_*`、`STORAGE_*`、`GOOGLE_APPLICATION_CREDENTIALS` など、Backendの業務データ用設定を流用してはいけません。
+Runtimeには `AI_RUNTIME_PROJECT_ID`、`AI_RUNTIME_DATABASE_ID`、必要に応じて `AI_RUNTIME_EMULATOR_HOST` を設定します。`make up` はホスト非公開のAI専用Emulatorを起動し、AIコンテナを `restart: unless-stopped` で維持します。AIはBackend通信用、Runtime専用、OrcaRouter/許可済み公式HTTPS資料へのegress専用networkだけに参加します。`FIRESTORE_*`、`DOCUMENT_STORAGE_*`、`STORAGE_*`、`GOOGLE_APPLICATION_CREDENTIALS` など、Backendの業務データ用設定を流用してはいけません。
+
+ルート `.env` に `ORCAROUTER_API_KEY` を設定して `make up` を実行すると、`GET /internal/v1/ready` が200になります。キーが無いCIや `AI_RUNTIME_MODE=disabled` では503です。BackendのOutbox workerと公開画面からの操作は次の接続段階であり、開発Composeは `AI_CONNECTED_OPERATIONS` を既定で空のままにします。
 
 ## テストと評価
 
@@ -159,7 +169,8 @@ pnpm --filter @aftercare/ai-server eval:compare
 ## 現在の未完了範囲
 
 - 本番向けAI Provider、credential、model allowlistの確定
-- Orchestratorと実Runtime/Workerの `main.ts` へのcomposition
+- production用のProvider Policy、同意grant、AI Runtime IAM/保持設定
+- Backend Outbox workerと公開画面からの実行配送
 - BackendとAI双方を含むdispatch、wait、resume、proposalのE2E検証
 - AI専用Runtime Firestoreの本番project/database、IAM、index、保持期間の設定
 - timeout、retry、DLQ、snapshot不整合、Provider障害に対する監視とRunbook

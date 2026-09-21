@@ -1,6 +1,8 @@
 import { Hono } from 'hono'
 
-// Process liveness only; business APIs and AI integrations are not implemented yet.
-export const healthRoutes = new Hono().get('/health', (c) =>
-  c.json({ data: { service: 'ai-server', status: 'ok' } }),
-)
+/** Liveness stays independent from model/runtime readiness. */
+export const healthRoutes = (executionConnected: boolean) => new Hono()
+  .get('/health', c => c.json({ data: { service: 'ai-server', status: 'ok' } }))
+  .get('/ready', c => executionConnected
+    ? c.json({ data: { service: 'ai-server', status: 'ready', execution: 'connected' } })
+    : c.json({ error: { code: 'AI_EXECUTION_NOT_CONNECTED' } }, 503))

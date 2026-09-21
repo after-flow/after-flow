@@ -128,15 +128,20 @@ describeFirestore('チャットの受付と回答', () => {
     assert.equal(history.body.data.length, 1)
   })
 
-  it('外部AI同意が無くても発言は保存される', async () => {
+  it('外部AI同意が無ければ発言を保存せず403で拒否する', async () => {
     const { app, caseId } = await setup({ agreeExternalAi: false })
     const response = await call(
       app,
       `/cases/${caseId}/messages`,
       jsonRequest('POST', { body: '同意前の発言' }, nextKey('idem-message')),
     )
-    assert.equal(response.body.data.runAccepted, false)
-    assert.equal(response.body.data.reason, 'CONSENT_REQUIRED')
+    assert.equal(response.status, 403)
+    assert.equal(response.body.error.code, 'CONSENT_REQUIRED')
+    assert.equal(response.body.error.details.requiredConsent, 'CROSS_BORDER_AI')
+
+    // 保存前に拒否しているので、発言そのものが残らない。
+    const history = await call(app, `/cases/${caseId}/messages`)
+    assert.equal(history.body.data.length, 0)
   })
 
   it('受付から回答取得までを実HTTPで通す', async () => {

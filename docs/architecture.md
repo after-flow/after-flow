@@ -275,6 +275,7 @@ aftercare/
 - 日時はAPI上でISO 8601。日付だけの期限は`YYYY-MM-DD`と管轄タイムゾーンを別管理する。
 - 成功は`{ data, meta: { requestId, nextCursor? } }`。失敗は`{ error: { code, message, retryable }, meta: { requestId } }`。
 - 400: 入力不正、401: 未認証、403: role不足/同意不足、404: membershipなし/参照なし、409: 競合/業務条件不成立、413: サイズ超過、428: 必須条件欠落、429: 制限、501: 機能未接続、503: 一時利用不可。実装のコードとHTTP対応は `shared/app-error.ts` に集約する。
+- 外部AIへ提供する入口（書類登録・チャット送信・窓口調査依頼・AgentRun受付）は `CROSS_BORDER_AI` 同意を Application 層で検査し、`details.requiredConsent='CROSS_BORDER_AI'` 付きの CONSENT_REQUIRED を副作用の前に返す。
 - AI処理開始は202を返す。AgentRunは `id` と `status: QUEUED`、チャットは `{ message, runId, runAccepted, reason }`、案内は `agentRunId` を含むリソースを返す。受付を処理完了と表示しない。
 - サーバーが決める値（`status`, `confirmation`, `policy`, `progress`, `source`, `agentRunId`, `tenantId`, `caseId` 等）を更新bodyで受け取らない。schemaはstrictで、未知フィールドは400。
 - 既存フロントの呼び出しと公開APIの対応、移行方針、受入シナリオは [対応表](api/frontend-backend-mapping.md) を参照する。実装済みHTTP契約の正本は route spec とそこから生成する [OpenAPI](api/public-openapi.yaml)。将来API一覧とは区別する。
@@ -357,6 +358,8 @@ dispatch/resume本文は`jobId / runId / executionAttempt / operation / issuedAt
 | GET | `/internal/v1/runs/:runId/control` | cancel、現在version、実行可否をStep/Tool前に確認 |
 
 ContextとArtifactの応答には`caseVersion / contextSnapshotId / artifactVersion / contentHash / expiresAt`を含める。AI ServerはBackendから受け取ったContextをruntime処理に使えるが、正式状態として保存・更新しない。内部Artifact URLは短寿命・Run scope付きとし、別Runや別Caseで再利用できないようにする。
+
+Backendも同じ`GET /internal/v1/health/ready`のpathを自ら公開するが、上のAI Server向け表とは別contractである。AIサービス資格情報ではアクセスできない専用の`READINESS_ACCESS_TOKEN`を要求し、運用/デプロイツールだけが使う。詳細は[docs/runbooks/readiness.md](runbooks/readiness.md)。
 
 #### 認証・信頼境界
 

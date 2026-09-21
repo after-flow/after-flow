@@ -6,7 +6,7 @@
 ```text
 永続Worker（後続）
   -> Backend control
-  -> Orch結果の検証ゲート（実Adapterは未接続）
+  -> 許可済みPolicy選択とOrcaRouter利用証跡
   -> 最新Contextを取得・検証
   -> 対応する手続き/機関/地域を確認
   -> コア -> 検索Agent -> 検索候補 -> 元資料取得
@@ -32,11 +32,11 @@
 `authorizeRoute`は実Orchの選択結果を検証し、利用証跡IDを返す責務。productionの成功固定Adapterは用意しない。
 合成テストの`fixture-routing-receipt`を実Orch利用の証跡として扱わない。
 
-`ResearchProvider`は製品SDKを隔離するPort。実検索・HTML/PDFの取得Adapterはまだ未選定/未接続。
+`ResearchProvider`は取得処理を隔離するPort。開発Composeは協会けんぽのレビュー済みCatalog内検索と安全なHTML/PDF取得を接続する。任意Web検索は提供しない。
 検索結果の取得前にDNS・redirect先・サイズ・形式を検証し、内部ネットワークへ接続させないことが実Adapterの必須条件。
 今回のTool層のURL検査だけでSSRF対策が完了したと扱わない。
 
-Workflow定義が存在するだけでは再起動復旧できない。#50/#57の永続保存・receipt・再開・累積予算を接続してから、Runtime Portをproduction compositionへ注入する。
+Workflow定義だけで再起動復旧とはしない。開発Composeでは永続保存・receipt・再開・累積予算をAI専用Emulatorへ接続した。本番では専用project/databaseとIAMを設定して同じ契約を検証する。
 1 Step内のProvider/Agentは再実行され得るため、課金/再試行の上限を再開でリセットしない。結果生成後のStep出力を保存し、同一Actionの再送で本文を作り直さない。
 Toolフック以外のSkill/委任/推論を含む全Run予算、PIIを除いたTracing、保持削除、ライブ評価は後続。
 

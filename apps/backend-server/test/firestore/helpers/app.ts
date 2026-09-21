@@ -110,7 +110,7 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
     agentRunService,
     proposalService: new ProposalService(access, readRepository(), unitOfWork(), options.proposalAppliers ?? [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers]),
     decisionService: new InheritanceDecisionService(access, readRepository(), unitOfWork()),
-    messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService),
+    messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService, consentService),
     overviewService: new CaseOverviewService(
       access,
       readRepository(),
@@ -190,6 +190,26 @@ export async function agreeRequiredConsents(
   const response = await call(app, '/consents', jsonRequest('POST', { agreements }, idempotencyKey))
   if (response.status !== 200) {
     throw new Error(`必須同意の記録に失敗した: ${JSON.stringify(response.body)}`)
+  }
+}
+
+/** 外部AI（CROSS_BORDER_AI）への提供同意を済ませた状態にする。 */
+export async function agreeExternalAiConsent(
+  app: ReturnType<typeof createApp>,
+  catalog: ConsentCatalog = PLACEHOLDER_CATALOG,
+  idempotencyKey = `idem-consent-ai-${Math.random().toString(36).slice(2, 12)}`,
+): Promise<void> {
+  const definition = catalog.documents.find((document) => document.kind === 'CROSS_BORDER_AI')
+  if (!definition) {
+    throw new Error('カタログに CROSS_BORDER_AI の定義が無い')
+  }
+  const response = await call(
+    app,
+    '/consents',
+    jsonRequest('POST', { agreements: [{ kind: definition.kind, version: definition.version }] }, idempotencyKey),
+  )
+  if (response.status !== 200) {
+    throw new Error(`外部AI同意の記録に失敗した: ${JSON.stringify(response.body)}`)
   }
 }
 

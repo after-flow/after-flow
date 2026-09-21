@@ -11,6 +11,8 @@ export function createRuntimeFirestore(env: NodeJS.ProcessEnv = process.env): Fi
     throw new Error('Explicit AI runtime project and dedicated ai-runtime database are required')
   }
   const host = env.AI_RUNTIME_EMULATOR_HOST
-  if (host && (!/^(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/.test(host) || Number(host.split(':')[1]) > 65535)) throw new Error('Runtime emulator must be loopback')
+  const emulatorHost = /^(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/.test(host ?? '') ||
+    (env.NODE_ENV !== 'production' && /^ai-runtime-emulator:[1-9][0-9]{0,4}$/.test(host ?? ''))
+  if (host && (!emulatorHost || Number(host.split(':')[1]) > 65535)) throw new Error('Runtime emulator must use the dedicated development endpoint')
   return new Firestore({ projectId, databaseId, ...(host ? { host, ssl: false, credentials: { client_email: 'emulator@example.test', private_key: 'unused' } } : {}) })
 }

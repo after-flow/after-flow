@@ -129,7 +129,7 @@
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
 | `GET /cases/:caseId/messages` | 履歴 | `GET C/messages?cursor=` | 同一 | #15 |
-| `POST /cases/:caseId/messages`（同期で回答返却） | 送信 | `POST C/messages` body `{ body }` → **202** `{ message, runId, runAccepted, reason }`。回答は `GET C/messages` に `role: 'assistant'` として後から現れる。基本同意不足は403、外部AI同意不足・未接続でも発言を保存し `runAccepted: false` と理由を返す | **非同期化** | #15 / #10 / #12 |
+| `POST /cases/:caseId/messages`（同期で回答返却） | 送信 | `POST C/messages` body `{ body }` → **202** `{ message, runId, runAccepted, reason }`。回答は `GET C/messages` に `role: 'assistant'` として後から現れる。基本同意不足・外部AI同意不足（`CROSS_BORDER_AI`未同意/版ずれ）は保存前に403（`details.requiredConsent`）。AI未接続など同意はあるが実行を受け付けられない場合のみ発言を保存し `runAccepted: false` と理由を返す | **非同期化** | #15 / #10 / #12 |
 
 ## 11. 気づき（Insights）
 
