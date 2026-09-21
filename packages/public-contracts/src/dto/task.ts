@@ -101,6 +101,8 @@ export interface TaskResource {
   stage: FlowStageId
   category: string
   submitTo: string | null
+  /** 手続き定義 ID。null は未マッピング（AI 案内の Context 投影に使わない）。 */
+  procedureId: string | null
   /** 同じCaseに属する、除外されていない関係者のID。権限付与ではない。 */
   assigneeId: string | null
   dependencyTaskIds: string[]

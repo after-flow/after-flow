@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { resolveDependencyTaskIds } from '@aftercare/internal-contracts'
 import { errors } from '../../shared/app-error.js'
 import type { ProcedureFacts } from '../case/case-profile.js'
 import type { EntityPatch } from '../shared/entity.js'
@@ -207,7 +208,9 @@ export function planProcedureSync(catalog: RuleCatalog, facts: ProcedureFacts, s
         category: procedure.category,
         submitTo: resolved.submitTo,
         assigneeId: null,
-        dependencyTaskIds: [],
+        // 先行手続きの Task ID は caseId から決定的に決まるため、生成順に依存せず解決できる。
+        dependencyTaskIds: resolveDependencyTaskIds(procedure.dependencyProcedureIds ?? [],
+          catalog.initialProcedures.map((candidate) => ({ id: initialTaskId(snapshot.caseId, candidate.id), procedureId: candidate.id }))),
         escalation: null,
         source: 'RULE_ENGINE',
         procedureId: procedure.id,

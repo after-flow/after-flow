@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { findProcedureDefinition } from '@aftercare/internal-contracts'
 import type { Person } from '../../domain/person/person.js'
 import type { EntityBase } from '../../domain/shared/entity.js'
 import type { DocumentEntity } from '../../domain/document/document.js'
@@ -58,12 +59,16 @@ export interface CreateTaskInput extends TaskReferencesInput {
   submitTo?: string | null
   evidenceRequired?: boolean
   assetDisposal?: boolean
+  /** 手続き定義 ID。案内 Context の投影に使う。存在しない ID は拒否する。 */
+  procedureId?: string | null
 }
 
 export interface UpdateTaskInput extends TaskReferencesInput {
   title?: string
   summary?: string
   submitTo?: string | null
+  /** null で解除できる。存在しない ID は拒否する。 */
+  procedureId?: string | null
 }
 
 export interface DeadlineView {
@@ -105,6 +110,8 @@ export interface TaskView {
   stage: FlowStageId
   category: string
   submitTo: string | null
+  /** 手続き定義 ID。null は未マッピング（案内 Context の投影に使わない）。 */
+  procedureId: string | null
   assigneeId: string | null
   dependencyTaskIds: string[]
   escalation: NonNullable<TaskEntity['escalation']> | null
@@ -135,6 +142,13 @@ export interface TaskView {
 
 function taskLocation(caseId: string, id: string): DocLocation {
   return { collection: collections.tasks, caseId, id }
+}
+
+/** 手動 Task の procedureId。null は未指定・解除として通し、未知の ID は拒否する。 */
+function validateProcedureId(procedureId: string | null | undefined): string | null {
+  if (procedureId === undefined || procedureId === null) return null
+  if (!findProcedureDefinition(procedureId)) throw errors.validationFailed({ details: { reason: 'UNKNOWN_PROCEDURE' } })
+  return procedureId
 }
 
 function evidenceLocation(caseId: string, id: string): DocLocation {
@@ -255,7 +269,7 @@ export class TaskService {
         assigneeId: input.assigneeId ?? null,
         dependencyTaskIds: input.dependencyTaskIds ?? [],
         source: 'MANUAL',
-        procedureId: null,
+        procedureId: validateProcedureId(input.procedureId),
         requiredDocuments: (input.requiredDocuments ?? []).map(ref => ({ ...ref, source: 'MANUAL' })),
         evidenceRequired: input.evidenceRequired ?? false,
         assetDisposal: input.assetDisposal ?? false,
@@ -329,6 +343,10 @@ export class TaskService {
         // 非 null を送ったときだけ具体化とみなし、以後の洗い出しで上書きしない。
         // null を送ったときは「規則の窓口に戻す」意図として RULE のまま（次の洗い出しで埋め直す）。
         patch.submitToSource = input.submitTo == null ? 'RULE' : 'MANUAL'
+      }
+      if (input.procedureId !== undefined) {
+        const procedureId = validateProcedureId(input.procedureId)
+        if (procedureId !== current.procedureId) patch.procedureId = procedureId
       }
       if (Object.keys(patch).length === 0) return
 
@@ -611,6 +629,7 @@ export class TaskService {
       stage: entity.stage,
       category: entity.category,
       submitTo: entity.submitTo,
+      procedureId: entity.procedureId ?? null,
       assigneeId: entity.assigneeId,
       dependencyTaskIds: entity.dependencyTaskIds ?? [],
       escalation: entity.escalation ?? null,

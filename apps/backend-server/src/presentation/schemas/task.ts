@@ -78,6 +78,7 @@ export const taskResourceSchema = z.object({
   stage: flowStageSchema,
   category: z.string(),
   submitTo: z.string().nullable(),
+  procedureId: idSchema.nullable(),
   assigneeId: z.string().nullable(),
   dependencyTaskIds: z.array(z.string()),
   escalation: z.object({ proposalId: z.string(), reason: z.string(),
@@ -136,6 +137,8 @@ export const createTaskBodySchema = z
     submitTo: z.string().trim().max(120).nullish(),
     evidenceRequired: z.boolean().default(false),
     assetDisposal: z.boolean().default(false),
+    /** 手続き定義 ID。存在しない ID は拒否する。 */
+    procedureId: idSchema.nullish(),
     ...taskReferences,
   })
   .strict()
@@ -148,6 +151,8 @@ export const updateTaskBodySchema = z
     title: z.string().trim().min(1).max(120).optional(),
     summary: z.string().trim().max(2000).optional(),
     submitTo: z.string().trim().max(120).nullish(),
+    /** null で解除できる。存在しない ID は拒否する。 */
+    procedureId: idSchema.nullish(),
   })
   .strict()
 

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
+import { findProcedureDefinition } from '@aftercare/internal-contracts'
 import { collections } from '../../domain/shared/collections.js'
 import type { FlowStageId, TaskEntity } from '../../domain/task/task.js'
 import { errors } from '../../shared/app-error.js'
@@ -23,6 +24,7 @@ interface TaskProposalPayload {
   assetDisposal?: boolean
   dependencyTaskIds: string[]
   requiredDocuments: { id: string; label: string }[]
+  procedureId: string | null
 }
 
 function parsePayload(payload: Record<string, unknown>): TaskProposalPayload {
@@ -37,10 +39,13 @@ function parsePayload(payload: Record<string, unknown>): TaskProposalPayload {
   }
   const extras = z.object({ dependencyTaskIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)).max(20).default([]),
     requiredDocuments: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), label: z.string().min(1).max(120) }).strict()).max(20).default([]),
+    procedureId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).nullable().optional(),
   }).safeParse(payload)
   if (!extras.success || new Set(extras.data.dependencyTaskIds).size !== extras.data.dependencyTaskIds.length || new Set(extras.data.requiredDocuments.map(doc => doc.id)).size !== extras.data.requiredDocuments.length) throw errors.validationFailed()
+  const procedureId = extras.data.procedureId ?? null
+  if (procedureId !== null && !findProcedureDefinition(procedureId)) throw errors.validationFailed({ details: { reason: 'UNKNOWN_PROCEDURE' } })
   return {
-    ...extras.data, title,
+    ...extras.data, procedureId, title,
     summary: typeof payload.summary === 'string' ? payload.summary : '',
     stage: stage as FlowStageId,
     category,
@@ -80,7 +85,7 @@ export const taskProposalApplier: ProposalApplier = {
         assigneeId: null,
         // 由来を残す。利用者入力から AI 由来を偽装できない。
         source: context.proposal.source === 'AI' ? 'AI' : 'MANUAL',
-        procedureId: null,
+        procedureId: payload.procedureId,
         dependencyTaskIds: payload.dependencyTaskIds,
         requiredDocuments: payload.requiredDocuments.map(doc => ({ ...doc, documentId: null, source: context.proposal.source === 'AI' ? 'AI' : 'MANUAL' })),
         evidenceRequired: payload.evidenceRequired ?? false,

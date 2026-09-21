@@ -171,7 +171,8 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   // 共有サービス資格情報だけの旧results endpointは本番にmountしない。
   const internalApp = executionAuthorization && env.BACKEND_INTERNAL_SERVICE_TOKEN
     ? createExecutionApp({
-        service: new InternalExecutionService(database.read, database.uow, consentService, new AgentResultIntake(database.read, database.uow), proposalService),
+        service: new InternalExecutionService(database.read, database.uow, consentService, new AgentResultIntake(database.read, database.uow), proposalService,
+          { rejectDraftDefinitions: env.NODE_ENV === 'production' }),
         authorization: executionAuthorization,
         serviceCredential: env.BACKEND_INTERNAL_SERVICE_TOKEN,
       })
@@ -227,7 +228,8 @@ export function createOutboxDispatcher(
   if (!config || !authorization) return null
   const read = new FirestoreReadRepository(dependencies.firestore)
   const uow = new ContextVersionUnitOfWork(new FirestoreUnitOfWork(dependencies.firestore))
-  const execution = new InternalExecutionService(read, uow, dependencies.consent, new AgentResultIntake(read, uow))
+  const execution = new InternalExecutionService(read, uow, dependencies.consent, new AgentResultIntake(read, uow), undefined,
+    { rejectDraftDefinitions: env.NODE_ENV === 'production' })
   return new OutboxDispatcher(dependencies.firestore, new ScopedHttpAgentJobClient(config, execution, authorization), dependencies.consent, undefined, undefined, {
     deliveryTimeoutMs: Number(env.OUTBOX_DELIVERY_TIMEOUT_MS || 15 * 60_000),
     onGiveUp: async (event, reason) => {

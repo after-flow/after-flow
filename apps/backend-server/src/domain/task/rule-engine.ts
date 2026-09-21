@@ -121,6 +121,11 @@ export interface InitialProcedure {
   applicability: ProcedureApplicability
   variants: ProcedureVariant[]
   targetDate: ProcedureTargetDate | null
+  /**
+   * 先行する手続きの ID。洗い出し時に同じ Case 内の Task ID へ解決して dependencyTaskIds に入れる。
+   * applicability が always の手続きだけを指せる（条件次第で消える Task に依存させない）。省略は依存なし。
+   */
+  dependencyProcedureIds?: string[]
 }
 
 /** 申し送りの上限値。現行カタログの実最大は 26（employer/self-employed の排他などのため）。 */

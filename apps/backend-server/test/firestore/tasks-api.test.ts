@@ -686,3 +686,42 @@ describeFirestore('権限と境界', () => {
     assert.equal(response.status, 404)
   })
 })
+
+describeFirestore('手続き定義 ID (procedureId)', () => {
+  it('手動作成の Task は procedureId が null で、存在する ID を指定でき、未知の ID は拒否する', async () => {
+    const { app, caseId } = await setup()
+    const plain = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { title: '架空の手動Task', stage: 'immediate', category: '手動' }))
+    assert.equal(plain.status, 201)
+    assert.equal(plain.body.data.procedureId, null)
+    const mapped = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { title: '死亡届（手動登録）', stage: 'immediate', category: '手動', procedureId: 'death-notification' }))
+    assert.equal(mapped.status, 201, JSON.stringify(mapped.body))
+    assert.equal(mapped.body.data.procedureId, 'death-notification')
+    const unknown = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { title: '架空の手動Task', stage: 'immediate', category: '手動', procedureId: 'unknown-procedure' }))
+    assert.equal(unknown.status, 400)
+    assert.equal(unknown.body.error.code, 'VALIDATION_FAILED')
+  })
+
+  it('procedureId を更新でき、null で解除でき、未知の ID への更新は拒否する', async () => {
+    const { app, caseId } = await setup()
+    const created = await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { title: '架空の手動Task', stage: 'immediate', category: '手動' }))
+    const updated = await call(app, `/cases/${caseId}/tasks/${created.body.data.id}`, jsonRequest('PATCH', { expectedVersion: created.body.data.version, procedureId: 'collect-family-register' }))
+    assert.equal(updated.status, 200, JSON.stringify(updated.body))
+    assert.equal(updated.body.data.procedureId, 'collect-family-register')
+    const cleared = await call(app, `/cases/${caseId}/tasks/${created.body.data.id}`, jsonRequest('PATCH', { expectedVersion: updated.body.data.version, procedureId: null }))
+    assert.equal(cleared.status, 200)
+    assert.equal(cleared.body.data.procedureId, null)
+    const unknown = await call(app, `/cases/${caseId}/tasks/${created.body.data.id}`, jsonRequest('PATCH', { expectedVersion: cleared.body.data.version, procedureId: 'unknown-procedure' }))
+    assert.equal(unknown.status, 400)
+  })
+
+  it('カタログの dependencyProcedureIds は同じ Case 内の Task ID へ解決され、DTO に procedureId が載る', async () => {
+    const { app, caseId } = await setup()
+    const list = await call(app, `/cases/${caseId}/tasks`)
+    const byProcedure = (procedureId: string) => list.body.data.find((task: { procedureId: string | null }) => task.procedureId === procedureId)
+    const division = byProcedure('estate-division'), register = byProcedure('collect-family-register'), choice = byProcedure('inheritance-choice')
+    assert.ok(division && register && choice)
+    assert.deepEqual([...division.dependencyTaskIds].sort(), [register.id, choice.id].sort())
+    assert.deepEqual(byProcedure('bank-accounts').dependencyTaskIds, [choice.id])
+    assert.deepEqual(register.dependencyTaskIds, [])
+  })
+})

@@ -47,7 +47,8 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   const tasks = new TaskService(ruleCatalog, access, read, uow, procedureSync, new StoredInheritanceDecisionReader(read))
   const unavailable: AgentJobClient = { deliver: async () => ({ status: 'RETRYABLE', reason: 'AI_NOT_CONNECTED' }) }
   const authorization = readExecutionAuthorization(env)
-  const execution = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow))
+  const execution = new InternalExecutionService(read, uow, consent, new AgentResultIntake(read, uow), undefined,
+    { rejectDraftDefinitions: env.NODE_ENV === 'production' })
   const scopedClient = config && authorization ? new ScopedHttpAgentJobClient(config, execution, authorization) : null
   const client = scopedClient ?? unavailable
   const reconciler = new RunReconciler(read, uow, execution, scopedClient ?? { status: async () => { throw new Error('AI_NOT_CONNECTED') } })

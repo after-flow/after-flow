@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { detectInsightEvents } from './insight-events.js'
 import { saveInsightResults } from './insight-results.js'
-import { planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema } from '@aftercare/internal-contracts'
+import {
+  planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema,
+  findProcedureDefinition, projectGuidanceContext, guidanceAllowlist, guidanceContextAudit,
+} from '@aftercare/internal-contracts'
 import type { ProposalVersionEntity } from '../../domain/proposal/proposal-version.js'
 import type { ApprovalEntity } from '../../domain/proposal/approval.js'
-import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent, WaitRequestInput } from '@aftercare/internal-contracts'
+import type { AiProposalInput, ContextArtifact, ContextProof, ExecutionClaims, InternalRequestMetadata, InternalResult, InternalScope, ProgressEvent, WaitRequestInput, EntityContextGroup } from '@aftercare/internal-contracts'
 import { INTERNAL_LIMITS } from '@aftercare/internal-contracts'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { CaseLeaseEntity } from '../../domain/agent/case-lease.js'
@@ -52,7 +55,7 @@ function pick(entity: EntityBase, fields: readonly string[]): Record<string, unk
   const values = entity as unknown as Record<string, unknown>
   return Object.fromEntries(['id', 'version', ...fields].filter(key => values[key] !== undefined).map(key => [key, values[key]]))
 }
-const taskFields = ['title', 'summary', 'status', 'stage', 'category', 'submitTo', 'source', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal', 'conditional']
+const taskFields = ['title', 'status', 'stage', 'category', 'submitTo', 'source', 'dependencyTaskIds', 'requiredDocuments', 'evidenceRequired', 'assetDisposal', 'conditional', 'procedureId']
 const contextCollections: [CollectionDescriptor, string[]][] = [
   [collections.persons, ['name', 'relationshipLabel', 'role', 'isHeir', 'specialCircumstance', 'excludedAt']],
   [collections.relationships, ['fromPersonId', 'toPersonId', 'kind', 'excludedAt']],
@@ -64,11 +67,23 @@ const contextCollections: [CollectionDescriptor, string[]][] = [
   [collections.deadlines, ['taskId', 'label', 'dueDate', 'startDate', 'confirmation', 'unresolvedReason', 'basis', 'basisLabel', 'jurisdiction', 'timezone', 'ruleId', 'ruleVersion', 'sourceUrl', 'sourceCheckedAt', 'extendable', 'critical']],
   [collections.decisions, ['personId', 'method', 'state']],
 ]
+/** ProcedureDefinition の Context group と Firestore collection の対応。deadlines は対象 Task に絞るため別扱い。 */
+const guidanceGroupCollections: Partial<Record<EntityContextGroup, CollectionDescriptor>> = {
+  persons: collections.persons, relationships: collections.relationships, assets: collections.assets,
+  liabilities: collections.liabilities, contracts: collections.contracts, benefits: collections.benefits, decisions: collections.decisions,
+}
+type GuidanceAudit = ReturnType<typeof guidanceContextAudit> | { procedureId: null; reason: 'PROCEDURE_UNMAPPED' }
+
+export interface InternalExecutionServiceOptions {
+  /** reviewStatus !== 'reviewed' な Definition の案内を拒否するか。本番では true にする。 */
+  rejectDraftDefinitions: boolean
+}
 
 export class InternalExecutionService {
   constructor(private readonly read: SnapshotReader, private readonly uow: UnitOfWork,
     private readonly consent: ConsentService, private readonly intake: AgentResultIntake,
-    private readonly proposals?: ProposalService) {}
+    private readonly proposals?: ProposalService,
+    private readonly options: InternalExecutionServiceOptions = { rejectDraftDefinitions: false }) {}
 
   async cancellation(tenantId: string, caseId: string, runId: string, cancelId: string) {
     const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, runId))
@@ -185,9 +200,9 @@ export class InternalExecutionService {
       if (!run) throw errors.notFound()
       const entity = await reader.get<CaseEntity>(claims.tenantId, { collection: collections.cases, caseId: null, id: claims.caseId })
       if (!entity) throw errors.notFound()
-      const content: Record<string, unknown> = { operation: run.operation,
-        case: pick(entity, ['deceasedName', 'dateOfDeath', 'knownAt', 'municipality', 'status']) }
+      const content: Record<string, unknown> = { operation: run.operation }
       content.resume = run.pendingResume ?? null
+      let guidanceAudit: GuidanceAudit | null = null
       const actions = await reader.list<ProposalEntity>(claims.tenantId, collections.proposals, claims.caseId, {
         limit: 100, where: [{ field: 'agentRunId', op: '==', value: run.id }],
       })
@@ -196,15 +211,45 @@ export class InternalExecutionService {
       if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
       if (run.operation === 'task_guidance') {
         if (run.targetType !== 'TASK') throw errors.forbidden()
-        const target = await reader.get<EntityBase>(claims.tenantId, { collection: collections.tasks, caseId: claims.caseId, id: run.targetId })
+        const target = await reader.get<EntityBase & { procedureId?: string | null }>(claims.tenantId, { collection: collections.tasks, caseId: claims.caseId, id: run.targetId })
         if (!target) throw errors.notFound()
-        content.task = pick(target, taskFields)
+        // 案内 Context は Task.procedureId → ProcedureDefinition の allowlist だけを投影する。
+        // 未マッピングの Task には Case / Task の識別子しか渡さず、手続きを推測しない。
+        const definition = target.procedureId ? findProcedureDefinition(target.procedureId) : null
+        content.task = { id: target.id, version: target.version, procedureId: target.procedureId ?? null }
+        content.documents = []
+        if (!definition) {
+          content.procedure = null
+          content.case = { id: entity.id, version: entity.version }
+          guidanceAudit = { procedureId: null, reason: 'PROCEDURE_UNMAPPED' }
+        } else {
+          if (definition.reviewStatus !== 'reviewed' && this.options.rejectDraftDefinitions) {
+            throw errors.preconditionFailed({ details: { reason: 'PROCEDURE_NOT_REVIEWED' } })
+          }
+          const allow = guidanceAllowlist(definition)
+          const entities: Partial<Record<EntityContextGroup, readonly Record<string, unknown>[]>> = {}
+          for (const group of allow.keys()) {
+            if (group === 'case' || group === 'profile') continue
+            const where = group === 'deadlines' ? [{ field: 'taskId', op: '==' as const, value: run.targetId }] : undefined
+            const collection = group === 'deadlines' ? collections.deadlines : guidanceGroupCollections[group]
+            if (!collection) continue
+            const page = await reader.list<EntityBase>(claims.tenantId, collection, claims.caseId, { limit: 100, ...(where ? { where } : {}) })
+            if (page.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED', collection: collection.name } })
+            entities[group] = page.items as unknown as Record<string, unknown>[]
+          }
+          const projection = projectGuidanceContext(definition, { case: entity as unknown as Record<string, unknown>, profile: (entity.profile ?? null) as Record<string, unknown> | null, entities })
+          Object.assign(content, projection.content)
+          content.procedure = { id: definition.id, version: definition.version, reviewStatus: definition.reviewStatus }
+          guidanceAudit = guidanceContextAudit(definition, projection)
+        }
       } else if (run.operation === 'chat_reply') {
+        content.case = pick(entity, ['dateOfDeath', 'knownAt', 'municipality', 'status'])
         if (run.targetType !== 'MESSAGE') throw errors.forbidden()
         const target = await reader.get<EntityBase>(claims.tenantId, { collection: collections.messages, caseId: claims.caseId, id: run.targetId })
         if (!target) throw errors.notFound()
         content.message = pick(target, ['role', 'body'])
       } else {
+        content.case = pick(entity, ['dateOfDeath', 'knownAt', 'municipality', 'status'])
         if (run.targetType !== 'CASE' || run.targetId !== claims.caseId) throw errors.forbidden()
         for (const [collection, fields] of contextCollections) content[collection.name] = await this.contextList(reader, claims, collection, fields)
         const [proposals, versions, approvals] = await Promise.all([
@@ -214,14 +259,16 @@ export class InternalExecutionService {
         ])
         if (proposals.nextCursor || versions.nextCursor || approvals.nextCursor) throw errors.preconditionFailed({ details: { reason: 'PLANNING_HISTORY_LIMIT_EXCEEDED' } })
         const targetTitle = (payload: Record<string, unknown>) => typeof payload.title === 'string' ? payload.title : null
+        const targetProcedureId = (payload: Record<string, unknown>) => typeof payload.procedureId === 'string' ? payload.procedureId : null
         const planningHistory = planningHistorySchema.safeParse({ complete: true,
           proposals: proposals.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, kind: p.kind, source: p.source,
             status: p.status, proposalVersion: p.proposalVersion, payloadHash: p.payloadHash, title: p.title, summary: p.summary,
             targetTitle: targetTitle(p.payload), targetTaskId: typeof p.payload.taskId === 'string' ? p.payload.taskId : null,
-            assetDisposal: p.assetDisposal, supersedesProposalVersion: p.supersedesProposalVersion })),
+            targetProcedureId: targetProcedureId(p.payload), assetDisposal: p.assetDisposal, supersedesProposalVersion: p.supersedesProposalVersion })),
           versions: versions.items.map(v => ({ proposalId: v.proposalId, proposalVersion: v.content.proposalVersion,
             payloadHash: v.content.payloadHash, title: v.content.title, summary: v.content.summary,
-            targetTitle: targetTitle(v.content.payload), supersedesProposalVersion: v.content.supersedesProposalVersion })),
+            targetTitle: targetTitle(v.content.payload), targetProcedureId: targetProcedureId(v.content.payload),
+            supersedesProposalVersion: v.content.supersedesProposalVersion })),
           approvals: approvals.items.map(a => ({ proposalId: a.proposalId, proposalVersion: a.proposalVersion, payloadHash: a.payloadHash,
             status: a.status, applicationStatus: a.applicationStatus, decisionNote: a.decisionNote, applicationFailureReason: a.applicationFailureReason })),
         })
@@ -232,30 +279,32 @@ export class InternalExecutionService {
         content.planningHistory = planningHistory.data
         content.planningRestriction = planningRestrictionSchema.parse(entity.aiPlanningRestriction ?? null)
       }
-      // 原本・ファイル名・Storage keyは含めない。検査済みでも文書本文は#27接続まで配信しない。
-      const documents = await reader.list<DocumentEntity>(claims.tenantId, collections.documents, claims.caseId, {
-        limit: 100, where: [{ field: 'inspection.status', op: '==', value: 'PASSED' }],
-      })
-      if (documents.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
-      content.documents = documents.items.filter(doc => !doc.archived && doc.storageState === 'STORED')
-        .map(doc => ({ id: doc.id, version: doc.version, kind: doc.kind, contentAvailable: false }))
-      const safeIds = new Set((content.documents as { id: string }[]).map(doc => doc.id))
-      const tasks = (content.tasks ?? (content.task ? [content.task] : [])) as Record<string, unknown>[]
-      const targetDocumentIds = new Set<string>()
-      for (const task of tasks) {
-        const refs = task.requiredDocuments as { id: string; label: string; documentId: string | null; source: string }[] | undefined
-        task.requiredDocuments = (refs ?? []).map(ref => {
-          const id = ref.documentId && safeIds.has(ref.documentId) ? ref.documentId : null
-          if (id) targetDocumentIds.add(id)
-          return { id: ref.id, label: ref.label, documentId: id, source: ref.source }
+      if (run.operation !== 'task_guidance') {
+        // 原本・ファイル名・Storage keyは含めない。検査済みでも文書本文は#27接続まで配信しない。
+        const documents = await reader.list<DocumentEntity>(claims.tenantId, collections.documents, claims.caseId, {
+          limit: 100, where: [{ field: 'inspection.status', op: '==', value: 'PASSED' }],
         })
+        if (documents.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
+        content.documents = documents.items.filter(doc => !doc.archived && doc.storageState === 'STORED')
+          .map(doc => ({ id: doc.id, version: doc.version, kind: doc.kind, contentAvailable: false }))
+        const safeIds = new Set((content.documents as { id: string }[]).map(doc => doc.id))
+        const tasks = (content.tasks ?? []) as Record<string, unknown>[]
+        const targetDocumentIds = new Set<string>()
+        for (const task of tasks) {
+          const refs = task.requiredDocuments as { id: string; label: string; documentId: string | null; source: string }[] | undefined
+          task.requiredDocuments = (refs ?? []).map(ref => {
+            const id = ref.documentId && safeIds.has(ref.documentId) ? ref.documentId : null
+            if (id) targetDocumentIds.add(id)
+            return { id: ref.id, label: ref.label, documentId: id, source: ref.source }
+          })
+        }
+        if (run.operation !== 'case_planning') {
+          content.documents = (content.documents as { id: string }[]).filter(doc => targetDocumentIds.has(doc.id))
+        }
+        if (run.operation === 'case_planning') content.insightEvents = detectInsightEvents(claims.caseId, entity.caseVersion, content)
       }
-      if (run.operation !== 'case_planning') {
-        content.documents = (content.documents as { id: string }[]).filter(doc => targetDocumentIds.has(doc.id))
-      }
-      if (run.operation === 'case_planning') content.insightEvents = detectInsightEvents(claims.caseId, entity.caseVersion, content)
       if (Buffer.byteLength(JSON.stringify(content)) > INTERNAL_LIMITS.bodyBytes) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
-      return { caseVersion: entity.caseVersion, content }
+      return { caseVersion: entity.caseVersion, content, guidanceAudit }
     })
     return this.execute(call, async (tx, run) => {
       const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: claims.caseId })
@@ -270,10 +319,15 @@ export class InternalExecutionService {
         await this.assertArtifact(tx, call, previous)
         return previous.artifact
       }
-      const artifact: ContextArtifact = { ...snapshot, contextSnapshotId: id, artifactVersion: 1,
+      const artifact: ContextArtifact = { caseVersion: snapshot.caseVersion, content: snapshot.content, contextSnapshotId: id, artifactVersion: 1,
         fencingToken: grant.fencingToken,
         contentHash: fingerprintOf(snapshot.content), expiresAt: new Date(Date.now() + 300_000).toISOString() }
       tx.create<RunArtifactEntity>(location, { id, runId: run.id, jobId: claims.jobId, executionAttempt: claims.executionAttempt, artifact })
+      if (snapshot.guidanceAudit) {
+        // 使った Definition と Context key だけを残す。値は記録しない。
+        tx.audit({ caseId: claims.caseId, type: 'agent_run.context_projected',
+          target: { collection: collections.runArtifacts.name, id, version: 1 }, detail: snapshot.guidanceAudit })
+      }
       // QUEUED→RUNNINGはイベントとして記録しない(Issue #125レビュー指摘への対応)。
       // AI側から明示のPROGRESS（`event()`）が送られない限り、公開履歴上は
       // ACCEPTED→RESULTの間に「処理中」stageが現れない。既存テスト
