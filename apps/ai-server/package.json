@@ -15,10 +15,12 @@
     "test": "pnpm contracts:build && node ../../scripts/test-workspace.mjs && node --import tsx --test \"test/**/*.test.ts\"",
     "test:firestore": "pnpm contracts:build && node ../../scripts/with-firestore-emulator.mjs -- node ../../scripts/test-ai-firestore.mjs",
     "eval:fixture": "pnpm contracts:build && tsx eval/run.ts",
-    "eval:compare": "tsx eval/compare.ts"
+    "eval:compare": "tsx eval/compare.ts",
+    "smoke:orca": "pnpm contracts:build && tsx scripts/smoke-orca.ts"
   },
   "dependencies": {
     "@aftercare/internal-contracts": "workspace:*",
+    "@ai-sdk/openai-compatible": "1.0.54",
     "@google-cloud/firestore": "9.2.0",
     "@hono/node-server": "2.1.1",
     "@mastra/core": "1.67.0",
