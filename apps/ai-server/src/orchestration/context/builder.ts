@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { artifactEnvelopeSchema, contextProofSchema, internalId, operationSchema, planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema } from '@aftercare/internal-contracts'
+import { artifactEnvelopeSchema, contextProofSchema, internalId, operationSchema, planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema, insightEventSchema } from '@aftercare/internal-contracts'
 import type { ContextProof, PlanningHistory, PlanningRestriction, ClarificationHistory } from '@aftercare/internal-contracts'
 import { researchBriefSchema } from '../research/contracts.js'
 
@@ -101,7 +101,7 @@ const contentSchema = z.object({
   // Execution control metadata stays outside the LLM context, in the harness.
   actions: z.array(z.unknown()).max(100).optional(), resume: z.unknown().optional(),
   planningHistory: planningHistorySchema.optional(), clarificationHistory: clarificationHistorySchema.optional(), unresolvedQuestions: z.array(z.string().min(1).max(300)).max(20).optional(),
-  planningRestriction: planningRestrictionSchema.optional(),
+  planningRestriction: planningRestrictionSchema.optional(), insightEvents: z.array(insightEventSchema).max(20).optional(),
 }).strict()
 
 export function buildCoreContext(input: unknown, operation: CoreContext['operation'], options: { now?: number; maxBytes?: number } = {}): CoreContext {
@@ -117,7 +117,7 @@ export function buildCoreContext(input: unknown, operation: CoreContext['operati
     if ((operation === 'task_guidance' && !content.task) || (operation === 'chat_reply' && !content.message)) throw new ContextError('INVALID_CONTEXT')
     const facts: ContextFact[] = []
     for (const [group, value] of Object.entries(content)) {
-      if (['operation', 'documents', 'actions', 'resume', 'planningHistory', 'planningRestriction', 'clarificationHistory', 'unresolvedQuestions'].includes(group)) continue
+      if (['operation', 'documents', 'actions', 'resume', 'planningHistory', 'planningRestriction', 'clarificationHistory', 'unresolvedQuestions', 'insightEvents'].includes(group)) continue
       const allowedFields: readonly string[] = group === 'tasks' ? fields.task : fields[group as keyof typeof fields]
       if (!allowedFields) throw new ContextError('INVALID_CONTEXT')
       for (const entity of (Array.isArray(value) ? value : [value]) as Record<string, unknown>[]) {

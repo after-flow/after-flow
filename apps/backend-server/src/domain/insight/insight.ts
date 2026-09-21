@@ -20,6 +20,8 @@ export interface InsightEvidence extends EvidenceRef {
  * 正式な財産・契約・事実ではなく、利用者が自分で確かめるための指摘に留まる。
  */
 export interface Insight extends CaseEntity {
+  basisCaseVersion?: number
+  eventId?: string
   kind: InsightKind
   body: string
   evidence: InsightEvidence[]

@@ -17,7 +17,7 @@
 | Insight | Backend検出イベントの根拠/対象版照合、安定result ID、別の書類要求/引継ぎProposal候補 | [気づき](EVENT_INSIGHTS.md) |
 | 評価 | 標準Datasets/Experiments/Scorer、32合成ケース、各3回、全試行保存、比較CLI、PR/手動CI | [評価](EVALUATION.md) |
 
-P-03は1 Runで1件の正式提案を処理する。承認で案件が変わるため、残りは要確認として新Runで再計画する。承認待ち中にTemplate/根拠の有効性が変わった場合も成功にせず要確認を返す。実行途中の任意位置からのCHECKPOINT再開は提供しない。
+P-03は1 Runで1件の正式提案を処理する。承認で案件が変わるため、残りは要確認として、回答/再試行から同じRunの新attemptで再計画する。承認待ち中にTemplate/根拠の有効性が変わった場合も成功にせず要確認を返す。実行途中の任意位置からのCHECKPOINT再開は提供しない。
 
 ## 現在の起動状態と残る依存
 
@@ -30,7 +30,7 @@ P-03は1 Runで1件の正式提案を処理する。承認で案件が変わる�
 | 対応業務 | P-01/P-03/P-04の対象機関・手続きの公式資料レビュー、Source Catalog/Templateの確定 |
 | P-02の接続 | Backendの検査済み加工版配信と同意制御、実PDF/画像OCR、抽出Fieldから正式Proposalへのレビュー済み対応 |
 | P-04の接続 | Backend生成Artifact保存/承認契約、書類待ち・生成物承認待ちの実データ接続 |
-| Insightの接続 | Backend検出イベントの配信契約、内部resultのInsight variant、Case/eventごとの永続重複抑止 |
+| Insightの追加起動経路 | 計画Context→結果→公開一覧は接続済み。定期検査イベント専用Runのスケジューラは未接続 |
 | 運用/実評価 | 専用クラウドIAM・秘密鍵・保持/削除条件、実モデル/実Orchの品質・費用・性能、実資料での人による評価校正 |
 
 これらの未確定契約や資格情報を推測で埋めない。接続用Portと実処理はあるが、未提供Backend APIを架空のパスへ送信しない。Workflowへの入力は信頼済みcomposition rootが認証付き内部HTTPから取得し、モデルの自己申告を認可証拠にしない。

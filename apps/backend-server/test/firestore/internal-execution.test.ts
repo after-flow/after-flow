@@ -1,3 +1,4 @@
+import { fingerprintOf } from '../../src/shared/fingerprint.js'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
@@ -101,6 +102,32 @@ async function setup(t: TestContext) {
 }
 
 describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
+  it('Backend検出イベントの気づきを公開APIへ保存し、Runを跨ぐ重複と古い根拠を扱う', async t => {
+    const h = await setup(t)
+    const created = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '書類の確認', stage: 'government', category: 'fixture',
+      requiredDocuments: [{ id: 'required-one', label: '合成確認資料', documentId: null }] }))
+    assert.equal(created.status, 201)
+    const task = created.body.data
+    const exec = await h.accept(), context = await h.context(exec)
+    const event = (context.content.insightEvents as any[]).find(e => e.task.id === task.id)
+    assert.equal(event.kind, 'DOCUMENTS_MISSING')
+    const insight = { eventId: event.id, resultId: fingerprintOf({ caseId: h.caseId, eventId: event.id, version: 'event-insights-v1' }),
+      kind: 'MISSING_DOCUMENT', body: '登録済みの必要書類を確認してください。', relatedTaskId: task.id, relatedTaskTitle: task.title,
+      evidence: [{ label: task.title, value: '合成確認資料', taskId: task.id, capturedVersion: task.version }], requiresProfessional: false, professionalReviewNote: null }
+    const result = { ...proof(context), resultId: randomUUID(), kind: 'case_planning', status: 'NEEDS_ATTENTION', insights: [insight] }
+    assert.equal((await h.request(exec, 'result', { ...result, insights: [{ ...insight, eventId: 'forged' }] })).status, 409)
+    assert.equal((await h.request(exec, 'result', { ...result, insights: [{ ...insight, relatedTaskId: 'foreign' }] })).status, 403)
+    assert.equal((await h.request(exec, 'result', result)).status, 200)
+    let listed = await call(h.app, `/cases/${h.caseId}/insights`)
+    assert.equal(listed.body.data.length, 1); assert.equal(listed.body.data[0].evidence[0].freshness, 'CURRENT')
+    const next = await h.accept(), latest = await h.context(next)
+    assert.equal((await h.request(next, 'result', { ...result, ...proof(latest), resultId: randomUUID() })).status, 200)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/insights`)).body.data.length, 1)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/tasks/${task.id}`, jsonRequest('PATCH', { expectedVersion: task.version, title: '修正した書類確認' }))).status, 200)
+    listed = await call(h.app, `/cases/${h.caseId}/insights`)
+    assert.equal(listed.body.data[0].evidence[0].freshness, 'STALE')
+  })
+
   it('取消をOutboxへ保存し、保存済み旧attemptだけに停止を配送する', async t => {
     const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
     const current = (await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)).body.data

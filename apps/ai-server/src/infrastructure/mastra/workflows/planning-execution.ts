@@ -1,8 +1,9 @@
+import { buildEventInsight } from '../../../orchestration/playbooks/event-insights.js'
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { contentHash, buildPlanningContext } from '../../../orchestration/context/builder.js'
 import type { RunSummary } from '@aftercare/internal-contracts'
-import { contextProofSchema, internalId } from '@aftercare/internal-contracts'
+import { contextProofSchema, internalId, insightEventSchema, insightDraftSchema } from '@aftercare/internal-contracts'
 import { createCasePlanningWorkflow, planningOutputSchema } from './case-planning.js'
 import { proposalActions, proposalInputSchema, proposalSubmittedSchema } from './proposal.js'
 import type { ProposalWorkflowDependencies } from './proposal.js'
@@ -55,8 +56,18 @@ export function createPlanningExecutionWorkflow(deps: Parameters<typeof createCa
       const latest = await deps.backend.context({ signal: deps.signal })
       const restricted = buildPlanningContext(latest).planningRestriction !== null
       const status = !restricted && inputData.outcome === 'APPLIED' && currentReview(inputData.plan) && !remaining && !inputData.plan.questions.length ? 'SUCCEEDED' as const : 'NEEDS_ATTENTION' as const
+      const events = z.array(insightEventSchema).max(20).parse(latest.content.insightEvents ?? [])
+      const caseId = z.object({ id: internalId }).parse(latest.content.case).id
+      const tasks = z.array(z.object({ id: internalId, version: z.number().int().positive() })).parse(latest.content.tasks ?? [])
+      const insights = events.flatMap(event => {
+        const task = tasks.find(task => task.id === event.task.id)
+        if (!task) throw new Error('Insight task is outside the current Context')
+        const result = buildEventInsight(event, { caseId, caseVersion: latest.caseVersion, taskId: task.id, taskVersion: task.version })
+        // Display-only. Formal document requests/escalations remain on the separate Proposal approval path.
+        return result.insight ? [insightDraftSchema.parse({ ...result.insight, eventId: event.id, resultId: result.resultId })] : []
+      })
       const proof = contextProofSchema.parse(latest)
-      const response = await deps.backend.result({ ...proof, resultId, kind: 'case_planning', status, output: {
+      const response = await deps.backend.result({ ...proof, resultId, kind: 'case_planning', status, insights, output: {
         summary: status === 'SUCCEEDED' ? '承認された手続きの反映を確認しました。' : '計画には追加の確認が必要です。',
         completed: inputData.outcome === 'APPLIED' && inputData.proposal ? [`${inputData.proposal.draft.title}の正式反映を確認`] : [],
         questions: inputData.plan.questions,
