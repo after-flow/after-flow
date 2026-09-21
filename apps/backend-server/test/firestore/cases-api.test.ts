@@ -357,3 +357,53 @@ describeFirestore('業務機能が未接続の場合', () => {
     assert.equal(response.body.error.code, 'FEATURE_NOT_CONNECTED')
   })
 })
+
+
+describeFirestore('AI planning restriction', () => {
+  it('owner can pause and clear planning with versions, idempotency and a reason-free audit', async () => {
+    const { app, tenantId } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'planning-create'))
+    const id = created.body.data.id, url = `/cases/${id}/ai-planning-restriction`
+    assert.equal(created.body.data.aiPlanningRestriction, null)
+    const request = patch({ expectedVersion: 1, restriction: { reason: '  private pause reason  ' } }, 'planning-pause')
+    const paused = await call(app, url, request)
+    assert.equal(paused.status, 200, JSON.stringify(paused.body))
+    assert.deepEqual(paused.body.data.aiPlanningRestriction, { reason: 'private pause reason' })
+    assert.equal(paused.body.data.caseVersion, 2)
+    assert.equal((await call(app, url, request)).body.data.version, 2)
+    assert.equal((await call(app, url, patch({ expectedVersion: 1, restriction: null }))).status, 409)
+    const noop = await call(app, url, patch({ expectedVersion: 2, restriction: { reason: 'private pause reason' } }))
+    assert.equal(noop.body.data.caseVersion, 2)
+    const cleared = await call(app, url, patch({ expectedVersion: 2, restriction: null }))
+    assert.equal(cleared.status, 200)
+    assert.equal(cleared.body.data.aiPlanningRestriction, null)
+    assert.equal(cleared.body.data.caseVersion, 3)
+    const audits = await firestore().collection(`tenants/${tenantId}/cases/${id}/auditEvents`).get()
+    const restrictions = audits.docs.filter(d => d.get('type') === 'case.ai_planning_restriction_changed')
+    assert.equal(restrictions.length, 2)
+    assert.equal(JSON.stringify(restrictions.map(d => d.data())).includes('private pause reason'), false)
+  })
+
+  it('editors, viewers and outsiders cannot remove an owner restriction; malformed input is rejected', async () => {
+    const { app, tenantId, userId } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'planning-authorization'))
+    const id = created.body.data.id, url = `/cases/${id}/ai-planning-restriction`
+    for (const restriction of [{ reason: '' }, { reason: 'x'.repeat(1001) }, { reason: 'valid', ignore: true }]) {
+      assert.equal((await call(app, url, patch({ expectedVersion: 1, restriction }))).status, 400)
+    }
+    assert.equal((await call(app, url, patch({ expectedVersion: 1, restriction: { reason: 'pause' } }))).status, 200)
+    assert.equal((await call(app, `/cases/${id}`, patch({ expectedVersion: 2, aiPlanningRestriction: null }))).status, 400)
+    for (const role of ['EDITOR', 'VIEWER'] as const) {
+      await unitOfWork().run(workContext(tenantId), async tx => {
+        const location = { collection: collections.caseMembers, caseId: id, id: userId }
+        const current = await tx.require(location)
+        tx.update(location, current.version, { role })
+      })
+      assert.equal((await call(app, url, patch({ expectedVersion: 2, restriction: null }))).status, 403)
+    }
+    await seedTenantMember(tenantId, 'outsider')
+    const outsider = await appFor(tenantId, 'outsider')
+    assert.equal((await call(outsider, url, patch({ expectedVersion: 2, restriction: null }))).status, 404)
+    assert.deepEqual((await call(app, `/cases/${id}`)).body.data.aiPlanningRestriction, { reason: 'pause' })
+  })
+})

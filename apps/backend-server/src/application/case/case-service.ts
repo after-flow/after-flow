@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { CaseAction, CaseResource } from '@aftercare/public-contracts'
 import type { CaseEntity } from '../../domain/case/case.js'
 import { nextCaseVersion } from '../../domain/case/case.js'
+import { roleAllows } from '../../domain/authorization/case-role.js'
+import type { TenantMember } from '../authorization/case-access.js'
 import type { CaseMember } from '../../domain/authorization/case-role.js'
 import { collections } from '../../domain/shared/collections.js'
 import { errors } from '../../shared/app-error.js'
@@ -72,6 +74,7 @@ export function toCaseResource(entity: CaseEntity, access: CaseAccess): CaseReso
     ownerName: entity.ownerName,
     relationshipToDeceased: entity.relationshipToDeceased,
     municipality: entity.municipality,
+    aiPlanningRestriction: entity.aiPlanningRestriction ?? null,
     status: entity.status,
     version: entity.version,
     caseVersion: entity.caseVersion,
@@ -111,6 +114,7 @@ export class CaseService {
           ownerName: input.ownerName,
           relationshipToDeceased: input.relationshipToDeceased,
           municipality: input.municipality ?? null,
+          aiPlanningRestriction: null,
           status: 'ACTIVE',
           caseVersion: 1,
         }
@@ -245,6 +249,31 @@ export class CaseService {
       }
     })
 
+    return toCaseResource(await this.requireCase(user.tenantId, caseId), access)
+  }
+
+  /** Owner-only command; reasons are data, never instructions for the Agent. */
+  async setPlanningRestriction(user: AuthenticatedUser, caseId: string, expectedVersion: number,
+    restriction: { reason: string } | null, meta: CommandMeta): Promise<CaseResource> {
+    const access = await this.access.authorizeCase(user, caseId, 'case.administer')
+    await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async tx => {
+      const member = await tx.get<CaseMember>(memberLocation(caseId, user.userId))
+      const tenant = await tx.get<TenantMember>({ collection: collections.members, caseId: null, id: user.userId })
+      if (!member?.active || member.userId !== user.userId || !roleAllows(member.role, 'case.administer')
+        || !tenant?.active || tenant.userId !== user.userId) throw errors.forbidden()
+      const current = await tx.require<CaseEntity>(caseLocation(caseId))
+      if (current.version !== expectedVersion) throw errors.conflict()
+      if (current.status !== 'ACTIVE') throw errors.preconditionFailed()
+      const normalized = restriction === null ? null : { reason: restriction.reason.trim() }
+      if (normalized && (!normalized.reason || normalized.reason.length > 1000)) throw errors.validationFailed()
+      if ((current.aiPlanningRestriction?.reason ?? null) === (normalized?.reason ?? null)) return
+      tx.update<CaseEntity>(caseLocation(caseId), expectedVersion, {
+        aiPlanningRestriction: normalized, caseVersion: nextCaseVersion(current.caseVersion),
+      })
+      tx.audit({ caseId, type: 'case.ai_planning_restriction_changed',
+        target: { collection: collections.cases.name, id: caseId, version: expectedVersion + 1 },
+        detail: { restricted: normalized !== null } })
+    })
     return toCaseResource(await this.requireCase(user.tenantId, caseId), access)
   }
 
