@@ -51,6 +51,20 @@ export type AiServiceComposition = AiServiceBase & (
   | { orca?: never; models: Parameters<typeof createAuthorizedModels>[0]['models']; orch: OrchRouter }
 )
 
+export function assertResearchScopeCatalogs(scopeInput: unknown, catalogInputs: readonly OfficialCatalog[]) {
+  const scope = reviewedResearchScopeSchema.parse(scopeInput)
+  const catalogs = new Map(catalogInputs.map(input => {
+    const catalog = officialCatalogSchema.parse(input)
+    return [catalog.id, catalog] as const
+  }))
+  for (const id of scope.sourceCatalogIds) {
+    const catalog = catalogs.get(id)
+    if (!catalog) throw new Error('Research scope references an unconfigured catalog')
+    if (scope.sourceCatalogVersions[id] !== catalog.version) throw new Error('Research scope catalog version mismatch')
+  }
+  return scope
+}
+
 /** Real storage/client/handlers/worker wiring. Missing external integrations are errors, never fixture fallbacks. */
 export async function startConfiguredAiService(config: AiServiceComposition, listen: { port: number; hostname?: string; shutdownMs?: number }) {
   if (!config.serviceToken.trim() || (!config.orca && typeof config.orch?.route !== 'function') || typeof config.grant !== 'function' || typeof config.recordMetric !== 'function') throw new Error('Authenticated model/provider composition is required')
@@ -85,8 +99,7 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
     const storage = createRuntimeStore(db), snapshots = new FirestoreWorkflowsStorage(db)
     const prepare = async (session: ExecutionSession) => {
       await session.guard()
-      const scope = reviewedResearchScopeSchema.parse(await config.researchScope(session.context))
-      if (scope.sourceCatalogIds.some(id => !catalogIds.has(id))) throw new Error('Research scope references an unconfigured catalog')
+      const scope = assertResearchScopeCatalogs(await config.researchScope(session.context), catalogs)
       const authorize = async (role: 'core' | 'research') => {
         const dataClass = role === 'core' ? 'minimized_case' as const : 'public_research' as const
         const options = { request: { requestId: randomUUID(), operation: session.receipt.operation, role, dataClass,

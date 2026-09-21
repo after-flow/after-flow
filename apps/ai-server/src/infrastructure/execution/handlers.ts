@@ -12,6 +12,7 @@ import { createPlanningExecutionWorkflow, PLANNING_EXECUTION } from '../mastra/w
 import type { GuidanceAgentDependencies } from '../mastra/agents/guidance-agents.js'
 import type { FirestoreWorkflowsStorage } from '../runtime-storage/workflows.js'
 import { assertAuthorizedModelSet } from '../mastra/authorized-models.js'
+import { ClassifiedExecutionError, classifyWorkflowFailure } from '../../application/execution/contracts.js'
 
 type Prepared<T> = Omit<T, 'backend' | 'signal' | 'budget'> & { budget: AgentBudget }
 interface HandlerConfig<T> {
@@ -25,6 +26,8 @@ export function guidanceWorkflowAction(status: WorkflowRunState['status'] | null
   if (status === 'success') return 'complete'
   return 'fail'
 }
+const workflowFailure = (result: { status: string } & Record<string, unknown>) =>
+  new ClassifiedExecutionError(classifyWorkflowFailure('error' in result ? result.error : result.status))
 function bindBudget(prepared: Pick<GuidanceAgentDependencies, 'models'> & { budget: AgentBudget }, session: ExecutionSession): AgentBudget {
   if (prepared.budget.inferenceChargedByProviderAdapter || Array.isArray(prepared.models.core) || Array.isArray(prepared.models.research)) {
     assertAuthorizedModelSet(prepared.models.core, { charge: session.guard, role: 'core', operation: session.receipt.operation })
@@ -51,7 +54,7 @@ export function createGuidanceHandler(config: HandlerConfig<ProcedureGuidanceDep
         : action === 'start'
           ? await run.start({ inputData: { resultId } })
           : { status: 'failed' as const }
-    if (result.status !== 'success') throw new Error('Guidance workflow did not complete')
+    if (result.status !== 'success') throw workflowFailure(result)
     return 'COMPLETED'
   } }
 }
@@ -65,7 +68,7 @@ export function createChatHandler(config: HandlerConfig<ChatReplyDependencies>):
     const run = await mastra.getWorkflow('workflow').createRun({ runId: session.receipt.workflowRunId })
     const resultId = contentHash({ jobId: session.receipt.jobId, kind: 'chat-result' })
     const result = await run.start({ inputData: { resultId } })
-    if (result.status !== 'success') throw new Error('Chat workflow did not complete')
+    if (result.status !== 'success') throw workflowFailure(result)
     return 'COMPLETED'
   } }
 }
@@ -95,7 +98,7 @@ export function createPlanningHandler(config: {
     const result = resume?.kind === 'WAIT' ? await run.resume({ resumeData: { resume: true } }) :
       await run.start({ inputData: { runId: session.receipt.runId, resultId: contentHash({ runId: session.receipt.runId, jobId: session.receipt.jobId, kind: 'planning-result' }) } })
     if (result.status === 'suspended') return 'WAITING'
-    if (result.status !== 'success') throw new Error('Planning execution did not complete')
+    if (result.status !== 'success') throw workflowFailure(result)
     return 'COMPLETED'
   } }
 }
