@@ -31,7 +31,16 @@ const QUANTITY = /\d+(?:\.\d+)?(?:円|年|か月|ヶ月|カ月|箇月|週間|営
 
 function quantities(text: string): string[] {
   const normalized = text.normalize('NFKC').replace(/(\d),(?=\d)/g, '$1').replace(/\s+/g, '')
+    // 「5万円」と「50,000円」を同じ数量として比べる。
+    .replace(/(\d+(?:\.\d+)?)万/g, (_, value: string) => String(Math.round(Number(value) * 10000)))
   return [...new Set(normalized.match(QUANTITY) ?? [])]
+}
+
+/** URL。案内に載せるURLは引用に書かれたものだけにする。 */
+const URL_PATTERN = /https?:\/\/[^\s、。「」（）()<>"']+/gu
+
+function urls(text: string): string[] {
+  return [...new Set(text.normalize('NFKC').match(URL_PATTERN) ?? [])].map(url => url.replace(/[.,]+$/, ''))
 }
 
 export type ClaimKind = 'where' | 'bring' | 'steps'
@@ -46,7 +55,7 @@ export interface GroundedClaim {
 
 export interface ModelClaim { text: string; questionIds: string[] }
 
-export type DropReason = 'NO_EVIDENCE' | 'UNSUPPORTED_QUANTITY' | 'UNSUPPORTED_TERM' | `PROHIBITED:${string}`
+export type DropReason = 'NO_EVIDENCE' | 'UNSUPPORTED_QUANTITY' | 'UNSUPPORTED_URL' | 'UNSUPPORTED_TERM' | `PROHIBITED:${string}`
 
 export interface GroundingOutcome {
   where: GroundedClaim | null
@@ -69,7 +78,7 @@ const DROPPED_MESSAGE: Record<ClaimKind, string> = {
 /**
  * 1件の主張を検証する。
  *
- * 根拠は、主張が指した問いへの検証済み回答の引用だけ。数量（金額・期限）と
+ * 根拠は、主張が指した問いへの検証済み回答の引用だけ。数量（金額・期限）、URL、
  * 注意すべき語は引用に同じものが書かれている必要がある。
  */
 function groundClaim(claim: ModelClaim, answers: ReadonlyMap<string, EvidenceQuote[]>, rules: GroundingRules):
@@ -79,6 +88,8 @@ function groundClaim(claim: ModelClaim, answers: ReadonlyMap<string, EvidenceQuo
   const quoted = quoteKey(evidence.map(item => item.quote).join(' '))
   const quotedQuantities = new Set(quantities(evidence.map(item => item.quote).join(' ')))
   if (quantities(claim.text).some(value => !quotedQuantities.has(value))) return { ok: false, reason: 'UNSUPPORTED_QUANTITY' }
+  // 任意のURLへ誘導しない。出典URLはハーネスがcitationsとして別に付ける。
+  if (urls(claim.text).some(url => !quoted.includes(quoteKey(url)))) return { ok: false, reason: 'UNSUPPORTED_URL' }
   const text = quoteKey(claim.text)
   if (rules.guardedTerms.some(term => text.includes(quoteKey(term)) && !quoted.includes(quoteKey(term)))) {
     return { ok: false, reason: 'UNSUPPORTED_TERM' }
