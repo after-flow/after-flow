@@ -76,6 +76,18 @@ pnpm dev                # 3プロセスを並列起動
 pnpm dev:web            # フロントエンドのみ
 ```
 
+### Backend開発用Codex Skill
+
+新しくBackend開発へ参加する場合は、リポジトリ同梱のSkillをCodexのSkillsディレクトリへリンクできます。
+
+```sh
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
+ln -s "$PWD/skills/after-flow-backend-development" \
+  "${CODEX_HOME:-$HOME/.codex}/skills/after-flow-backend-development"
+```
+
+Codexでは `$after-flow-backend-development` を指定すると、Backendの責務境界、現在の実装状況、次のIssue、必要な検証手順を読み込めます。Issueの状態は変化するため、Skillは実装前にGitHubの現在状態を確認します。
+
 サービス単位でも操作できます。
 
 ```sh
@@ -140,6 +152,8 @@ packages/
 scripts/
   verify-boundaries.mjs     workspace依存・import境界・AIへのデータ設定分離の検証
   with-firestore-emulator.mjs Firestore Emulatorを起動してコマンドを実行
+skills/
+  after-flow-backend-development/ Backend開発・Issue選定・オンボーディング用Codex Skill
 docs/
   architecture.md           提供された仕様書を内容変更せず移動
   adr/                      未確定事項と決定の記録
