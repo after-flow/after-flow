@@ -225,6 +225,7 @@ export class ProposalService {
     await assertLease(tx, caseId, current.id, input.fencingToken)
     const entity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
     if (entity.caseVersion !== input.caseVersion) throw errors.conflict({ details: { reason: 'STALE_CONTEXT' } })
+    if (entity.aiPlanningRestriction) throw errors.preconditionFailed({ details: { reason: 'AI_PLANNING_RESTRICTED' } })
     const applier = this.appliers.get(input.kind)
     if (!applier) throw errors.featureNotConnected()
     applier.validate?.(input.payload)
@@ -597,6 +598,9 @@ export class ProposalService {
           },
           internal: { staleProposalId: approval.proposalId, staleProposalEntityVersion: proposal.version },
         })
+      }
+      if (proposal.source === 'AI' && caseEntity.aiPlanningRestriction) {
+        throw errors.preconditionFailed({ details: { reason: 'AI_PLANNING_RESTRICTED' } })
       }
       await this.assertBasisBelongsToCase(tx, caseId, proposal.basis)
       await preserveVersion(tx, caseId, proposal.id, proposalContent(proposal))

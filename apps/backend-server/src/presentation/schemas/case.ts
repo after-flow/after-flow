@@ -11,6 +11,11 @@ import { idSchema, isoDateSchema, isoDateTimeSchema, expectedVersionSchema } fro
 const nameSchema = z.string().trim().min(1).max(100)
 const municipalitySchema = z.string().trim().min(1).max(50)
 
+export const aiPlanningRestrictionSchema = z.object({ reason: z.string().trim().min(1).max(1000) }).strict()
+export const updatePlanningRestrictionBodySchema = z.object({
+  expectedVersion: expectedVersionSchema, restriction: aiPlanningRestrictionSchema.nullable(),
+}).strict()
+
 export const caseStatusSchema = z.enum(['ACTIVE', 'CLOSED'])
 export const caseActionSchema = z.enum(['UPDATE_BASIC_INFO', 'ADMINISTER'])
 
@@ -24,6 +29,7 @@ export const caseResourceSchema = z.object({
   ownerName: z.string(),
   relationshipToDeceased: z.string(),
   municipality: z.string().nullable(),
+  aiPlanningRestriction: aiPlanningRestrictionSchema.nullable(),
   status: caseStatusSchema,
   version: z.number().int(),
   caseVersion: z.number().int(),

@@ -265,6 +265,36 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
       expectedVersion: approval.version, proposalVersion: submitted.proposalVersion, payloadHash: submitted.payloadHash,
     }))
   }
+  it('owner restriction rejects AI proposals with a fresh Context but preserves manual task creation', async t => {
+    const h = await setup(t)
+    const current = (await call(h.app, `/cases/${h.caseId}`)).body.data
+    const paused = await call(h.app, `/cases/${h.caseId}/ai-planning-restriction`, jsonRequest('PATCH', {
+      expectedVersion: current.version, restriction: { reason: '本人の確認まで停止' },
+    }))
+    assert.equal(paused.status, 200)
+    const exec = await h.accept(), context = await h.context(exec)
+    const response = await h.request(exec, 'proposals', proposal(context))
+    assert.equal(response.status, 409, JSON.stringify(response.body))
+    assert.equal(response.body.error.details.reason, 'AI_PLANNING_RESTRICTED')
+    assert.equal((await call(h.app, `/cases/${h.caseId}/proposals`)).body.data.length, 0)
+    const manual = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', { title: '利用者の手続き', category: '手動', stage: 'immediate' }))
+    assert.equal(manual.status, 201)
+  })
+
+  it('pausing after submission invalidates the Context and pending AI approval', async t => {
+    const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
+    const submitted = await h.request(exec, 'proposals', proposal(context))
+    assert.equal(submitted.status, 200)
+    const current = (await call(h.app, `/cases/${h.caseId}`)).body.data
+    assert.equal((await call(h.app, `/cases/${h.caseId}/ai-planning-restriction`, jsonRequest('PATCH', {
+      expectedVersion: current.version, restriction: { reason: '計画を見直す' },
+    }))).status, 200)
+    assert.equal((await h.request(exec, 'proposals', proposal(context))).status, 409)
+    const response = await approve(h, submitted.body.data)
+    assert.equal(response.status, 409)
+    assert.equal((await call(h.app, `/cases/${h.caseId}/assets`)).body.data.length, 0)
+  })
+
   it('AI Task提案は承認時に依存と必要書類を反映し、不明・循環する依存を拒否する', async t => {
     for (const variant of ['valid', 'foreign', 'cycle']) {
       const h = await setup(t)
