@@ -13,12 +13,13 @@ import { AppError, errors } from '../../shared/app-error.js'
 import { fingerprintOf } from '../../shared/fingerprint.js'
 import type { ReadRepository, Tx, UnitOfWork } from '../ports/persistence.js'
 import type { ExecutionSnapshots } from '../ports/execution-snapshots.js'
+import type { OutboxJobReader, OutboxJobState } from '../ports/outbox-jobs.js'
 import type { InternalExecutionService } from './internal-execution-service.js'
 import type { LocalOutboxHandler } from './outbox-dispatcher.js'
 import { leaseLocation, releaseLease } from './lease-service.js'
 import { recordWaiting, waitLocation } from './wait-requests.js'
 import { recordRunTransitionEvent } from './agent-run-events.js'
-import { failGuidanceForRun } from './run-termination.js'
+import { failGuidanceForRun, terminateQueuedRun } from './run-termination.js'
 
 const runLocation = (caseId: string, id: string) => ({ collection: collections.agentRuns, caseId, id })
 const inboxTypes = new Set(['proposal.applied', 'approval.rejected', 'document.registered'])
@@ -27,7 +28,10 @@ const inboxTypes = new Set(['proposal.applied', 'approval.rejected', 'document.r
 export class RunReconciler implements LocalOutboxHandler {
   readonly types = new Set([...inboxTypes, 'approval.requested', 'consent.revoked'])
   constructor(private readonly read: ReadRepository, private readonly uow: UnitOfWork,
-    private readonly execution: InternalExecutionService, private readonly snapshots: ExecutionSnapshots) {}
+    private readonly execution: InternalExecutionService, private readonly snapshots: ExecutionSnapshots,
+    private readonly outbox: OutboxJobReader, private readonly agentStartTimeoutMs = 600_000) {
+    if (!Number.isFinite(agentStartTimeoutMs) || agentStartTimeoutMs <= 0) throw new Error('agentStartTimeoutMs must be positive')
+  }
 
   async deliverLocal(event: OutboxEvent) {
     if (!inboxTypes.has(event.type)) return { status: 'ACCEPTED' as const }
@@ -73,13 +77,18 @@ export class RunReconciler implements LocalOutboxHandler {
       if (isRunTerminal(run.status) || run.status === 'NEEDS_ATTENTION' || !run.currentJobId) return null
       if (!await this.authorizeOrStop(tx, run)) return null
       const wait = run.activeWaitRequestId ? await tx.require<WaitRequestEntity>(waitLocation(caseId, run.activeWaitRequestId)) : null
-      if (!wait && run.status !== 'RUNNING') return null
+      if (!wait && run.status !== 'RUNNING' && run.status !== 'QUEUED') return null
+      if (run.status === 'QUEUED') return { run, wait: null }
       const lease = await tx.get<CaseLeaseEntity>(leaseLocation(caseId))
       if (!wait && lease?.holderRunId === run.id && lease.fencingToken === run.fencingToken && !isLeaseExpired(lease, Date.now())) return null
       return { run, wait }
     })
     if (!candidate) return
     const { run, wait } = candidate
+    if (run.status === 'QUEUED') {
+      await this.reconcileQueued(tenantId, caseId, run)
+      return
+    }
     const query = { runId, jobId: run.currentJobId!, executionAttempt: run.currentAttemptId, waitRequestId: wait?.id ?? null }
     const snapshot = await this.snapshots.status(query)
     if (snapshot.runId !== runId || snapshot.jobId !== query.jobId || snapshot.executionAttempt !== query.executionAttempt
@@ -132,6 +141,52 @@ export class RunReconciler implements LocalOutboxHandler {
           snapshot.state === 'RUNNING_CHECKPOINT' ? 'CHECKPOINT' : 'RETRY', 'RECOVERED', null)
       })
     }
+  }
+
+  private async reconcileQueued(tenantId: string, caseId: string, run: AgentRunEntity): Promise<void> {
+    const jobId = run.currentJobId!
+    const outbox = await this.outbox.get(tenantId, jobId)
+    if (outbox?.status === 'PENDING' || outbox?.status === 'IN_FLIGHT') return
+    if (outbox?.status === 'DELIVERED'
+      && Date.parse(outbox.updatedAt) > Date.now() - this.agentStartTimeoutMs) return
+
+    const termination = this.queuedTermination(outbox)
+    if (!termination) return
+    await this.uow.run({
+      tenantId,
+      actor: { type: 'SYSTEM', userId: null, agentRunId: run.id },
+      requestId: null,
+    }, async tx => {
+      const current = await tx.require<AgentRunEntity>(runLocation(caseId, run.id))
+      if (current.status !== 'QUEUED' || current.currentJobId !== jobId
+        || current.currentAttemptId !== run.currentAttemptId) return
+      await terminateQueuedRun(tx, caseId, current, termination)
+      await recordRunTransitionEvent(tx, current, 'RESULT', termination.status, {
+        eventId: fingerprintOf({ runId: current.id, jobId, reason: termination.failureReason }),
+        detail: { operation: 'RECONCILE', failureReason: termination.failureReason },
+      })
+    })
+  }
+
+  private queuedTermination(outbox: OutboxJobState | null) {
+    if (!outbox) return {
+      status: 'NEEDS_ATTENTION' as const,
+      failureReason: 'OUTBOX_MISSING',
+      auditType: 'agent_run.outbox_missing',
+      rotateAttempt: true,
+    }
+    if (outbox.status === 'FAILED') return {
+      status: 'FAILED' as const,
+      failureReason: 'DELIVERY_FAILED',
+      auditType: 'agent_run.delivery_failed_reconciled',
+    }
+    if (outbox.status === 'DELIVERED') return {
+      status: 'NEEDS_ATTENTION' as const,
+      failureReason: 'AGENT_START_TIMEOUT',
+      auditType: 'agent_run.start_timeout',
+      rotateAttempt: true,
+    }
+    return null
   }
 
   private async authorizeOrStop(tx: Tx, run: AgentRunEntity) {

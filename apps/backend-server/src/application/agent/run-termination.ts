@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { AgentRunEntity, AgentRunStatus } from '../../domain/agent/agent-run.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { GuidanceEntity } from '../../domain/task/guidance.js'
@@ -47,14 +48,19 @@ export interface RunTermination {
   failureReason: string
   auditType: string
   detail?: Record<string, unknown>
+  /** 未開始の旧配送が後から到着しても実行できないようattempt世代を更新する。 */
+  rotateAttempt?: boolean
 }
 
 /** 配送できなかったQUEUEDのRunを終端させる。実行中のRunはlease/snapshot経由で別に扱う。 */
 export async function terminateQueuedRun(tx: Tx, caseId: string, run: AgentRunEntity, termination: RunTermination): Promise<void> {
+  const failedAttemptId = run.currentAttemptId
+  await failGuidanceForRun(tx, caseId, run, { failureReason: termination.failureReason, attemptId: failedAttemptId })
   tx.update<AgentRunEntity>(runLocation(caseId, run.id), run.version, {
     status: termination.status,
     failureReason: termination.failureReason,
     finishedAt: new Date().toISOString(),
+    ...(termination.rotateAttempt ? { currentAttemptId: randomUUID() } : {}),
   })
   tx.audit({
     caseId,
@@ -62,5 +68,4 @@ export async function terminateQueuedRun(tx: Tx, caseId: string, run: AgentRunEn
     target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 },
     detail: { failureReason: termination.failureReason, ...termination.detail },
   })
-  await failGuidanceForRun(tx, caseId, run, { failureReason: termination.failureReason, attemptId: run.currentAttemptId })
 }

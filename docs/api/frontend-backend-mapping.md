@@ -81,6 +81,8 @@ ID tokenを `Authorization: Bearer` で送る。ローカルは Firebase Auth Em
 | `GET /cases/:caseId/deadlines` | 期限一覧 | `GET C/deadlines` → 根拠・確認状態（`CONFIRMED / UNCONFIRMED`、算定不能理由）付き | 同一 | #9 |
 | `POST /tasks/:taskId/guidance/research` | 「手順を調べる」 | `POST C/tasks/:taskId/guidance/requests` → **202** の案内リソース（`agentRunId`, `status: 'RESEARCHING'`）。結果は `GET C/tasks/:taskId/guidance` と `GET C/agent-runs/:runId`。未接続なら501 | **非同期化** | #15 / #10 |
 
+案内の調査開始時刻は新しいBackendフィールドを増やさず、`research.startedAt ← Guidance.updatedAt`として扱う。active Runへの再依頼は同じ`agentRunId`を返し、Guidanceを更新しないため開始時刻も動かない。画面でtimeoutした場合は`GET C/agent-runs/:runId`で最新版を取得し、`POST C/agent-runs/:runId/cancel { expectedVersion }`が成功してから案内を再依頼する。cancelが409なら最新版を再取得し、activeなら最新versionで最大2回再試行する。上限まで失敗した場合は案内を再依頼しない。
+
 権限: 一覧・詳細は全 role。作成・Command・証拠登録は OWNER / EDITOR。
 
 ## 5. 書類

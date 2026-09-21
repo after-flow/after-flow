@@ -25,6 +25,7 @@ import type { WaitRequestEntity } from '../../src/domain/agent/wait-request.js'
 import { PLACEHOLDER_CATALOG } from '../../src/domain/consent/catalog.js'
 import { INFRASTRUCTURE_COLLECTIONS, collections } from '../../src/domain/shared/collections.js'
 import { ScopedHttpAgentJobClient } from '../../src/infrastructure/agent/scoped-http-agent-client.js'
+import { FirestoreOutboxJobReader } from '../../src/infrastructure/firestore/outbox-job-reader.js'
 import { SignedExecutionAuthorization } from '../../src/infrastructure/identity/execution-authorization.js'
 import { createExecutionApp } from '../../src/presentation/routes/internal/v1/execution.js'
 import { buildApp, call, jsonRequest, seedTenantMember } from './helpers/app.js'
@@ -133,7 +134,7 @@ async function setup(t: TestContext) {
   )
 
   const snapshots = controllableSnapshots()
-  const reconciler = new RunReconciler(read, uow, service, snapshots)
+  const reconciler = new RunReconciler(read, uow, service, snapshots, new FirestoreOutboxJobReader(firestore()))
   // 業務イベントは Backend だけが解釈する。汎用 payload を AI へ転送しない。
   const dispatcher = new OutboxDispatcher(firestore(), client, consent, 0, reconciler)
 
@@ -443,7 +444,7 @@ describeFirestore('待機と再開', () => {
     // 別インスタンスを模す。保存済みの状態だけから再開できることを見る。
     const snapshots = controllableSnapshots()
     snapshots.set('WAITING', 'snapshot-1')
-    const restarted = new RunReconciler(env.read, env.uow, env.service, snapshots)
+    const restarted = new RunReconciler(env.read, env.uow, env.service, snapshots, new FirestoreOutboxJobReader(firestore()))
 
     const outcome = await restarted.tick(env.tenantId)
     assert.equal(outcome.failed, 0, '照合に失敗した実行がある')

@@ -79,6 +79,9 @@ tickが2周期以上出ない場合はcontainerの状態（`make ps`）とFirest
 - 受付時のCase版と現在の版がずれた未開始（QUEUED）のRunは、配送前に現在の版へ載せ替え、試行IDを取り直してから配送する。
   Case作成直後の初期Task生成で版が進んでも、その直後の依頼が `STALE_CONTEXT` で無期限に再送されることはない。
   実行中に版が進んだ場合は従来どおりcontrolがSTOPを返し、Reconcilerが新しい試行として再配送する。
+- ReconcilerはQUEUED RunのOutboxをread-only Portで確認する。OutboxがFAILEDならRun/案内をFAILEDへ同期し、
+  missingなら不整合としてNEEDS_ATTENTIONへ回収する。DELIVEREDから`AGENT_START_TIMEOUT_MS`（既定10分）を超えても
+  開始されない場合もNEEDS_ATTENTIONへ回収し、旧配送を拒否するためattempt IDを更新する。Outbox自体の状態は変更しない。
 - 受け手の無い通知イベント（`task.completed`、`decision.confirmed`）はworkerがローカルで配送済みにする。
   `agent.*` 以外の未知の種別はREJECTEDで終端し、無期限に再試行しない。
 - `proposal.applied` / `approval.rejected` / `document.registered` はBackend Inboxへ冪等保存する。`approval.requested`はローカル通知として扱い、個人データをAIへ汎用転送しない。

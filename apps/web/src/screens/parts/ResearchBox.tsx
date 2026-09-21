@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { TaskResource } from '@aftercare/public-contracts'
-import { RESEARCH_POLL_TIMEOUT_MS, useRequestGuidance, useTaskGuidance, useUpdateCase } from '@/lib/api/queries'
+import { RESEARCH_POLL_TIMEOUT_MS, useForceRestartGuidance, useRequestGuidance, useTaskGuidance, useUpdateCase } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { daysSince, formatDate, formatDateTime, msSince } from '@/lib/format'
 import { safeExternalUrl, urlHostname } from '@/lib/url'
@@ -35,6 +35,7 @@ export function ResearchBox({
   const g = guidance.data
   const sources = g?.sources ?? []
   const request = useRequestGuidance(caseId)
+  const forceRestart = useForceRestartGuidance(caseId)
   const updateCase = useUpdateCase(caseId)
   const [draft, setDraft] = useState('')
   const status = g?.status ?? 'NOT_REQUESTED'
@@ -47,11 +48,16 @@ export function ResearchBox({
   if (status === 'RESEARCHING' || status === 'WAITING') {
     const elapsed = msSince(g?.updatedAt)
     if (elapsed != null && elapsed > RESEARCH_POLL_TIMEOUT_MS) {
+      const restart = () => {
+        if (consent.allowed && g?.agentRunId) {
+          void forceRestart.mutateAsync({ taskId: task.id, runId: g.agentRunId })
+        }
+      }
       return (
         <Notice
           tone="warning"
           title="調べるのに時間がかかっています"
-          action={<Button size="sm" disabled={request.isPending} onClick={again}>もう一度調べる</Button>}
+          action={<Button size="sm" disabled={!consent.allowed || forceRestart.isPending || !g?.agentRunId} onClick={restart}>キャンセルしてやり直す</Button>}
         >
           {target}の案内をまだ確認できていません。上の案内は一般的な内容です。
         </Notice>

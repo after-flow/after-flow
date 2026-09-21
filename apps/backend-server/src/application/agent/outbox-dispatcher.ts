@@ -120,7 +120,7 @@ export class OutboxDispatcher {
         } else if (outcome.status === 'RETRYABLE') {
           await this.retryOrGiveUp(document.ref.path, claimed, outcome.reason, result)
         } else {
-          if (await this.settle(document.ref.path, claimed, { status: 'FAILED', lastError: outcome.reason })) result.rejected.push(claimed.id)
+          await this.settleFailed(document.ref.path, claimed, outcome.reason, result)
         }
       } catch {
         await this.retryOrGiveUp(document.ref.path, claimed, 'DELIVERY_EXCEPTION', result)
@@ -140,13 +140,18 @@ export class OutboxDispatcher {
     const age = Date.now() - toMillis(claimed.createdAt)
     if (timeout !== undefined && age >= timeout) {
       const lastError = `DELIVERY_TIMEOUT:${reason}`
-      await this.giveUp.onGiveUp?.(claimed, lastError)
-      if (await this.settle(path, claimed, { status: 'FAILED', lastError })) result.rejected.push(claimed.id)
+      await this.settleFailed(path, claimed, lastError, result)
       return
     }
     if (await this.settle(path, claimed, { status: 'PENDING', lastError: reason,
       nextAttemptAt: Timestamp.fromMillis(Date.now() + backoffMs(claimed.attempts)),
     })) result.retrying.push(claimed.id)
+  }
+
+  /** 恒久失敗は業務状態を先に同期し、同じclaim世代のOutboxを終端する。 */
+  private async settleFailed(path: string, claimed: OutboxEvent, reason: string, result: DispatchResult): Promise<void> {
+    await this.giveUp.onGiveUp?.(claimed, reason)
+    if (await this.settle(path, claimed, { status: 'FAILED', lastError: reason })) result.rejected.push(claimed.id)
   }
 
   /**

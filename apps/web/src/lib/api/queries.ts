@@ -41,6 +41,7 @@ import type {
 import type { CaseOverviewResource, CaseProfileResource } from '@aftercare/public-contracts'
 import type { CaseResource } from '@aftercare/public-contracts'
 import type { AgentRunResource } from '@aftercare/public-contracts'
+import { restartTimedOutGuidance } from './guidance-restart'
 
 export const qk = {
   consents: ['consents'] as const,
@@ -299,6 +300,18 @@ export function useRequestGuidance(caseId: string) {
     mutationFn: (taskId: string) =>
       api.post<GuidanceResource>(`/cases/${caseId}/tasks/${taskId}/guidance/requests`, {}),
     onSuccess: (guidance, taskId) => {
+      qc.setQueryData(qk.taskGuidance(caseId, taskId), guidance)
+    },
+  })
+}
+
+export function useForceRestartGuidance(caseId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    meta: { handlesError: true },
+    mutationFn: ({ taskId, runId }: { taskId: string; runId: string }) =>
+      restartTimedOutGuidance(caseId, taskId, runId),
+    onSuccess: (guidance, { taskId }) => {
       qc.setQueryData(qk.taskGuidance(caseId, taskId), guidance)
     },
   })

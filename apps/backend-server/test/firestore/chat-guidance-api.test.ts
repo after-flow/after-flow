@@ -275,6 +275,110 @@ describeFirestore('チャットの受付と回答', () => {
 })
 
 describeFirestore('手順案内', () => {
+  it('初回の同時依頼を1つのRunとOutboxへsingle-flightする', async () => {
+    const { tenantId, app, caseId, taskId } = await setup()
+    const path = `/cases/${caseId}/tasks/${taskId}/guidance/requests`
+    const [a, b] = await Promise.all([
+      call(app, path, jsonRequest('POST', {}, nextKey('guidance-concurrent-a'))),
+      call(app, path, jsonRequest('POST', {}, nextKey('guidance-concurrent-b'))),
+    ])
+    assert.equal(a.status, 202)
+    assert.equal(b.status, 202)
+    assert.equal(a.body.data.agentRunId, b.body.data.agentRunId)
+    const runs = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/agentRuns`).get()
+    assert.equal(runs.docs.filter(doc => doc.get('operation') === 'task_guidance' && doc.get('targetId') === taskId).length, 1)
+    const outbox = await firestore().collection(`tenants/${tenantId}/outbox`).get()
+    assert.equal(outbox.docs.filter(doc => doc.get('type') === 'agent.task_guidance').length, 1)
+  })
+
+  it('QUEUEDとRUNNINGの別Key依頼は現在のRunを更新せずreuseする', async () => {
+    const { tenantId, app, caseId, taskId } = await setup()
+    const path = `/cases/${caseId}/tasks/${taskId}/guidance/requests`
+    const first = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-active-first')))
+    const runId = first.body.data.agentRunId as string
+    const queuedGuidance = await call(app, `/cases/${caseId}/tasks/${taskId}/guidance`)
+    const queued = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-active-queued')))
+    assert.equal(queued.body.data.agentRunId, runId)
+    assert.equal(queued.body.data.version, queuedGuidance.body.data.version)
+
+    const runRef = firestore().doc(`tenants/${tenantId}/cases/${caseId}/agentRuns/${runId}`)
+    const stored = await runRef.get()
+    await runRef.update({ status: 'RUNNING', version: stored.get('version') + 1 })
+    const running = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-active-running')))
+    assert.equal(running.body.data.agentRunId, runId)
+    const outbox = await firestore().collection(`tenants/${tenantId}/outbox`).get()
+    assert.equal(outbox.docs.filter(doc => doc.get('type') === 'agent.task_guidance').length, 1)
+  })
+
+  it('NEEDS_ATTENTIONへの同時再依頼は同じRunのattemptを一度だけ進める', async () => {
+    const { tenantId, app, caseId, taskId } = await setup()
+    const path = `/cases/${caseId}/tasks/${taskId}/guidance/requests`
+    const first = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-attempt-first')))
+    const runId = first.body.data.agentRunId as string
+    const runRef = firestore().doc(`tenants/${tenantId}/cases/${caseId}/agentRuns/${runId}`)
+    const stored = await runRef.get()
+    await runRef.update({ status: 'NEEDS_ATTENTION', version: stored.get('version') + 1 })
+
+    const [a, b] = await Promise.all([
+      call(app, path, jsonRequest('POST', {}, nextKey('guidance-attempt-a'))),
+      call(app, path, jsonRequest('POST', {}, nextKey('guidance-attempt-b'))),
+    ])
+    assert.equal(a.body.data.agentRunId, runId)
+    assert.equal(b.body.data.agentRunId, runId)
+    const after = await runRef.get()
+    assert.equal(after.get('attempt'), 2)
+    assert.equal(after.get('status'), 'QUEUED')
+    const outbox = await firestore().collection(`tenants/${tenantId}/outbox`).get()
+    assert.equal(outbox.docs.filter(doc => doc.get('type') === 'agent.task_guidance').length, 2)
+  })
+
+  it('WAITING_DOCUMENTへの再依頼は同じRunの新attemptにし、旧結果を拒否する', async () => {
+    const { tenantId, app, caseId, taskId } = await setup()
+    const path = `/cases/${caseId}/tasks/${taskId}/guidance/requests`
+    const first = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-wait-first')))
+    const runId = first.body.data.agentRunId as string
+    const oldAttemptId = await currentAttemptId(tenantId, caseId, runId)
+    await submitResult(app, tenantId, caseId, {
+      kind: 'task_guidance', runId, attemptId: oldAttemptId,
+      resultId: 'waiting-before-request', status: 'WAITING',
+    })
+    const requested = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-wait-next')))
+    assert.equal(requested.body.data.agentRunId, runId)
+    assert.equal(requested.body.data.status, 'RESEARCHING')
+    const run = await call(app, `/cases/${caseId}/agent-runs/${runId}`)
+    assert.equal(run.body.data.status, 'QUEUED')
+    assert.equal(run.body.data.attempt, 2)
+    const late = await submitResult(app, tenantId, caseId, {
+      kind: 'task_guidance', runId, attemptId: oldAttemptId,
+      resultId: 'late-waiting-attempt', status: 'COMPLETED',
+    })
+    assert.equal(late.status, 409)
+    assert.equal(late.body.error.details.reason, 'STALE_ATTEMPT')
+  })
+
+  it('retry endpointとguidance requestが競合しても新attemptは一つだけ作る', async () => {
+    const { tenantId, app, caseId, taskId } = await setup()
+    const path = `/cases/${caseId}/tasks/${taskId}/guidance/requests`
+    const first = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-race-first')))
+    const runId = first.body.data.agentRunId as string
+    const runRef = firestore().doc(`tenants/${tenantId}/cases/${caseId}/agentRuns/${runId}`)
+    const stored = await runRef.get()
+    await runRef.update({ status: 'NEEDS_ATTENTION', version: stored.get('version') + 1 })
+    const current = await call(app, `/cases/${caseId}/agent-runs/${runId}`)
+    const [requested, retried] = await Promise.all([
+      call(app, path, jsonRequest('POST', {}, nextKey('guidance-race-request'))),
+      call(app, `/cases/${caseId}/agent-runs/${runId}/retry`,
+        jsonRequest('POST', { expectedVersion: current.body.data.version }, nextKey('guidance-race-retry'))),
+    ])
+    assert.equal(requested.status, 202)
+    assert.ok(retried.status === 202 || retried.status === 412)
+    const after = await runRef.get()
+    assert.equal(after.get('attempt'), 2)
+    assert.equal(after.get('status'), 'QUEUED')
+    const outbox = await firestore().collection(`tenants/${tenantId}/outbox`).get()
+    assert.equal(outbox.docs.filter(doc => doc.get('type') === 'agent.task_guidance').length, 2)
+  })
+
   it('未依頼と依頼済みを区別する', async () => {
     const { app, caseId, taskId } = await setup()
     const before = await call(app, `/cases/${caseId}/tasks/${taskId}/guidance`)
@@ -536,6 +640,9 @@ describeFirestore('結果受領の競合と案内再依頼', () => {
     const firstRequest = jsonRequest('POST', {}, nextKey('first-guidance'))
     const first = await call(app, path, firstRequest)
     const oldRunId = first.body.data.agentRunId as string
+    const oldRun = await call(app, `/cases/${caseId}/agent-runs/${oldRunId}`)
+    await call(app, `/cases/${caseId}/agent-runs/${oldRunId}/cancel`,
+      jsonRequest('POST', { expectedVersion: oldRun.body.data.version }, nextKey('cancel-old-guidance')))
     const second = await call(app, path, jsonRequest('POST', {}))
     const runId = second.body.data.agentRunId as string
     const late = await submitResult(app, tenantId, caseId, {
@@ -553,6 +660,28 @@ describeFirestore('結果受領の競合と案内再依頼', () => {
       resultId: 'current-guidance', status: 'COMPLETED',
     })
     assert.equal(result.body.data.applied, true)
+  })
+
+  it('Guidanceが新Runへ移った後は旧Runのretryを拒否する', async () => {
+    const { tenantId, app, caseId, taskId } = await setup()
+    const path = `/cases/${caseId}/tasks/${taskId}/guidance/requests`
+    const first = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-owner-first')))
+    const oldRunId = first.body.data.agentRunId as string
+    const oldRef = firestore().doc(`tenants/${tenantId}/cases/${caseId}/agentRuns/${oldRunId}`)
+    const old = await oldRef.get()
+    await oldRef.update({ status: 'FAILED', version: old.get('version') + 1 })
+    const failed = await call(app, `/cases/${caseId}/agent-runs/${oldRunId}`)
+
+    const second = await call(app, path, jsonRequest('POST', {}, nextKey('guidance-owner-second')))
+    const newRunId = second.body.data.agentRunId as string
+    assert.notEqual(newRunId, oldRunId)
+    const retried = await call(app, `/cases/${caseId}/agent-runs/${oldRunId}/retry`,
+      jsonRequest('POST', { expectedVersion: failed.body.data.version }, nextKey('retry-superseded-guidance')))
+    assert.equal(retried.status, 409)
+    assert.equal(retried.body.error.details.reason, 'GUIDANCE_SUPERSEDED')
+    assert.equal((await oldRef.get()).get('attempt'), 1)
+    const outbox = await firestore().collection(`tenants/${tenantId}/outbox`).get()
+    assert.equal(outbox.docs.filter(doc => doc.get('type') === 'agent.task_guidance').length, 2)
   })
 
   it('部分結果からのretryと完了後の新しい依頼を受け付ける', async () => {
