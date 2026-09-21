@@ -2,7 +2,7 @@ import type { AgentOperation, AgentRunEntity } from '../../domain/agent/agent-ru
 import { isRunTerminal } from '../../domain/agent/agent-run.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { collections } from '../../domain/shared/collections.js'
-import type { GuidanceEntity, GuidanceSource, GuidanceStatus } from '../../domain/task/guidance.js'
+import type { GuidanceCitation, GuidanceEntity, GuidanceSource, GuidanceStatus } from '../../domain/task/guidance.js'
 import { errors } from '../../shared/app-error.js'
 import { AgentAccess } from '../authorization/case-access.js'
 import { failGuidanceForRun } from '../agent/run-termination.js'
@@ -35,6 +35,7 @@ export interface GuidanceResultInput extends ResultEnvelope {
   formExampleLabel?: string | null
   note?: string | null
   sources?: GuidanceSource[]
+  citations?: GuidanceCitation[]
   /** 調べきれなかった項目。失うと全件確認済みだと誤解される。 */
   missing?: string[]
   failureReason?: string | null
@@ -166,6 +167,7 @@ export class AgentResultIntake {
       formExampleLabel: input.formExampleLabel ?? null,
       note: input.note ?? null,
       sources: input.sources ?? [],
+      citations: input.citations ?? [],
       // 調べきれなかった項目を落とさない。
       missing: input.missing ?? [],
       failureReason: input.failureReason ?? null,
