@@ -47,8 +47,12 @@ export interface RouteSpec<Req extends RouteRequestSpec = RouteRequestSpec> {
   summary: string
   description?: string
   tags: string[]
-  /** `user` は認証必須。実際の検証 middleware は #6 が差し込む。 */
-  auth: 'user' | 'public'
+  /**
+   * `user` は認証必須で tenant membership の裏取り済みを要求する。
+   * `identity` はトークン検証済みであれば足り、tenant membership が
+   * 無い（未登録）利用者も到達できる（`GET/POST /me` 専用）。
+   */
+  auth: 'user' | 'identity' | 'public'
   request?: Req
   success: RouteResponseSpec
   /** 202 受付など、同じ route が返しうる別の成功応答 */
@@ -233,7 +237,18 @@ export function registerRoutes(
     app.on(spec.method.toUpperCase(), spec.path, limit, async (c) => {
       // 認証が必要な route は、認証 middleware の有無に関係なくここで止める。
       // middleware の付け忘れが「誰でも通る API」にならないようにする。
-      if (spec.auth === 'user' && !c.get('user')) throw errors.unauthenticated()
+      if (spec.auth === 'identity' && !c.get('identity')) throw errors.unauthenticated()
+      if (spec.auth === 'user' && !c.get('user')) {
+        // identity はあるが tenant membership が無い（未登録）。
+        // トークン自体は正当なので 401 ではなく 403 で登録導線へ誘導する。
+        if (c.get('identity')) {
+          throw errors.forbidden({
+            message: 'この利用者はまだ登録されていません。',
+            details: { reason: 'NOT_REGISTERED', availableOperations: ['getMe', 'registerMe'] },
+          })
+        }
+        throw errors.unauthenticated()
+      }
 
       // 必須同意の検査は入力検証より前に行う。未同意の利用者へ
       // 入力の不備を先に返しても、直しようがない。

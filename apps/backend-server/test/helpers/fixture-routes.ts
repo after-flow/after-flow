@@ -121,6 +121,26 @@ export const knownFailureRoute = defineRoute(
   },
 )
 
+/**
+ * `auth:'identity'` の route。
+ *
+ * tenant membership の裏取り（`user`）が無くても、トークン検証済み
+ * （`identity`）であれば到達できることを確かめるための fixture。
+ */
+export const identityFixtureRoute = defineRoute(
+  {
+    operationId: 'fixtureIdentity',
+    method: 'get',
+    path: '/fixtures/identity',
+    summary: 'identity fixture',
+    tags: ['fixture'],
+    auth: 'identity',
+    success: { status: 200, description: 'ok', schema: successEnvelope(z.object({ ok: z.boolean() })) },
+    failures: ['UNAUTHENTICATED'],
+  },
+  (c) => ok(c, { ok: true }),
+)
+
 /** 予期しない例外が契約どおりに畳まれ、内部情報が漏れないことを確かめる。 */
 export const unexpectedFailureRoute = defineRoute(
   {
@@ -142,6 +162,7 @@ export const fixtureRoutes = [
   listFixtureRoute,
   createFixtureRoute,
   patchFixtureRoute,
+  identityFixtureRoute,
   knownFailureRoute,
   unexpectedFailureRoute,
 ]
@@ -153,6 +174,28 @@ export const fixtureRoutes = [
  * ここでは「認証済みなら共通契約がどう動くか」だけを見る。
  */
 export const stubAuthentication = createMiddleware<AppEnv>(async (c, next) => {
+  const identity = {
+    subject: 'user-test-0001',
+    email: null,
+    emailVerified: true,
+    authTime: null,
+    issuer: 'https://issuer.example.test/',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  }
+  c.set('identity', identity)
   c.set('user', { userId: 'user-test-0001', tenantId: 'tenant-test' })
+  await next()
+})
+
+/** identity のみ（tenant membership の裏取りが無い＝未登録）を模す。 */
+export const stubIdentityOnlyAuthentication = createMiddleware<AppEnv>(async (c, next) => {
+  c.set('identity', {
+    subject: 'user-test-0001',
+    email: null,
+    emailVerified: true,
+    authTime: null,
+    issuer: 'https://issuer.example.test/',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  })
   await next()
 })

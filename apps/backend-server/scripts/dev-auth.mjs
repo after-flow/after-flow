@@ -22,6 +22,9 @@ import { SignJWT, exportJWK, generateKeyPair, importJWK } from 'jose'
 
 const ISSUER = 'https://after-flow.local/dev'
 const AUDIENCE = 'after-flow-local'
+const DEFAULT_TENANT_ID = 'after-flow-demo'
+/** 後方互換のため --tenant は受け付けるが、tenant はもう claim に載せない。
+ * Backend は AUTH_TENANT_ID（配備単位で固定した tenant）を使い、claim は無視する。 */
 const TENANT_CLAIM = 'tenant_id'
 const ALG = 'ES256'
 const ID = /^[A-Za-z0-9_-]{1,128}$/
@@ -47,10 +50,11 @@ async function keys(args) {
   process.stdout.write([
     '',
     `# after-flow dev auth (${new Date().toISOString()}). static-jwks はローカル開発専用。本番では起動を拒否する。`,
+    '# compose.yaml の既定（AUTH_MODE=firebase-emulator）を上書きする。FE の実ログインは通らなくなる。',
     'AUTH_MODE=static-jwks',
     `AUTH_ISSUER=${ISSUER}`,
     `AUTH_AUDIENCE=${AUDIENCE}`,
-    `AUTH_TENANT_CLAIM=${TENANT_CLAIM}`,
+    `AUTH_TENANT_ID=${DEFAULT_TENANT_ID}`,
     `AUTH_STATIC_JWKS=${JSON.stringify({ keys: [publicJwk] })}`,
     '',
   ].join('\n'))

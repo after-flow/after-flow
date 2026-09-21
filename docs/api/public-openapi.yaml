@@ -125,6 +125,228 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiFailure"
+  /me:
+    get:
+      operationId: getMe
+      summary: 自分の登録状態を確認する
+      description: 未登録・停止済みでも 200 で状態を返す。書き込みは行わない。
+      tags:
+        - me
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 登録状態
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      userId:
+                        type: string
+                      tenantId:
+                        type: string
+                      registered:
+                        type: boolean
+                      active:
+                        type: boolean
+                      emailVerified:
+                        type: boolean
+                      registeredAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - userId
+                      - tenantId
+                      - registered
+                      - active
+                      - emailVerified
+                      - registeredAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+    post:
+      operationId: registerMe
+      summary: 自分を利用者として登録する
+      description: 初回登録。既に membership があれば新規作成せず、その状態をそのまま返す（自身が冪等）。停止済みの利用者は 403 MEMBERSHIP_INACTIVE。
+      tags:
+        - me
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: 同じ操作の再送を重複適用しないためのキー。同じキーで異なる内容を送ると IDEMPOTENCY_KEY_REUSED になる。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: 指定すると応答の meta.requestId に引き継ぐ。安全な字種・長さでない場合はサーバーが採番する。
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      responses:
+        "200":
+          description: 既に登録済みだった
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      userId:
+                        type: string
+                      tenantId:
+                        type: string
+                      registered:
+                        type: boolean
+                      active:
+                        type: boolean
+                      emailVerified:
+                        type: boolean
+                      registeredAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - userId
+                      - tenantId
+                      - registered
+                      - active
+                      - emailVerified
+                      - registeredAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "201":
+          description: 新規登録した
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      userId:
+                        type: string
+                      tenantId:
+                        type: string
+                      registered:
+                        type: boolean
+                      active:
+                        type: boolean
+                      emailVerified:
+                        type: boolean
+                      registeredAt:
+                        nullable: true
+                        type: string
+                        format: date-time
+                        pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                    required:
+                      - userId
+                      - tenantId
+                      - registered
+                      - active
+                      - emailVerified
+                      - registeredAt
+                    additionalProperties: false
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                      nextCursor:
+                        type: string
+                    required:
+                      - requestId
+                    additionalProperties: false
+                required:
+                  - data
+                  - meta
+                additionalProperties: false
+        "401":
+          description: "error.code: UNAUTHENTICATED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "403":
+          description: "error.code: FORBIDDEN"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: "error.code: IDEMPOTENCY_KEY_REUSED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: "error.code: INTERNAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
   /cases/{caseId}/persons:
     get:
       operationId: listPersons

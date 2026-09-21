@@ -27,13 +27,31 @@
 
 ## 2. 認証・同意
 
+認証はFirebase Authentication（[ADR 0001](../adr/0001-authentication-provider.md)）。Firebase Client SDKが取得した
+ID tokenを `Authorization: Bearer` で送る。ローカルは Firebase Auth Emulator（`docker/firebase-auth-emulator/`、
+[docs/runbooks/local-swagger.md](../runbooks/local-swagger.md)）。tenantはFirebaseのcustom claimではなく配備単位の
+設定値（`AUTH_TENANT_ID`）で固定し、Backendが`tenants/{AUTH_TENANT_ID}/members/{uid}`のmembershipで裏取りする。
+
+利用者登録（初回のtenant membership付与）はFEの自動登録ではなく、明示的な `POST /me` を経路にする
+（ADR 0001 §2「所属・権限の付与と変更はBackendが制御する」）。
+
 | 現行 | 画面操作 | 公開API | 移行 | 担当 |
 |---|---|---|---|---|
-| `POST /auth/login` | ログイン | 公開APIでは提供しない。ADR-0001に従うJWT/JWKS IdP でトークンを取得し `Authorization: Bearer` で送る | 廃止 | #6 |
+| `POST /auth/login` | ログイン | 公開APIでは提供しない。Firebase Client SDKでサインインし、取得したID tokenを `Authorization: Bearer` で送る | 廃止 | #6 / U1a |
+| （新設） | サインイン直後の登録確認 | `GET /api/v1/me` → `{ data: MeResource }`（`registered`/`active`/`emailVerified`を返す。書き込みなし） | 新設 | U1a |
+| （新設） | 利用者登録 | `POST /api/v1/me` → 201（新規）/200（登録済み）`{ data: MeResource }`。`active:false` は 403 `FORBIDDEN`（`details.reason:'MEMBERSHIP_INACTIVE'`）。tenant membershipが無い状態で他のAPIを呼ぶと 403 `FORBIDDEN`（`details.reason:'NOT_REGISTERED'`, `details.availableOperations:['getMe','registerMe']`） | 新設 | U1a |
 | `GET /consents` | 同意状態表示 | `GET /api/v1/consents` → `{ data: ConsentStatus }` | 同一 | #12 |
-| `POST /consents` | 同意 | `POST /api/v1/consents` body `{ agreements: { kind, version }[] }`。古い版の同意は 409 `PRECONDITION_FAILED` | 同一 | #12 |
+| `POST /consents` | 同意 | `POST /api/v1/consents` body `{ agreements: { kind, version }[] }`。古い版の同意は 409 `CONFLICT` | 同一 | #12 |
 
 外部AI利用可否は同意版からサーバーが判定し、フロントは `ConsentStatusResource.availability.externalAi`を表示にのみ使う。
+
+メール確認（ADR 0001 §1）はBackendが唯一の判定者。FEは自前で`emailVerified`を見て遮断せず、Backendの
+403 `FORBIDDEN`（`details.reason:'EMAIL_NOT_VERIFIED'`）を受けて `/verify-email` へ送る。ローカルの既定
+（`AUTH_REQUIRE_EMAIL_VERIFIED=false`）ではこの確認を必須にしない。
+
+ログイン維持は最長7日間（ADR 0001 §4）。Backendは`auth_time`から上限を検証し、超過は 401
+（`details.reason:'SESSION_EXPIRED'`）。失効・停止確認（ADR 0001 §5）は未対応で、readinessに
+`session_revocation: SESSION_REVOCATION_NOT_ENFORCED`として現れる（[docs/runbooks/readiness.md](../runbooks/readiness.md)）。
 
 ## 3. Case・ダッシュボード
 
@@ -58,7 +76,7 @@
 | `PATCH /tasks/:taskId`（説明等） | 説明・期日の訂正 | `PATCH C/tasks/:taskId` body は `title/summary/submitTo` + `expectedVersion` のみ。`status` は 400 | Case配下へ・strict化 | #9 |
 | `POST /tasks/:taskId/complete` body `{ confirmedBySelf: true }` | 「自分で完了した」 | `POST C/tasks/:taskId/commands` body `{ command: 'complete', expectedVersion, note? }`。証拠が必須な Task は 409 `PRECONDITION_FAILED`（details.reason=`EVIDENCE_REQUIRED`） | Case配下へ | #9 / #11 |
 | `POST /tasks/:taskId/reopen` | 再開 | `POST C/tasks/:taskId/commands` body `{ command: 'reopen', expectedVersion, note? }` | Case配下へ | #9 |
-| `POST /tasks/:taskId/evidences` | 証拠登録 | `POST C/tasks/:taskId/evidence` body `{ label, kind, note?, documentId? }` | Case配下へ・単数形 | #9 / #11 |
+| `POST /tasks/:taskId/evidences` | 証拠登録 | `POST C/tasks/:taskId/evidences` body `{ label, kind, note?, documentId? }` | Case配下へ・複数形 | #9 / #11 |
 | `GET /cases/:caseId/deadlines` | 期限一覧 | `GET C/deadlines` → 根拠・確認状態（`CONFIRMED / UNCONFIRMED`、算定不能理由）付き | 同一 | #9 |
 | `POST /tasks/:taskId/guidance/research` | 「手順を調べる」 | `POST C/tasks/:taskId/guidance/requests` → **202** の案内リソース（`agentRunId`, `status: 'RESEARCHING'`）。結果は `GET C/tasks/:taskId/guidance` と `GET C/agent-runs/:runId`。未接続なら501 | **非同期化** | #15 / #10 |
 

@@ -10,6 +10,7 @@ import type { TenantMember } from '../../../src/application/authorization/case-a
 import { CaseService } from '../../../src/application/case/case-service.js'
 import { ConsentService } from '../../../src/application/consent/consent-service.js'
 import { DocumentService } from '../../../src/application/document/document-service.js'
+import { RegistrationService } from '../../../src/application/identity/registration-service.js'
 import type { InheritanceDecisionReader } from '../../../src/application/task/task-service.js'
 import { AgentRunService } from '../../../src/application/agent/agent-run-service.js'
 import type { AgentOperation } from '../../../src/domain/agent/agent-run.js'
@@ -91,6 +92,7 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
   )
 
   const routes = createPublicV1Routes({
+    registrationService: new RegistrationService(tenantId, readRepository(), unitOfWork()),
     ...createBusinessServices(access, readRepository(), unitOfWork()),
     caseService: new CaseService(access, readRepository(), unitOfWork(), options.clock),
     consentService,

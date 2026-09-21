@@ -1,37 +1,45 @@
 /**
  * 認証のポート。
  *
- * 採用する認証 Provider はまだ決まっていない（仕様書 19 章の未確定事項）。
+ * 採用 Provider は Firebase Authentication（docs/adr/0001-authentication-provider.md）。
  * Provider 固有の処理を Adapter へ隔離し、Application が
- * issuer・audience・署名方式に依存しないようにする。
+ * issuer・audience・署名方式・鍵取得方式に依存しないようにする。
  */
 
 export interface VerifiedIdentity {
-  /** Provider が発行する安定した利用者 ID。 */
+  /** Provider が発行する安定した利用者 ID（Firebase uid）。 */
   subject: string
+  /** 保存も応答もしない。メール確認の判定にだけ使う。 */
+  email: string | null
+  emailVerified: boolean
   /**
-   * トークンが主張する tenant。
+   * Provider の `auth_time`（ISO 文字列）。
    *
-   * これだけでは権限の根拠にしない。Provider がカスタムクレームの
-   * 書き換えを許す構成もありうるため、membership の実在を必ず確認する。
+   * ログイン維持の7日上限（ADR 0001 §4）の判定に使う。無いトークン
+   * （static-jwks 互換）は上限の対象外として許容する。
    */
-  claimedTenantId: string
+  authTime: string | null
   issuer: string
   expiresAt: string
 }
 
 export interface TokenVerifier {
   /**
-   * 署名・issuer・audience・期限を検証する。
+   * 署名・issuer・audience・期限・メール確認・ログイン維持上限を検証する。
    *
-   * 検証できないトークンは UNAUTHENTICATED、鍵の取得失敗など一時的な
-   * 障害は UNAVAILABLE を投げる。両者を混ぜると、鍵配布の障害時に
-   * 利用者へ「ログインし直せ」と案内してしまう。
+   * 検証できないトークンは UNAUTHENTICATED、メール未確認は FORBIDDEN
+   * （トークン自体は正当なため）、鍵の取得失敗など一時的な障害は
+   * UNAVAILABLE を投げる。理由を混ぜると復旧導線を誤らせる。
    */
   verify(token: string): Promise<VerifiedIdentity>
 }
 
-/** 認証済みの利用者。ここから先は自己申告の値を混ぜない。 */
+/**
+ * tenant の membership で裏取りした認証済みの利用者。
+ *
+ * ここから先は自己申告の値を混ぜない。tenant はトークンの主張ではなく
+ * 配備単位の設定値から決まる（`application/authorization/case-access.ts`）。
+ */
 export interface AuthenticatedUser {
   userId: string
   tenantId: string

@@ -23,7 +23,8 @@ readinessはこれらの必須依存を実際に検査し、本番稼働可能�
 |---|---|---|
 | `firestore` | `Firestore#listCollections()`で疎通のみ確認（業務データは読まない） | `CHECK_FAILED` / `CHECK_TIMEOUT` |
 | `storage` | 原本Storageの`exists(存在しないkey)`で疎通のみ確認（読み書きしない） | `CHECK_FAILED` / `CHECK_TIMEOUT` |
-| `auth` | 認証設定が揃っているか。`static-jwks`は試験・ローカル専用のため、設定できていても本番相当とは扱わない | `STATIC_JWKS_NOT_PRODUCTION_GRADE` |
+| `auth` | 認証設定が揃っているか。`static-jwks`・`firebase-emulator`は試験・ローカル専用のため、設定できていても本番相当とは扱わない | `STATIC_JWKS_NOT_PRODUCTION_GRADE` / `EMULATOR_NOT_PRODUCTION_GRADE` |
+| `session_revocation` | 失効・停止確認（ADR 0001 §5。Admin SDKでのrevoke確認等）が実装済みか | `SESSION_REVOCATION_NOT_ENFORCED`（認証が設定されている限り常にfail。本番公開前に対応が必要な既知の欠落） |
 | `consent_catalog` | 同意カタログが`placeholder:true`（仮文面）でないか | `PLACEHOLDER_CATALOG` |
 | `deadline_rules` | 期限ルールが`placeholder:true`（業務レビュー未了）でないか | `PLACEHOLDER_CATALOG` |
 | `ai_internal_auth` | AI操作が有効化されている場合だけ。Backend/AI間の内部認証設定が揃っているか | `NOT_CONFIGURED` / `INVALID_SIGNING_KEY` |
@@ -67,7 +68,8 @@ architecture.md 6.3に記載の`GET /internal/v1/health/ready`はAI Server側の
 
 - 実Firestore/Storageへの「到達不能」を伴う障害検知は、SDK自体のretry/backoffに影響され、`withTimeout`で応答時間は打ち切れても、SDK内部の再試行が応答後もしばらく裏で続くことがある（readinessは起動時に作った同一clientを使い回すため、要求ごとに新規clientを作るよりは影響が小さい）。
 - `storage`検査はStorageポート（`ObjectStorage#exists`）越しの疎通確認であり、ローカル保存（`LocalObjectStorage`、開発専用）は権限・ディスク障害を`exists`が握りつぶす実装のため、本番のCloud Storage Adapterほど検査として厳密ではない。
-- `auth`検査は設定の型・モードだけを見る。JWKS URIへの実疎通は行わない（採用Provider未確定・[ADR 0001](../adr/0001-authentication-provider.md)のため、実接続検証はProvider決定後）。
+- `auth`検査は設定の型・モードだけを見る。JWKS URIへの実疎通は行わない（[ADR 0001](../adr/0001-authentication-provider.md)は採用Providerを決定済みだが、実Firebase projectでの実接続検証は別途）。
+- `session_revocation`は「未実装であること」を常時報告する固定fail。ADR 0001 §4の7日上限（`auth_time`検証）は`JwtTokenVerifier`/`FirebaseEmulatorTokenVerifier`で実装済みだが、§5の失効・停止確認（Admin SDKでの明示的なrevoke確認）は未実装のため区別している。
 - `consent_catalog` / `deadline_rules`は`placeholder`フラグの検出だけを行う。正式カタログ・正式ルールの内容そのものの正しさは[#128](https://github.com/after-flow/after-flow/issues/128)・[#129](https://github.com/after-flow/after-flow/issues/129)の決定事項で、この検査の対象外。
 - Mastra/Orchの機能的な準備完了はこのreadinessでは確認しない（#123対象外、architecture.mdの将来API一覧とは区別する）。
 
