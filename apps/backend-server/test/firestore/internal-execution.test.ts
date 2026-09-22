@@ -1057,7 +1057,7 @@ describeFirestore('AI Proposal lease / fencing / human approval', () => {
 
 
 describeFirestore('Real AI Worker HTTP integration (synthetic model/Orch only)', () => {
-  it('dispatches to an independent AI service and receives one grounded-workflow chat result through authenticated Backend APIs', async t => {
+  it('dispatches to an independent AI service and receives one useful chat result through authenticated Backend APIs', async t => {
     const h = await setup(t)
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
       !/^(FIRESTORE_|GOOGLE_APPLICATION_CREDENTIALS|STORAGE_|DOCUMENT_STORAGE_|BACKEND_EXECUTION_SIGNING_KEY)/.test(key)))
@@ -1086,7 +1086,7 @@ describeFirestore('Real AI Worker HTTP integration (synthetic model/Orch only)',
       ai.once('exit', () => { clearTimeout(timer); reject(new Error(`AI fixture stopped: ${errorOutput}`)) })
     })
     const client = new ScopedHttpAgentJobClient({ baseUrl: `http://127.0.0.1:${port}`, serviceToken: outgoing, audience: 'ai-server', timeoutMs: 10000 }, h.service, h.authorization)
-    const posted = await call(h.app, `/cases/${h.caseId}/messages`, jsonRequest('POST', { body: '何から始めたらいいでしょうか？' }))
+    const posted = await call(h.app, `/cases/${h.caseId}/messages`, jsonRequest('POST', { body: '家族が亡くなった後、何から始めたらいいでしょうか？' }))
     assert.equal(posted.status, 202, JSON.stringify(posted.body))
     const runId = posted.body.data.runId as string
     const run = (await readRepository().get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: runId }))!
@@ -1101,8 +1101,8 @@ describeFirestore('Real AI Worker HTTP integration (synthetic model/Orch only)',
     }
     assert.equal(history.length, 2, errorOutput)
     assert.equal(history.filter(message => message.role === 'assistant').length, 1)
-    // 合成環境には公式資料が無いため、根拠の無い回答はせず、資料が見つからなかったことを伝える。
-    assert.match(history.find(message => message.role === 'assistant').body, /確認できる公式資料が見つかりませんでした/)
+    // 合成環境には公式資料が無くても、回答自体を止めずに一般的な案内を返す。
+    assert.match(history.find(message => message.role === 'assistant').body, /架空手続きの一般的な案内です/)
     assert.equal((await client.deliver(job)).status, 'ACCEPTED')
     assert.equal((await call(h.app, `/cases/${h.caseId}/messages`)).body.data.length, 2)
   })
