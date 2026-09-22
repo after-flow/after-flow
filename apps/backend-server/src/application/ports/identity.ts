@@ -15,8 +15,7 @@ export interface VerifiedIdentity {
   /**
    * Provider の `auth_time`（ISO 文字列）。
    *
-   * ログイン維持の7日上限（ADR 0001 §4）の判定に使う。無いトークン
-   * （static-jwks 互換）は上限の対象外として許容する。
+   * ログイン維持の7日上限（ADR 0001 §4）の判定に使う。無いトークンは拒否する。
    */
   authTime: string | null
   issuer: string

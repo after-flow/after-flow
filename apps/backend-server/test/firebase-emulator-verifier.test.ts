@@ -14,7 +14,6 @@ const config: IdentityVerifierConfig = {
   audience: AUDIENCE,
   clockToleranceSeconds: 5,
   requireEmailVerified: false,
-  requireAuthTime: true,
 }
 
 function base64url(value: object): string {
