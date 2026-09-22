@@ -19,6 +19,7 @@ const envSchema = z.object({
 
 const REVIEW_REFERENCE = 'https://docs.orcarouter.ai/operations/data-handling reviewed for hackathon demo 2026-09-21; upstream provider terms require separate production review'
 const CATALOG_ID = 'kyoukaikenpo-burial-benefit'
+const CHAT_CATALOG_IDS = HACKATHON_OFFICIAL_CATALOGS.map(catalog => catalog.id)
 const POLICY_IDS = ['orca-core-primary', 'orca-core-fallback'] as const
 const REVIEWED_AT = '2026-09-22T00:00:00.000Z'
 const REVIEW_EXPIRES_AT = '2027-09-22T00:00:00.000Z'
@@ -113,6 +114,13 @@ export function readHackathonComposition(
         confirmedBy: { group: 'case' as const, field: 'burialBenefitApplicantStatus', oneOf: ['LIVELIHOOD_MAINTAINER', 'BURIAL_EXPENSE_PAYER'] } },
     ],
   }
+  const chatScope = {
+    id: 'official-aftercare-chat', version: 'hackathon-v1', reviewedAt: approvedAt,
+    procedure: '死亡後手続きに関する相談', institution: '関係する公的機関', jurisdiction: '日本', municipality: null,
+    procedureIds: ['ai-chat'], sourceCatalogIds: CHAT_CATALOG_IDS,
+    sourceCatalogVersions: Object.fromEntries(CHAT_CATALOG_IDS.map(id => [id, HACKATHON_CATALOG_VERSION])),
+    questions: [{ id: 'answer', text: '取得した公式資料から、相談に関係する制度、期限、必要書類、提出先を確認してください。' }],
+  }
   return {
     serviceToken: input.AI_SERVICE_TOKEN,
     audience: env.AI_SERVICE_AUDIENCE ?? 'ai-server',
@@ -142,7 +150,14 @@ export function readHackathonComposition(
         stage: 'government', category: 'insurance-benefit', submitTo: '全国健康保険協会', evidenceRequired: true, assetDisposal: false },
       prerequisites: [], requiredDocuments: ['健康保険埋葬料（費）支給申請書', '死亡を確認できる書類', '申請者と亡くなった方の関係を確認できる書類'],
     }],
-    researchScope: async () => scope,
+    researchScope: async context => {
+      if (context.content.operation !== 'chat_reply') return scope
+      const message = context.content.message
+      const body = message && typeof message === 'object' && 'body' in message && typeof message.body === 'string' ? message.body : ''
+      // Keep the reviewed, detailed benefit questions when the consultation is
+      // about Kyoukaikenpo. Other supported topics use the wider catalog scope.
+      return /協会けんぽ|全国健康保険協会|埋葬料|埋葬費|家族埋葬料/u.test(body) ? scope : chatScope
+    },
     maxSourceAgeMs: 15 * 60_000,
     sourceTimeoutMs: 8_000,
     // 非本番のハッカソン限定。reviewStatus が draft の Definition でも案内を試せる。

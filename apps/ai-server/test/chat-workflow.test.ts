@@ -15,6 +15,7 @@ function setup() {
   const artifact = { caseVersion: 1, contextSnapshotId: 'context', fencingToken: 1, artifactVersion: 1, contentHash: contentHash(content), content,
     expiresAt: new Date(Date.now() + 60000).toISOString() }
   const reported: InternalResult[] = []
+  const providerCalls = { searches: 0, reads: 0 }
   const deps: ChatReplyDependencies = { models: { core: core.model, research: research.model }, signal: new AbortController().signal,
     backend: { context: async () => structuredClone(artifact), control: async () => ({ instruction: 'CONTINUE', reason: null, caseVersion: 1 }),
       result: async value => { reported.push(value); return { applied: true, reason: null } } },
@@ -22,21 +23,22 @@ function setup() {
     scope: { id: 'brief', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き', institution: '架空機関', jurisdiction: '架空市', municipality: '架空市',
       procedureIds: ['fixture-procedure'], sourceCatalogIds: ['catalog'], sourceCatalogVersions: { catalog: '1' }, questions: [{ id: 'where', text: '提出先を確認する' }] },
     catalogs: [{ id: 'catalog', allowedHosts: ['official.example'] }], timeoutMs: 1000, maxSourceAgeMs: 60000,
-    beforeTool: async () => {}, research: { search: async () => { throw new Error('Unexpected external lookup') }, read: async () => { throw new Error('Unexpected read') } },
+    beforeTool: async () => {}, research: { search: async () => { providerCalls.searches++; return [] }, read: async () => { providerCalls.reads++; throw new Error('Unexpected read') } },
   }
-  return { deps, artifact, reported, core, research }
+  return { deps, artifact, reported, core, research, providerCalls }
 }
 
-test('chat clarification uses real Mastra and existing chat_reply contract without inventing facts', async () => {
-  const { deps, reported, core, research } = setup()
+test('chat always searches the approved catalog and asks a bounded question when no official source matches', async () => {
+  const { deps, reported, core, research, providerCalls } = setup()
   const result = await (await createChatReplyWorkflow(deps).createRun()).start({ inputData: { resultId: 'result' } })
-  assert.equal(result.status, 'success', JSON.stringify(result)); assert.equal(core.calls.length, 1); assert.equal(research.calls.length, 0)
+  assert.equal(result.status, 'success', JSON.stringify(result)); assert.equal(core.calls.length, 0); assert.equal(research.calls.length, 0)
+  assert.equal(providerCalls.searches, 1); assert.equal(providerCalls.reads, 0)
   assert.equal(reported[0]?.kind, 'chat_reply')
   if (reported[0]?.kind !== 'chat_reply') assert.fail()
-  assert.match(reported[0].body, /対象の手続き/); assert.equal(reported[0].professionalNotice, false)
+  assert.match(reported[0].body, /公式資料/); assert.equal(reported[0].professionalNotice, false)
 })
 
-test('chat context change blocks delivery and factual paragraphs require completed verified research', async () => {
+test('chat context change blocks delivery and factual paragraphs require verified research', async () => {
   const { deps, artifact, reported } = setup(); let calls = 0
   deps.backend.context = async () => { const value = structuredClone(artifact); if (++calls > 1) value.caseVersion++; return value }
   const result = await (await createChatReplyWorkflow(deps).createRun()).start({ inputData: { resultId: 'result' } })
@@ -45,21 +47,24 @@ test('chat context change blocks delivery and factual paragraphs require complet
     draft: { paragraphs: [{ text: '未確認の説明', sourceIds: ['invented'] }], questions: [], professionalNotice: false } }))
 })
 
-test('grounded chat uses the research agent and renders citations without forwarding private messages', async () => {
-  const { deps, reported } = setup()
+test('grounded chat answers with partial verified findings without exposing research gaps or private messages', async () => {
+  const { deps, reported, providerCalls } = setup()
   const source = { id: 'source', catalogId: 'catalog', title: '合成資料', issuer: '架空機関', url: 'https://official.example/source' }
-  const core = scriptedModel([{ tool: 'agent-researchAgent', input: { prompt: JSON.stringify({ briefId: 'brief', questionIds: ['where'], sourceCatalogIds: ['catalog'] }) } },
-    { text: JSON.stringify({ paragraphs: [{ text: '合成資料の窓口へ確認してください。', sourceIds: ['source'] }], questions: [], professionalNotice: true }) }])
-  const research = scriptedModel([{ tool: 'searchOfficialSources', input: { query: '窓口' } }, { tool: 'readOfficialSource', input: { sourceId: 'source' } },
-    { text: JSON.stringify({ status: 'complete', answers: [{ questionId: 'where', text: '合成窓口', sourceIds: ['source'], applicability: '架空市' }], missing: [], conflicts: [] }) }])
+  const core = scriptedModel([{ text: JSON.stringify({ paragraphs: [{ text: '合成資料の窓口へ確認してください。', sourceIds: ['source'] }],
+    questions: ['amount（支給額の具体的金額）'], professionalNotice: true }) }])
+  const research = scriptedModel([{ text: JSON.stringify({ status: 'partial', answers: [{ questionId: 'where', text: '合成窓口',
+    evidence: [{ sourceId: 'source', sectionId: 's1', quote: '合成窓口へ確認する。' }] }], missing: ['支給額は未確認'], conflicts: [] }) }])
   deps.models = { core: core.model, research: research.model }
-  deps.research = { search: async () => [source], read: async () => sourceDocument(source, '合成窓口へ確認する。') }
+  deps.research = { search: async () => { providerCalls.searches++; return [source] },
+    read: async () => { providerCalls.reads++; return sourceDocument(source, '合成窓口へ確認する。') } }
   const result = await (await createChatReplyWorkflow(deps).createRun()).start({ inputData: { resultId: 'grounded-result' } })
   assert.equal(result.status, 'success', JSON.stringify(result))
-  assert.equal(research.calls.length, 3)
+  assert.equal(research.calls.length, 1); assert.equal(core.calls.length, 1)
+  assert.deepEqual(providerCalls, { searches: 1, reads: 1 })
   assert.equal(JSON.stringify(research.calls).includes('PRIVATE-MESSAGE'), false)
   assert.equal(reported[0]?.kind, 'chat_reply')
   if (reported[0]?.kind !== 'chat_reply') assert.fail()
   assert.match(reported[0].body, /https:\/\/official.example\/source/)
+  assert.doesNotMatch(reported[0].body, /amount/)
   assert.equal(reported[0].professionalNotice, true)
 })
