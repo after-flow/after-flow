@@ -17,14 +17,15 @@ const runtime = new DurableExecutionRuntime({ store, snapshots: new FirestoreWor
   client: dispatch => new BackendClient({ baseUrl: process.env.AI_TEST_BACKEND_ORIGIN!, serviceToken: process.env.AI_TEST_BACKEND_TOKEN!,
     allowInsecureHttp: true, insecureHttpAllowedHosts: ['127.0.0.1'] }, dispatch),
   handlers: { chat_reply: createChatHandler({ storage, prepare: async session => ({
-    models: { core: scriptedModel([{ text: JSON.stringify({ paragraphs: [], questions: ['対象の手続きを教えていただけますか？'], professionalNotice: false }) }]).model,
-      research: scriptedModel([]).model },
+    // 公式資料が見つからない相談ではモデルを呼ばない。呼ばれたら台本切れで失敗させる。
+    models: { core: scriptedModel([]).model, research: scriptedModel([]).model },
     budget: { charge: session.guard, inference: { core: { tokens: 10000, costMicros: 10000, maxOutputTokens: 1000 }, research: { tokens: 10000, costMicros: 10000, maxOutputTokens: 1000 } } },
     authorizeRoute: async () => ({ routeId: 'chat-reply/v1', evidenceId: 'synthetic-orch-only' }),
     scope: { id: 'brief', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き', institution: '架空機関', jurisdiction: '架空地域', municipality: null,
       procedureIds: ['fixture-procedure'], sourceCatalogIds: ['catalog'], sourceCatalogVersions: { catalog: '1' }, questions: [{ id: 'where', text: '提出先を確認する' }] },
     catalogs: [{ id: 'catalog', allowedHosts: ['official.example'] }], timeoutMs: 1000, maxSourceAgeMs: 60000, beforeTool: () => session.guard(),
-    research: { search: async () => { throw new Error('Unexpected fixture search') }, read: async () => { throw new Error('Unexpected fixture retrieval') } },
+    // 相談では毎回、審査済みカタログを検索する。合成環境には公式資料が無いので候補は0件とし、取得は起きない。
+    research: { search: async () => [], read: async () => { throw new Error('Unexpected fixture retrieval') } },
   }) }) },
 })
 const host = await startExecutionHost({ port: 0, runtime, worker: runtime, serviceToken: process.env.AI_TEST_INGRESS_TOKEN })
