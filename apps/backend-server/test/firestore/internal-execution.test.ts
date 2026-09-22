@@ -1101,7 +1101,8 @@ describeFirestore('Real AI Worker HTTP integration (synthetic model/Orch only)',
     }
     assert.equal(history.length, 2, errorOutput)
     assert.equal(history.filter(message => message.role === 'assistant').length, 1)
-    assert.match(history.find(message => message.role === 'assistant').body, /対象の手続き/)
+    // 合成環境には公式資料が無いため、根拠の無い回答はせず、資料が見つからなかったことを伝える。
+    assert.match(history.find(message => message.role === 'assistant').body, /確認できる公式資料が見つかりませんでした/)
     assert.equal((await client.deliver(job)).status, 'ACCEPTED')
     assert.equal((await call(h.app, `/cases/${h.caseId}/messages`)).body.data.length, 2)
   })

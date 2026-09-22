@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { internalId, internalResultSchema } from '@aftercare/internal-contracts'
 import type { ContextProof } from '@aftercare/internal-contracts'
 import type { SourceDocument } from '../research/sources.js'
-import { assertCompleteResearch } from '../research/contracts.js'
 import type { ResearchEvidence } from '../research/contracts.js'
 
 export const chatDraftSchema = z.object({
@@ -15,9 +14,9 @@ export function chatReplyResult(input: {
 }) {
   const draft = chatDraftSchema.parse(input.draft)
   const sources = new Map(input.sources.map(source => [source.id, source])); const used = new Set<string>()
-  if (draft.paragraphs.length) assertCompleteResearch(input.research, new Set(sources.keys()))
+  const researched = new Set(input.research.outcomes.flatMap(outcome => outcome.findings?.answers.flatMap(answer => answer.sourceIds) ?? []))
   for (const paragraph of draft.paragraphs) for (const id of paragraph.sourceIds) {
-    if (!sources.has(id)) throw new Error('Chat cites an unverified source')
+    if (!sources.has(id) || !researched.has(id)) throw new Error('Chat cites an unverified source')
     used.add(id)
   }
   const body = [
