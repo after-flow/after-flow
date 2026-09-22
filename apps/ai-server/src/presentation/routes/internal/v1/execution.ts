@@ -17,7 +17,10 @@ const snapshotQuerySchema = z.object({
 
 export function executionRoutes(options: ExecutionOptions) {
   const app = new Hono()
+  // 未接続（設定が無い）は時間をおいても変わらないため、Backendは再送せずに失敗として確定する。
   const unavailable = { error: { code: 'AI_EXECUTION_NOT_CONNECTED' } }
+  // 実行中の例外（Backendの一時的な409 CASE_BUSYなど）は未接続と区別し、Backendが再送できるようにする。
+  const temporarilyUnavailable = { error: { code: 'AI_EXECUTION_UNAVAILABLE' } }
   app.use('*', async (c, next) => {
     if (!options.serviceToken?.trim()) return c.json(unavailable, 503)
     if (!timingSafeEqual(digest(c.req.header('Authorization') ?? ''), digest(`Bearer ${options.serviceToken}`)) ||
@@ -27,7 +30,7 @@ export function executionRoutes(options: ExecutionOptions) {
     await next()
   })
   app.use('*', bodyLimit({ maxSize: INTERNAL_LIMITS.bodyBytes, onError: c => c.json({ error: { code: 'BODY_TOO_LARGE' } }, 413) }))
-  app.onError(() => new Response(JSON.stringify(unavailable), { status: 503, headers: { 'Content-Type': 'application/json' } }))
+  app.onError(() => new Response(JSON.stringify(temporarilyUnavailable), { status: 503, headers: { 'Content-Type': 'application/json' } }))
 
   for (const kind of ['dispatch', 'resume'] as const) {
     app.post(`/runs/:runId/${kind}`, async c => {

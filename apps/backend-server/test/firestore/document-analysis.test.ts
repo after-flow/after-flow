@@ -186,6 +186,29 @@ describeFirestore('書類の読み取り（document_analysis, #196）', () => {
     assert.ok(assets.body.data.some((asset: any) => asset.institution === '○○銀行'))
   })
 
+  it('書類を一覧から外すと、その書類から届いた承認待ちの確認を失効させる', async t => {
+    // 失効させないと、承認も却下もできない確認が「AIからの確認」に残り続ける。
+    const h = await setup(t)
+    const doc = await h.uploadDocument('BANK_STATEMENT')
+    const exec = await h.acceptAnalysis(doc.id)
+    const artifact = artifactEnvelopeSchema.parse((await h.request(exec, 'context')).body.data)
+    const proposed = await h.request(exec, 'proposals', {
+      caseVersion: artifact.caseVersion, contextSnapshotId: artifact.contextSnapshotId,
+      fencingToken: artifact.fencingToken, artifactVersion: artifact.artifactVersion, contentHash: artifact.contentHash,
+      proposalId: 'extracted-asset-1', kind: 'ASSET_PROPOSAL' as const, title: '預金口座を財産として登録する', summary: '書類から読み取りました。',
+      payload: { operation: 'CREATE', fields: { name: '○○銀行', kind: 'BANK', institution: '○○銀行', amount: 1_000, taxAttention: false, note: null } },
+      basis: [{ type: 'DOCUMENT' as const, id: doc.id, version: artifact.content.documentVersion as number, label: doc.id }], assetDisposal: false,
+    })
+    assert.equal(proposed.status, 200, JSON.stringify(proposed.body))
+    const approvalId = proposed.body.data.approvalId as string
+
+    const current = await call(h.app, `/cases/${h.caseId}/documents/${doc.id}`)
+    const archived = await call(h.app, `/cases/${h.caseId}/documents/${doc.id}/archive`, jsonRequest('POST', { expectedVersion: current.body.data.version }))
+    assert.equal(archived.status, 200, JSON.stringify(archived.body))
+    const approval = await call(h.app, `/cases/${h.caseId}/approvals/${approvalId}`)
+    assert.equal(approval.body.data.status, 'EXPIRED')
+  })
+
   it('取消したRunは書類を解析中のまま固定せず、新たな依頼を受け付けられる', async t => {
     const h = await setup(t)
     const doc = await h.uploadDocument('BANK_STATEMENT')

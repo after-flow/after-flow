@@ -92,6 +92,20 @@ test('liveness stays available; unconfigured runtime never acknowledges dispatch
   assert.equal((await createApp().request('/internal/v1/runs/run-1/dispatch', input())).status, 503)
 })
 
+test('実行の受付中の一時的な失敗は、未接続と区別して再送できる応答にする', async () => {
+  // Backendが同じCaseの別の実行中に409 CASE_BUSYを返した場合など。
+  const busy: ExecutionRuntime = {
+    async accept() { throw new Error('Backend request failed: 409 CASE_BUSY') },
+    async snapshot(scope) { return { ...scope, state: 'MISSING', snapshotId: null } },
+  }
+  const response = await createApp({ serviceToken: 'ingress-fixture', runtime: busy }).request('/internal/v1/runs/run-1/dispatch', input())
+  assert.equal(response.status, 503)
+  assert.deepEqual(await response.json(), { error: { code: 'AI_EXECUTION_UNAVAILABLE' } })
+  // 実行基盤が無い場合だけ、未接続として返す（Backendは再送せず失敗として確定する）。
+  const unconfigured = await createApp({ serviceToken: 'ingress-fixture' }).request('/internal/v1/runs/run-1/dispatch', input())
+  assert.deepEqual(await unconfigured.json(), { error: { code: 'AI_EXECUTION_NOT_CONNECTED' } })
+})
+
 test('ingress rejects identity, audience, run, time and idempotency substitutions before runtime', async () => {
   let calls = 0
   const runtime: ExecutionRuntime = {

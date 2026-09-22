@@ -26,15 +26,25 @@ export function pageText(items: readonly PdfTextItem[]): string {
 }
 
 /**
+ * CJK部首補助（U+2E80〜U+2EFF）の文字を、同じ字形の統合漢字にする対応表。
+ * NFKCは康熙部首（U+2F00台）だけを統合漢字にし、このブロックは変換しない。
+ * 日本語フォントのPDFでは「⻑（長）」「⻄（西）」などがこのブロックの文字として抽出される。
+ * Unicode の EquivalentUnifiedIdeograph.txt（UCD 18.0.0）から生成した。
+ */
+const RADICAL_SUPPLEMENT_FROM = Array.from('⺁⺂⺃⺄⺅⺆⺇⺈⺉⺊⺋⺌⺍⺎⺏⺐⺑⺒⺓⺔⺕⺖⺗⺘⺙⺛⺜⺝⺞⺟⺠⺡⺢⺣⺤⺥⺦⺧⺨⺩⺪⺫⺬⺭⺮⺯⺰⺱⺲⺳⺴⺵⺶⺷⺸⺹⺺⺻⺼⺽⺾⺿⻀⻁⻂⻃⻄⻅⻆⻇⻈⻉⻊⻋⻌⻍⻎⻏⻐⻑⻒⻓⻔⻕⻖⻗⻘⻙⻚⻛⻜⻝⻞⻟⻠⻡⻢⻣⻤⻥⻦⻧⻨⻩⻪⻫⻬⻭⻮⻯⻰⻱⻲⻳')
+const RADICAL_SUPPLEMENT_TO = Array.from('厂乛乚乙亻冂𠘨刀刂卜㔾小小兀尣尢𡯂巳幺彑𫜹忄心扌攵旡日月歺母民氵氺灬爫爫丬牛犭王𤴔目示礻𥫗糹纟罓罒㓁冗𦉫羊𦍌𦍋耂肀聿肉𦥑艹艹艹虎衤覀西见角𧢲讠贝𧾷车辶辶辶邑钅長镸长门𨸏阝雨青韦页风飞食𩙿飠饣𩠐马骨鬼鱼鸟卤麦黄黾斉齐歯齿竜龙龜亀龟')
+const RADICAL_SUPPLEMENT = new Map(RADICAL_SUPPLEMENT_FROM.map((from, index) => [from, RADICAL_SUPPLEMENT_TO[index]!]))
+
+/**
  * 抽出した本文を、AIが引用・照合できる形に整える。
  *
  * - NFKC正規化: 日本語フォントのPDFでは「高」「金」「日」などが見た目の同じ康熙部首
  *   （U+2F00台）として抽出されることがあり、そのままでは金融機関名などが別の文字になる。
- *   全角英数字もここで半角にそろう。
+ *   全角英数字もここで半角にそろう。CJK部首補助の文字も対応表で統合漢字にする。
  * - 空白: 行内の連続する空白は1つにし、改行は1行ずつ残す。
  */
 export function normalizeExtractedText(raw: string): string {
-  return raw.normalize('NFKC').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{2,}/g, '\n').trim()
+  return raw.normalize('NFKC').replace(/[\u2E80-\u2EFF]/g, char => RADICAL_SUPPLEMENT.get(char) ?? char).replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{2,}/g, '\n').trim()
 }
 
 /**
@@ -55,9 +65,10 @@ const { parentPort, workerData } = require('node:worker_threads');
     useSystemFonts: false, useWorkerFetch: false, stopAtErrors: true, verbosity: 0 });
   try {
     const document = await task.promise;
-    if (document.numPages < 1 || document.numPages > ${ANALYSIS_PDF_MAX_PAGES}) throw new Error('page limit');
+    if (document.numPages < 1) throw new Error('page limit');
+    // 上限を超える書類は、全体を読めないものとせず先頭のページだけを読む（通帳・残高証明書は先頭に要点がある）。
     const pages = [];
-    for (let number = 1; number <= document.numPages; number++) {
+    for (let number = 1; number <= Math.min(document.numPages, ${ANALYSIS_PDF_MAX_PAGES}); number++) {
       const page = await document.getPage(number);
       const content = await page.getTextContent();
       // 断片のつなぎ方と正規化はWorkerの外（pageText）で行う。ここでは上限内の断片だけを返す。

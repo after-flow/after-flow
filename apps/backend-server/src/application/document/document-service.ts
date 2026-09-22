@@ -16,6 +16,7 @@ import type { DocumentInspector } from '../ports/inspection.js'
 import type { ObjectStorage } from '../ports/object-storage.js'
 import type { DocLocation, ListOptions, Page, ReadRepository, UnitOfWork } from '../ports/persistence.js'
 import { analysisFieldsFor } from '../../domain/document/analysis-catalog.js'
+import type { ApprovalEntity } from '../../domain/proposal/approval.js'
 
 export interface RegisterDocumentInput {
   fileName: string
@@ -400,6 +401,11 @@ export class DocumentService {
   ): Promise<DocumentView> {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
     const location = documentLocation(caseId, documentId)
+    // この書類から届いた承認待ちの確認。書類を外すと根拠を失い承認できなくなるため、一緒に失効させる。
+    // 一覧から消さないと、承認も却下もできない確認が「AIからの確認」に残り続ける。
+    const fromDocument = await this.read.list<ApprovalEntity>(user.tenantId, collections.approvals, caseId, {
+      limit: 100, where: [{ field: 'sourceDocumentId', op: '==', value: documentId }],
+    })
 
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const current = await tx.require<DocumentEntity>(location)
@@ -408,6 +414,18 @@ export class DocumentService {
         archived: true,
         archivedAt: new Date().toISOString(),
       })
+      for (const item of fromDocument.items) {
+        const approvalLocation = { collection: collections.approvals, caseId, id: item.id }
+        const approval = await tx.get<ApprovalEntity>(approvalLocation)
+        if (approval?.status !== 'PENDING') continue
+        tx.update<ApprovalEntity>(approvalLocation, approval.version, { status: 'EXPIRED' })
+        tx.audit({
+          caseId,
+          type: 'approval.expired',
+          target: { collection: collections.approvals.name, id: approval.id, version: approval.version + 1 },
+          detail: { reason: 'SOURCE_DOCUMENT_ARCHIVED', documentId },
+        })
+      }
       tx.audit({
         caseId,
         type: 'document.archived',

@@ -157,7 +157,11 @@ export function createDocumentAnalysisHandler(config: HandlerConfig<GuidanceAgen
         // （createPlaybookAgents）を使い、検索対象のbriefが無いだけ（Researchへは委任しない）。
         const agents = createPlaybookAgents({ ...prepared, budget, signal, playbookId: 'document-review' })
         const response = await agents.coreAgent.generate(JSON.stringify({
-          goal: '配信された書類のページ本文（pages）から、読み取り対象フィールド（fields）の候補を、本文中の完全一致する引用（quote）と位置（page/start/end）つきで抽出してください。本文に無い値は推測せず、読み取れないフィールドはunreadableFieldsに入れてください。',
+          goal: `配信された書類のページ本文（pages）から、読み取り対象フィールド（fields）の候補を、本文中の完全一致する引用（quote）と位置（page/start/end）つきで抽出してください。本文に無い値は推測せず、読み取れないフィールドはunreadableFieldsに入れてください。
+- 書類が、金融機関の口座があることや残高が分かるもの（通帳・残高証明書・取引明細・口座開設のお知らせなど）でない場合は、候補を返さず、すべてのフィールドをunreadableFieldsに入れてください。請求書や領収書の発行元は金融機関ではありません。
+- 口座があることは分かるが残高の記載が無い場合は、金融機関名だけを返し、残高はunreadableFieldsに入れてください。
+- 通帳のように同じ口座の残高が複数並ぶ場合は、最も新しい残高だけを返してください。
+- 複数の口座が載っている場合は、口座ごとに金融機関名と残高を返し、残高のquoteには同じ行の金融機関名も含めてください。`,
           fields: document.fields.map(field => ({ id: field.id, label: field.label, required: field.required })),
           pages: document.pages,
         }), { structuredOutput: { schema: extractionSchema, errorStrategy: 'strict' }, abortSignal: signal })

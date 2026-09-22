@@ -6,15 +6,19 @@ import { extractPdfPages, normalizeExtractedText, pageText } from '../src/applic
  * 1行の途中でフォントが切り替わる最小のPDF。標準フォント（Helvetica / Times-Roman）だけを使い、
  * フォントを埋め込まない。pdf.jsはフォントの切り替わりで文字列を別の断片にする。
  */
-function mixedFontPdf(): Uint8Array {
-  const stream = 'BT /F1 18 Tf 72 720 Td (Balance Certi) Tj /F2 18 Tf (ficate) Tj ET\nBT /F1 12 Tf 72 690 Td (Sample Bank, Balance JPY 1,234,567) Tj ET'
+function mixedFontPdf(pageCount = 1): Uint8Array {
+  const stream = (page: number) => `BT /F1 18 Tf 72 720 Td (Balance Certi) Tj /F2 18 Tf (ficate) Tj ET\nBT /F1 12 Tf 72 690 Td (Sample Bank, Balance JPY 1,234,567 page ${page}) Tj ET`
+  // 1: Catalog, 2: Pages, 3: F1, 4: F2, 5以降: ページとその内容を交互に置く。
+  const pages = Array.from({ length: pageCount }, (_, index) => [
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${6 + index * 2} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> >>`,
+    `<< /Length ${stream(index + 1).length} >>\nstream\n${stream(index + 1)}\nendstream`,
+  ]).flat()
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>',
-    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, index) => `${5 + index * 2} 0 R`).join(' ')}] /Count ${pageCount} >>`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>',
+    ...pages,
   ]
   let body = '%PDF-1.4\n'
   const offsets: number[] = []
@@ -31,7 +35,13 @@ test('#196 フォントが切り替わる断片を空白なしでつなぎ、行
   const lines = pages[0]!.text.split('\n')
   // 以前は断片を空白でつないでいたため "Balance Certi ficate" になっていた。
   assert.equal(lines[0], 'Balance Certificate')
-  assert.equal(lines[1], 'Sample Bank, Balance JPY 1,234,567')
+  assert.equal(lines[1], 'Sample Bank, Balance JPY 1,234,567 page 1')
+})
+
+test('#196 上限を超えるページ数の書類も、全体を捨てずに先頭のページを読む', async () => {
+  const { pages } = await extractPdfPages(mixedFontPdf(21), new AbortController().signal)
+  assert.equal(pages.length, 20)
+  assert.match(pages[19]!.text, /page 20$/)
 })
 
 test('#196 日本語PDFの康熙部首と語の途中の分割を、引用できる本文に直す', () => {
@@ -43,6 +53,11 @@ test('#196 日本語PDFの康熙部首と語の途中の分割を、引用でき
     { str: '残', hasEOL: false }, { str: '\u2FBC', hasEOL: false }, { str: ' 1,234,567円', hasEOL: true },
   ]
   assert.equal(pageText(items), '残高証明書\n架空信用金庫 本店営業部\n残高 1,234,567円')
+})
+
+test('#196 CJK部首補助の文字（NFKCで変わらない）も統合漢字にする', () => {
+  // 「⻑い書類」: 長 が U+2ED1 として抽出された実例。ほかに ⻄（西）・⻘（青）・⻝（食）。
+  assert.equal(normalizeExtractedText('\u2ED1い書類 \u2EC4口 \u2ED8山 \u2EDD品'), '長い書類 西口 青山 食品')
 })
 
 test('#196 本文の正規化は全角英数字と空白の揺れをそろえ、行は残す', () => {
