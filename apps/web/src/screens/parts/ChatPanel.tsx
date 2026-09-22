@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { CHAT_REPLY_POLL_TIMEOUT_MS, useMessages, useSendMessage } from '@/lib/api/queries'
+import { CHAT_REPLY_POLL_TIMEOUT_MS, useAiCapabilities, useMessages, useSendMessage } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { formatDateTime } from '@/lib/format'
-import { Button, Loading, textareaClass } from '@/kit/kit'
+import { Button, Loading, Notice, textareaClass } from '@/kit/kit'
 import { AiConsentNotice, useAiConsent } from '@/kit/domain'
 import { useChatDock } from '@/shell/chatDock'
 
@@ -31,6 +31,12 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
   const scrollRef = useRef<HTMLDivElement>(null)
   const messages = data ?? []
   const consent = useAiConsent()
+  const capabilities = useAiCapabilities()
+  // 受付結果でも未接続が分かる。取得前に送った場合や、取得後に接続が切れた場合はこちらで拾う。
+  const [replyUnavailable, setReplyUnavailable] = useState(false)
+  // 取れていない間は塞がない。接続済みの環境で入口を消すより、送信後に理由を出す方を既定にする。
+  const chatConnected = capabilities.data ? capabilities.data.features.ai_chat.available : true
+  const showUnavailable = !chatConnected || replyUnavailable
 
   useEffect(() => {
     if (!awaitingSince) return
@@ -62,6 +68,8 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
     // 例の質問を押したときは、書きかけ（手続きの画面からの書き出しを含む）を消さない
     if (text == null) setInput('')
     const accepted = await send.mutateAsync(body)
+    // 受け付けられなかった発言も履歴には残る。黙って何も起きないように見せず、理由を出す。
+    setReplyUnavailable(!accepted.runAccepted)
     if (accepted.runAccepted) setAwaitingSince(Date.now() - 1_000)
   }
 
@@ -136,6 +144,15 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
           <p className="animate-pulse pb-4 text-[0.9rem] text-rd-text-2" aria-live="polite">
             答えを考えています…
           </p>
+        )}
+        {consent.allowed && showUnavailable && !send.isPending && (
+          <div className="pb-4">
+            <Notice tone="warning" role="status" title="いまはAIからの返信をお届けできません">
+              {replyUnavailable
+                ? 'お送りいただいた内容は記録しました。AIの返信機能が使える状態になってから、改めてご確認ください。'
+                : 'AIの返信機能がまだ使える状態になっていません。お急ぎの場合は、手続きの画面の案内をご覧ください。'}
+            </Notice>
+          </div>
         )}
       </div>
 

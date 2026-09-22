@@ -9,6 +9,7 @@
 import { HttpResponse, http, delay } from 'msw'
 import type {
   AcknowledgeInsightRequest,
+  AiCapabilitiesResource,
   Asset,
   Benefit,
   CaseResource,
@@ -278,6 +279,17 @@ export const handlers = [
   /* ---------- 利用登録 ---------- */
   http.get(`${BASE}/me`, () => ok<MeResource>(me())),
   http.post(`${BASE}/me`, () => ok<MeResource>(me(), 200)),
+
+  /* ---------- AI の接続状況 ---------- */
+  // モックは接続済みの環境を再現する。未接続の画面は Backend を未接続で動かして確かめる。
+  http.get(`${BASE}/ai/capabilities`, () =>
+    ok<AiCapabilitiesResource>({
+      features: {
+        task_guidance: { available: true, reason: null },
+        ai_chat: { available: true, reason: null },
+      },
+    }),
+  ),
 
   /* ---------- 同意 ---------- */
   http.get(`${BASE}/consents`, () => ok(consentStatus())),
