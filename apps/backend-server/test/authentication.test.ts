@@ -124,6 +124,9 @@ describe('トークン検証', () => {
         aud: AUDIENCE,
         exp: Math.floor(Date.now() / 1000) + 300,
         iat: Math.floor(Date.now() / 1000),
+        // auth_time を含めておく。無いと AUTH_TIME_REQUIRED でも同じ
+        // UNAUTHENTICATED になり、署名検証をスキップしても通ってしまう。
+        auth_time: Math.floor(Date.now() / 1000),
         email_verified: true,
       }),
     ).toString('base64url')
@@ -141,6 +144,9 @@ describe('トークン検証', () => {
         aud: AUDIENCE,
         exp: Math.floor(Date.now() / 1000) + 300,
         iat: Math.floor(Date.now() / 1000),
+        // auth_time を含めておく。無いと AUTH_TIME_REQUIRED でも同じ
+        // UNAUTHENTICATED になり、改竄検知をスキップしても通ってしまう。
+        auth_time: Math.floor(Date.now() / 1000),
         email_verified: true,
       }),
     ).toString('base64url')
