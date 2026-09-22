@@ -653,6 +653,8 @@ export function useReviseProposal(caseId: string) {
     onSuccess: (proposal) => {
       qc.setQueryData(qk.proposal(caseId, proposal.id), proposal)
       void qc.invalidateQueries({ queryKey: qk.proposals(caseId) })
+      // 訂正すると旧版の確認は EXPIRED になる。続く承認依頼が失敗しても、一覧とバッジに古い「確認待ち」を残さない
+      void qc.invalidateQueries({ queryKey: qk.approvals(caseId) })
     },
   })
 }
