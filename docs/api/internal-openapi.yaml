@@ -1104,6 +1104,14 @@ paths:
                         - COMPLETED
                         - PARTIAL
                         - FAILED
+                    outcome:
+                      type: string
+                      enum:
+                        - COMPLETED_RESEARCH
+                        - MISSING_CONTEXT
+                        - SOURCE_NOT_CONFIGURED
+                        - NOT_APPLICABLE
+                        - FAILED
                     target:
                       anyOf:
                         - type: string
