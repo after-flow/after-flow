@@ -101,9 +101,10 @@ test('chat intent boundary covers supported topics and excludes unrelated questi
     classifyChatIntent('亡くなった母の銀行口座や携帯電話はどうすればよいですか？'),
     classifyChatIntent('亡くなった父の銀行口座と携帯電話は、どの順番で何をすればよいですか？'),
     classifyChatIntent('口座凍結後の手続きを教えてください。'),
+    classifyChatIntent('死亡後の手続き「公共料金・携帯電話・カードなどの契約を整理する」について、進め方と注意点を教えてください。'),
     classifyChatIntent('今夜の夕食は何がおすすめですか？'),
     classifyChatIntent('代わりに役所へ死亡届を提出しておいてください。'),
-  ], ['burial_benefit', 'death_notification', 'pension', 'inheritance_renunciation', 'priority_overview', 'priority_overview', 'aftercare_general', 'aftercare_general', 'aftercare_general', 'out_of_scope', 'delegated_action'])
+  ], ['burial_benefit', 'death_notification', 'pension', 'inheritance_renunciation', 'priority_overview', 'priority_overview', 'aftercare_general', 'aftercare_general', 'aftercare_general', 'aftercare_general', 'out_of_scope', 'delegated_action'])
 
   for (const [message, expected] of [
     ['今夜の夕食は何がおすすめですか？', /死亡後の手続きに関する質問/],
