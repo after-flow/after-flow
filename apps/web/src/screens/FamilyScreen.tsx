@@ -194,7 +194,14 @@ export function FamilyScreen() {
         ) : (
           <ul>
             {all.map((p) => (
-              <li key={p.id} className="flex items-center gap-3 border-b border-rd-border-2 px-4 py-3 last:border-b-0">
+              /*
+                狭い画面では「編集」「削除」を名前の下の行に送る。1行に並べると名前の列が 40px ほどになり、
+                「相続人」の札がはみ出していた
+              */
+              <li
+                key={p.id}
+                className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 border-b border-rd-border-2 px-4 py-3 last:border-b-0 sm:flex"
+              >
                 <Avatar name={p.name} />
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2">
@@ -206,12 +213,14 @@ export function FamilyScreen() {
                     <p className="truncate text-[0.82rem] text-rd-text-2">{[p.note, p.contact].filter(Boolean).join('・')}</p>
                   )}
                 </div>
-                <Button size="sm" variant="ghost" icon="pencil" onClick={() => setEditing(p)}>
-                  編集
-                </Button>
-                <Button size="sm" variant="ghost" className="text-rd-danger-text" onClick={() => setDeleting(p)}>
-                  削除
-                </Button>
+                <div className="col-start-2 -ml-3 flex gap-1 sm:ml-0">
+                  <Button size="sm" variant="ghost" icon="pencil" onClick={() => setEditing(p)}>
+                    編集
+                  </Button>
+                  <Button size="sm" variant="ghost" className="text-rd-danger-text" onClick={() => setDeleting(p)}>
+                    削除
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>

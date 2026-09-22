@@ -162,25 +162,30 @@ export const db: Store = {
     task({
       id: 'task_1',
       title: '死亡届を提出する',
-      summary: '死亡診断書と一緒に、市区町村の窓口へ提出します。火葬許可証の交付もあわせて受け取ります。',
+      // 説明・持ち物・期限は Backend の手続きの定義（rule-catalog.ts の death-notification）と同じにする
+      summary:
+        '死亡届の用紙は、病院などで受け取る死亡診断書（死体検案書）と1枚になっています。左側の死亡届に記入し、市区町村の窓口へ出します。火葬許可の申請も同時に行い、火葬許可証を受け取ります（許可証がないと火葬できません）。葬儀社が代わりに出すことも多いので、済んでいるか確かめてください。国外で亡くなった場合は3か月以内です。',
       submitTo: '○○市役所 市民課',
       status: 'READY',
-      stage: 'funeral',
+      // 死亡届と一緒に火葬許可を申請し、許可証がないと火葬できない。葬儀より前の「亡くなった直後」に置く（Backend の定義と同じ）
+      stage: 'immediate',
       category: '役所手続き',
       source: 'RULE_ENGINE',
       deadline: makeDeadline({
         id: 'dl_1',
         taskId: 'task_1',
-        label: '死亡届',
+        label: '死亡届の提出期限',
         startDate: DEATH,
-        days: 7,
-        basisLabel: '死亡を知った日 ＋ 7日',
-        ruleId: 'death_notice',
+        // 知った日を含めて7日（初日算入）。含めずに数えると1日遅い期限になる
+        period: { unit: 'DAY', count: 7, includeFirstDay: true },
+        basisLabel: '亡くなったことを知った日から7日以内（その日を含めて数えます）',
+        ruleId: 'death-notification',
         critical: true,
       }),
       requiredDocuments: [
-        { id: 'rd_1', label: '死亡診断書', documentId: null, source: 'AI', collected: false },
-        { id: 'rd_2', label: '届出人の印鑑', documentId: null, source: 'AI', collected: false },
+        { id: 'rd_1', label: '死亡診断書（原本）', documentId: null, source: 'AI', collected: false },
+        // 2021年9月から戸籍の届出への押印は任意。印鑑ではなく本人確認書類（Backend の定義と同じ）
+        { id: 'rd_2', label: '届出人の本人確認書類', documentId: null, source: 'AI', collected: false },
       ],
       assigneeId: SELF_PERSON_ID,
       // 準備ができたまま数日たっている（「止まっている手続き」の見本）
@@ -189,7 +194,8 @@ export const db: Store = {
     task({
       id: 'task_2',
       title: '世帯主変更届を出す',
-      summary: '世帯主が亡くなり、残る世帯員が2人以上いる場合に必要です。',
+      summary:
+        '故人が世帯主で、同じ世帯に残る方が2人以上いる場合に必要です。残る方が1人のときや、残るのが親1人とその15歳未満の子だけのときなど、次の世帯主が明らかな場合は不要です。',
       submitTo: '○○市役所 市民課',
       status: 'NOT_STARTED',
       stage: 'government',
@@ -198,40 +204,46 @@ export const db: Store = {
       deadline: makeDeadline({
         id: 'dl_2',
         taskId: 'task_2',
-        label: '世帯主変更',
+        label: '世帯主変更届の提出期限',
         startDate: DEATH,
-        days: 14,
-        basisLabel: '死亡日 ＋ 14日',
-        ruleId: 'household',
+        period: { unit: 'DAY', count: 14 },
+        basisLabel: '亡くなった日の翌日から数えて14日以内',
+        ruleId: 'household-change-notification',
         critical: true,
       }),
-      requiredDocuments: [{ id: 'rd_3', label: '本人確認書類', documentId: null, source: 'AI', collected: false }],
+      requiredDocuments: [{ id: 'rd_3', label: '届出人の本人確認書類', documentId: null, source: 'AI', collected: false }],
     }),
     task({
       id: 'task_3',
       title: '国民健康保険の資格喪失届を出す',
-      summary: '保険証の返却もあわせて行います。加入していた保険の種類によって窓口が変わるため、期限は確認中です。',
+      summary:
+        '保険証（または資格確認書）を返します。加入していた保険によって窓口が違います（国民健康保険・後期高齢者医療は市区町村、会社の健康保険は勤務先）。',
       submitTo: '○○市役所 保険年金課',
       status: 'COLLECTING_INFORMATION',
       stage: 'government',
       category: '年金・保険',
       source: 'RULE_ENGINE',
-      // 起算日（保険の種類）が未入力のため、期限を算定できない見本
+      /*
+        期限を出せない表示（「期限は確認中」）の見本。
+        このケースは死亡日が入っているので「日付が未入力」（MISSING_BASIS_DATE）にはならない。
+        期限の決まりが業務の確認待ち（RULE_UNCONFIRMED）という扱いにする
+      */
       deadline: unresolvedDeadline({
         id: 'dl_3',
         taskId: 'task_3',
-        label: '資格喪失届',
-        basisLabel: '死亡日 ＋ 14日（加入していた保険の種類による）',
-        ruleId: 'health_insurance',
-        reason: 'MISSING_BASIS_DATE',
+        label: '国民健康保険の資格喪失届の提出期限',
+        basisLabel: '亡くなった日の翌日から数えて14日以内',
+        ruleId: 'national-health-insurance-loss',
+        reason: 'RULE_UNCONFIRMED',
       }),
-      requiredDocuments: [{ id: 'rd_4', label: '故人の保険証', documentId: null, source: 'AI', collected: false }],
+      // 2024年12月から保険証の新規発行は止まり、資格確認書が送られている人もいる
+      requiredDocuments: [{ id: 'rd_4', label: '故人の保険証または資格確認書', documentId: null, source: 'AI', collected: false }],
     }),
     task({
       id: 'task_4',
       title: '相続人を調べる（戸籍の収集）',
       summary:
-        '故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続方法の判断（3か月以内）に間に合うよう、早めに着手します。',
+        '故人の出生から死亡までの戸籍をそろえて、相続人を確定します。相続の方法を決める期限（3か月）に間に合うよう、早めに始めます。2024年3月から、配偶者・子・父母などは、最寄りの市区町村の窓口で、本籍地が遠い戸籍もまとめて請求できます（広域交付。兄弟姉妹は使えず、郵送では請求できません）。そろったら法務局で「法定相続情報一覧図」の写しを作ると、ほかの手続きで戸籍の束を何度も出さずに済みます。',
       status: 'COLLECTING_INFORMATION',
       stage: 'investigation',
       category: '相続',
@@ -245,7 +257,7 @@ export const db: Store = {
       id: 'task_5',
       title: '相続の方法を決める（承認・放棄の判断）',
       summary:
-        '単純承認・限定承認・相続放棄のいずれかを、相続人ごとに判断します。判断は法的な内容を含むため、迷われる場合は弁護士へご相談ください。',
+        '単純承認・限定承認・相続放棄のいずれかを決めます。相続放棄は相続人ごとに、限定承認は相続人全員がそろって、家庭裁判所に申し立てます。期限までに何もしないと、単純承認したものとみなされます。判断は法的な内容を含むため、迷う場合は弁護士にご相談ください。',
       status: 'ACTION_REQUIRED',
       stage: 'decision',
       category: '相続',
@@ -253,11 +265,12 @@ export const db: Store = {
       deadline: makeDeadline({
         id: 'dl_4',
         taskId: 'task_5',
-        label: '相続放棄・限定承認',
+        label: '相続方法の選択期限',
         startDate: DEATH,
-        days: 90,
-        basisLabel: '自分が相続人になったと知った時 ＋ 3か月',
-        ruleId: 'decision',
+        // 3か月は暦で数える（90日で近似しない）
+        period: { unit: 'MONTH', count: 3 },
+        basisLabel: '自分のために相続が始まったと知った日の翌日から数えて3か月以内（家庭裁判所に申し立てて延ばせる場合があります）',
+        ruleId: 'inheritance-choice',
         critical: true,
         extendable: true,
       }),
@@ -266,7 +279,7 @@ export const db: Store = {
     task({
       id: 'task_6',
       title: '故人の預金口座を解約して払い戻しを受ける',
-      summary: '相続方法が確定したあとに行う手続きです。財産の処分にあたるため、全員の相続方法が確定するまで進められません。',
+      summary: '相続の方法が決まったあとに行う手続きです。財産の処分にあたるため、全員の相続の方法が決まるまで進められません。',
       status: 'NOT_STARTED',
       stage: 'transfer',
       category: '金融機関',
@@ -275,8 +288,9 @@ export const db: Store = {
     }),
     task({
       id: 'task_7',
-      title: '準確定申告を行う',
-      summary: '故人のその年の所得について、相続人が代わりに申告します。',
+      title: '準確定申告をする',
+      summary:
+        '故人のその年の所得について、相続人が代わりに確定申告をします。所得や年金の額によっては不要な場合もあるので、税務署で確かめてください。',
       submitTo: '○○税務署',
       status: 'NOT_STARTED',
       stage: 'tax',
@@ -285,11 +299,11 @@ export const db: Store = {
       deadline: makeDeadline({
         id: 'dl_5',
         taskId: 'task_7',
-        label: '準確定申告',
+        label: '準確定申告の提出期限',
         startDate: DEATH,
-        days: 120,
-        basisLabel: '相続開始を知った日の翌日 ＋ 4か月',
-        ruleId: 'final_tax',
+        period: { unit: 'MONTH', count: 4 },
+        basisLabel: '相続の開始を知った日の翌日から数えて4か月以内',
+        ruleId: 'final-income-tax-return',
         critical: true,
       }),
     }),
@@ -534,7 +548,7 @@ const { proposal: taskProposal, approval: taskApproval } = makeProposalAndApprov
   summary: '見つかった預金口座について、解約と払い戻しの手続きを追加する提案です。財産の処分にあたる可能性があります。',
   payload: {
     title: '故人の預金口座を解約して払い戻しを受ける',
-    summary: '相続方法が確定したあとに行う手続きです。',
+    summary: '相続の方法が決まったあとに行う手続きです。',
     stage: 'transfer',
     category: '金融機関',
     submitTo: '○○銀行 △△支店',

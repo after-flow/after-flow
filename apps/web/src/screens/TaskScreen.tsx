@@ -167,7 +167,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
         <div className="flex items-center gap-3 rounded-lg border border-rd-border bg-rd-card px-4 py-3 @5xl:hidden">
           <CategoryIcon category={task.category} size={36} />
           <div className="min-w-0 flex-1">
-            <p className={`text-[1.2rem] font-bold leading-tight ${dueTone}`}>{done ? '完了' : dueWords(d)}</p>
+            <p className={`text-[1.2rem] font-bold leading-tight ${dueTone}`}>{done ? '完了' : dueWords(d, { long: true })}</p>
             <p className="text-[0.86rem] text-rd-text-2">
               {d.dueDate ? `${formatDate(d.dueDate, { weekday: true })}まで（${d.basisLabel}）` : d.basisLabel}
             </p>
@@ -290,7 +290,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                 <p className="text-[0.82rem] font-bold text-rd-text-2">期限</p>
                 {d ? (
                   <p className={`text-[1.4rem] font-bold leading-tight ${dueTone}`}>
-                    {done ? '完了' : dueWords(d)}
+                    {done ? '完了' : dueWords(d, { long: true })}
                   </p>
                 ) : prep && !done ? (
                   <p className="text-[1.2rem] font-bold leading-tight text-rd-warning-text">早めに</p>

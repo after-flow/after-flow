@@ -258,7 +258,10 @@ function TaskTable({
         return (
           <li key={t.id} className="border-b border-rd-border-2 last:border-b-0">
             <Link to={`${base}/tasks/${t.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-rd-bg">
-              <CategoryIcon category={t.category} size={34} />
+              {/* 狭い画面では、種類の印より手続きの名前と札に幅を回す（320px 幅で札が名前の列からはみ出していた） */}
+              <span className="hidden shrink-0 sm:block">
+                <CategoryIcon category={t.category} size={34} />
+              </span>
               <span className="min-w-0 flex-1">
                 {/* 手続きの名前は省略しない（高齢の方が「…」の先を想像しなくて済むように、折り返して全部見せる） */}
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -277,10 +280,14 @@ function TaskTable({
                 <TaskStatusBadge status={t.status} />
               </span>
               {/* 日付の行（例：2026年12月15日（火）より前に）が1行に収まる幅。狭い画面では日付を出さない */}
-              <span className="w-20 shrink-0 text-right sm:w-48">
+              {/* 幅は最小だけ決める。「あと1091日」のように桁が多いと、固定幅では右へはみ出していた */}
+              <span className="min-w-20 shrink-0 text-right sm:w-48">
                 <Due deadline={t.deadline} done={done} prep={prepDeadline(t, all)} />
               </span>
-              <Icon name="chevron-right" size={16} className="hidden text-rd-text-3 sm:block" />
+              {/* 隠すのは外側で行う（Icon は inline-block を付けるので、hidden を渡すと狭い画面でも出てしまう） */}
+              <span className="hidden shrink-0 sm:block">
+                <Icon name="chevron-right" size={16} className="text-rd-text-3" />
+              </span>
             </Link>
           </li>
         )
