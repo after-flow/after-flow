@@ -72,12 +72,14 @@ export function DocumentsScreen() {
             死亡診断書・通帳・保険証券などを追加すると、AIが手続きと期限を洗い出します。
           </Empty>
         ) : (
-          // 列の幅を固定する（table-fixed）。長いファイル名に表が押し広げられて、狭い画面で「状態」が切れるのを防ぐ
+          // 列の幅を固定する（table-fixed）。長いファイル名に表が押し広げられて、狭い画面で「状態」が切れるのを防ぐ。
+          // 「種類」は本文の幅（@container）が広いときだけ出す。画面の幅で決めると、サイドバーや相談の窓がある幅で
+          // 書類名の列が 170px ほどしか残らず、「死亡診断書.pdf」でも切れていた
           <table className="w-full table-fixed text-left text-[0.94rem]">
             <thead className="border-b border-rd-border bg-rd-bg text-[0.82rem] text-rd-text-2">
               <tr>
                 <th className="px-4 py-2 font-bold">書類</th>
-                <th className="hidden w-36 px-4 py-2 font-bold md:table-cell">種類</th>
+                <th className="hidden w-36 px-4 py-2 font-bold @4xl:table-cell">種類</th>
                 <th className="w-[9.5rem] px-3 py-2 font-bold sm:w-44 sm:px-4">状態</th>
                 <th className="hidden w-48 px-4 py-2 font-bold sm:table-cell">追加した日時</th>
               </tr>
@@ -96,7 +98,7 @@ export function DocumentsScreen() {
                         <span className="min-w-0 truncate font-bold hover:underline">{d.fileName}</span>
                       </Link>
                     </td>
-                    <td className="hidden px-4 py-2.5 text-rd-text-2 md:table-cell">{kindLabel(d.kind)}</td>
+                    <td className="hidden px-4 py-2.5 text-rd-text-2 @4xl:table-cell">{kindLabel(d.kind)}</td>
                     <td className="px-3 py-2.5 sm:px-4">
                       <Badge tone={s.tone}>{s.label}</Badge>
                     </td>

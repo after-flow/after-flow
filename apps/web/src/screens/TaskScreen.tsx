@@ -380,10 +380,11 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
         </aside>
       </div>
 
-      {/* 1列表示のとき：押すボタンは画面の下に固定する（サイドバーと、横に固定した相談の窓がある幅ではその間に）。
+      {/* 1列表示のとき：押すボタンは画面の下に固定する（サイドバーと、横に出した相談の窓がある幅ではその間に）。
+          相談の窓は sm 以上で右に出る（xl 未満は本文に重ねて出す）ので、sm から窓の幅だけ右を空ける。空けないとボタンが窓の下に隠れる。
           2列にするかは画面の幅ではなく本文の幅で決める。相談の窓を開くと本文が狭くなるため */}
       <div className="h-20 @5xl:hidden" aria-hidden />
-      <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-rd-border bg-rd-card px-4 py-3 lg:left-60 xl:right-[var(--chat-dock-w,0px)] @5xl:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-rd-border bg-rd-card px-4 py-3 lg:left-60 sm:right-[var(--chat-dock-w,0px)] @5xl:hidden">
         {done ? (
           actions.includes('reopen') && (
             <Button

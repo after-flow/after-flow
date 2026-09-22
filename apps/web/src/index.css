@@ -202,6 +202,29 @@
 }
 
 @layer utilities {
+  /*
+    「本文へスキップ」。キーボードで選んだときだけ、左上に重ねて出す。
+    ふつうの配置に戻すと、横並びの画面の枠に1列として入り込み、メニューと本文を右へ押し出してしまう
+  */
+  .skip-link:focus {
+    position: fixed;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 80;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 0.5rem 0.9rem;
+    overflow: visible;
+    clip: auto;
+    white-space: nowrap;
+    border-radius: 0.375rem;
+    background: var(--color-rd-card);
+    color: var(--color-rd-primary-text);
+    font-weight: 700;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+  }
+
   /* 画面には出さず、読み上げには含める */
   .visually-hidden {
     position: absolute;

@@ -171,7 +171,9 @@ export function AppShell() {
   const dockShown = chatOpen && !onChatScreen && caseId !== ''
 
   const sidebar = (
-    <div className="flex h-full flex-col">
+    // 高さが足りない画面（横向きのスマホなど）では、メニュー全体をスクロールする。
+    // メニューの項目だけをスクロールにすると、上下の固定部分に押されて項目が1つ分ほどしか見えなくなる
+    <div className="flex h-full flex-col overflow-y-auto">
       <div className="flex h-14 shrink-0 items-center gap-2 px-4">
         <span aria-hidden className="grid h-7 w-7 place-items-center rounded-md bg-rd-primary text-white">
           <Icon name="path" size={16} strokeWidth={2} />
@@ -209,7 +211,7 @@ export function AppShell() {
         </button>
       </div>
 
-      <nav aria-label="メインメニュー" className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-4">
+      <nav aria-label="メインメニュー" className="flex flex-[1_0_auto] flex-col gap-4 px-3 py-4">
         {NAV.map((sec, i) => (
           <div key={sec.title ?? i}>
             {sec.title && (
@@ -314,10 +316,10 @@ export function AppShell() {
     <ChatDockContext.Provider value={chatDock}>
       <div
         className="flex min-h-dvh bg-rd-bg leading-normal text-rd-text"
-        // 窓を横に固定したとき、本文の下に固定したボタンがその分だけ右を空けるための幅（xl 以上で使う）
+        // 窓を横に出したとき、本文の下に固定したボタンがその分だけ右を空けるための幅（窓が右に出る sm 以上で使う）
         style={dockShown ? ({ '--chat-dock-w': CHAT_DOCK_WIDTH } as CSSProperties) : undefined}
       >
-        <a href="#main" className="visually-hidden focus:not-sr-only">
+        <a href="#main" className="visually-hidden skip-link">
           本文へスキップ
         </a>
 
