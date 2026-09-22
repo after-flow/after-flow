@@ -6,9 +6,11 @@ import type { TenantMember } from '../authorization/case-access.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { randomUUID } from 'node:crypto'
 import type { AgentOperation, AgentRunEntity, AgentRunStatus } from '../../domain/agent/agent-run.js'
-import { failGuidanceForRun } from './run-termination.js'
+import { failRunTargets } from './run-termination.js'
 import { canCancel, canRetry, isRunTerminal, isRunWaiting } from '../../domain/agent/agent-run.js'
 import type { CaseEntity } from '../../domain/case/case.js'
+import type { DocumentEntity } from '../../domain/document/document.js'
+import { analysisFieldsFor } from '../../domain/document/analysis-catalog.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { GuidanceEntity } from '../../domain/task/guidance.js'
 import type { TaskEntity } from '../../domain/task/task.js'
@@ -211,6 +213,25 @@ export class AgentRunService {
           detail: { runId } })
       }
 
+      if (input.operation === 'document_analysis') {
+        if (input.targetType !== 'DOCUMENT') throw errors.validationFailed()
+        const location = { collection: collections.documents, caseId, id: input.targetId }
+        const document = await tx.require<DocumentEntity>(location)
+        if (document.archived || document.storageState !== 'STORED' || document.inspection.status !== 'PASSED') {
+          throw errors.preconditionFailed({ message: 'この書類はまだ読み取りを依頼できません。', details: { reason: 'DOCUMENT_NOT_DELIVERABLE' } })
+        }
+        if (!analysisFieldsFor(document.kind)) {
+          throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_KIND_NOT_SUPPORTED' } })
+        }
+        if (document.analysisState === 'QUEUED' || document.analysisState === 'RUNNING') {
+          throw errors.conflict({ details: { reason: 'ANALYSIS_ALREADY_IN_PROGRESS' } })
+        }
+        tx.update<DocumentEntity>(location, document.version, { analysisState: 'QUEUED', agentRunId: runId })
+        tx.audit({ caseId, type: 'document.analysis_requested',
+          target: { collection: collections.documents.name, id: input.targetId, version: document.version + 1 },
+          detail: { runId } })
+      }
+
       await recordAcceptedEvent(tx, caseId, runId, { operation: input.operation, targetType: input.targetType })
 
       tx.audit({
@@ -318,7 +339,7 @@ export class AgentRunService {
         currentAttemptId: randomUUID(),
       })
       if (cancellation) tx.outbox({ id: cancelId, type: 'agent.cancel', caseId, payload: { runId } })
-      await failGuidanceForRun(tx, caseId, current, { failureReason: 'CANCELLED', attemptId: current.currentAttemptId })
+      await failRunTargets(tx, caseId, current, { failureReason: 'CANCELLED', attemptId: current.currentAttemptId })
       await cancelWait(tx, current)
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       await recordRunTransitionEvent(tx, { ...current, version: expectedVersion }, 'CANCELLED', 'CANCELLED', {
@@ -437,6 +458,14 @@ export class AgentRunService {
         target: { collection: collections.agentRuns.name, id: runId, version: expectedVersion + 1 },
         detail: { attempt: current.attempt + 1 },
       })
+      if (current.operation === 'document_analysis' && current.targetType === 'DOCUMENT') {
+        const location = { collection: collections.documents, caseId, id: current.targetId }
+        const document = await tx.get<DocumentEntity>(location)
+        if (document && document.agentRunId === runId && document.analysisState === 'FAILED'
+          && !document.archived && document.storageState === 'STORED') {
+          tx.update<DocumentEntity>(location, document.version, { analysisState: 'QUEUED' })
+        }
+      }
       tx.outbox({
         id: jobId,
         type: `agent.${current.operation}`,

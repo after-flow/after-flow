@@ -43,7 +43,7 @@ export const documentResourceSchema = z.object({
     state: z.enum(['NOT_REQUESTED', 'NOT_CONNECTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED']),
     agentRunId: z.string().nullable(),
     canRequest: z.boolean(),
-    blockedReasons: z.array(z.enum(['INSPECTION_NOT_PASSED', 'AI_NOT_CONNECTED', 'CONSENT_REQUIRED'])),
+    blockedReasons: z.array(z.enum(['INSPECTION_NOT_PASSED', 'AI_NOT_CONNECTED', 'CONSENT_REQUIRED', 'ALREADY_IN_PROGRESS'])),
   }),
   archived: z.boolean(),
   archivedAt: isoDateTimeSchema.nullable(),

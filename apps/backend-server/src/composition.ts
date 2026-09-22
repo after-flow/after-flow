@@ -37,6 +37,7 @@ import { createAiConnectivityReadinessCheck } from './infrastructure/agent/readi
 import { matchesServiceCredential, readExecutionAuthorization } from './infrastructure/identity/execution-authorization.js'
 import { readRuleCatalog } from './infrastructure/rules/rule-config.js'
 import { createDocumentStorage } from './infrastructure/storage/cloud-object-storage.js'
+import { PassthroughDocumentInspector } from './infrastructure/inspection/passthrough-inspector.js'
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { createFirestoreReadinessCheck } from './infrastructure/firestore/readiness-check.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
@@ -128,10 +129,8 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
       database.uow,
       documentStorage,
       consentService,
-      // 検査実装は方式決定後（#26）。未接続なので検査状態は PENDING のまま。
-      null,
-      // AI は未接続。解析は受け付けない。
-      false,
+      documentInspector(env),
+      enabledOperations.has('document_analysis'),
     ) : null,
     // 放棄前ロックは保存済みの確定状況で判定する。未記録は未確定のまま。
     taskService: new TaskService(
@@ -172,7 +171,7 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
   const internalApp = executionAuthorization && env.BACKEND_INTERNAL_SERVICE_TOKEN
     ? createExecutionApp({
         service: new InternalExecutionService(database.read, database.uow, consentService, new AgentResultIntake(database.read, database.uow), proposalService,
-          { rejectDraftDefinitions: env.NODE_ENV === 'production' }),
+          { rejectDraftDefinitions: env.NODE_ENV === 'production', storage: documentStorage }),
         authorization: executionAuthorization,
         serviceCredential: env.BACKEND_INTERNAL_SERVICE_TOKEN,
       })
@@ -246,8 +245,26 @@ function connectedOperations(env: NodeJS.ProcessEnv): ReadonlySet<AgentOperation
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean)
-  const supported: AgentOperation[] = ['case_planning', 'task_guidance', 'chat_reply']
+  const supported: AgentOperation[] = ['case_planning', 'task_guidance', 'chat_reply', 'document_analysis']
   return new Set(supported.filter((operation) => configured.includes(operation)))
+}
+
+/**
+ * 書類検査の実装を選ぶ。
+ *
+ * 既定は未接続（PENDING のまま）。`DOCUMENT_INSPECTION_MODE=passthrough-dev` を
+ * 明示指定した環境だけ、マイナンバー検知・マスキングをしない素通し検査を使う
+ * （デモ・開発用。#25/#26 で方式決定・実装するまでの仮置き。本番では使わない）。
+ */
+function documentInspector(env: NodeJS.ProcessEnv) {
+  const mode = env.DOCUMENT_INSPECTION_MODE?.trim()
+  if (!mode) return null
+  if (mode !== 'passthrough-dev') throw new Error('DOCUMENT_INSPECTION_MODE must be unset or "passthrough-dev"')
+  if (env.NODE_ENV === 'production') throw new Error('DOCUMENT_INSPECTION_MODE=passthrough-dev must not run in production')
+  logger.warn('document inspection uses a passthrough dev adapter', {
+    effect: 'documents are marked PASSED without real sensitive-number detection or masking',
+  })
+  return new PassthroughDocumentInspector()
 }
 
 function createDatabase(env: NodeJS.ProcessEnv) {

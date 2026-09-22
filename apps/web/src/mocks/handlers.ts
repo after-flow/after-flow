@@ -850,6 +850,7 @@ export const handlers = [
       decisionNote: null,
       expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
       assetDisposal: p.assetDisposal,
+      sourceDocumentId: p.basis.find((item) => item.type === 'DOCUMENT')?.id ?? null,
       version: 1,
       createdAt: now,
       updatedAt: now,

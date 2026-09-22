@@ -18,7 +18,7 @@ import type { LocalOutboxHandler } from './outbox-dispatcher.js'
 import { leaseLocation, releaseLease } from './lease-service.js'
 import { recordWaiting, waitLocation } from './wait-requests.js'
 import { recordRunTransitionEvent } from './agent-run-events.js'
-import { failGuidanceForRun } from './run-termination.js'
+import { failRunTargets } from './run-termination.js'
 
 const runLocation = (caseId: string, id: string) => ({ collection: collections.agentRuns, caseId, id })
 const inboxTypes = new Set(['proposal.applied', 'approval.rejected', 'document.registered'])
@@ -108,7 +108,7 @@ export class RunReconciler implements LocalOutboxHandler {
           eventId: fingerprintOf({ runId, attemptId: current.currentAttemptId, reason: 'snapshot_missing', waitRequestId: wait.id }),
           detail: { operation: 'RECONCILE', failureReason: 'SNAPSHOT_MISSING' },
         })
-        await failGuidanceForRun(tx, caseId, current, { failureReason: 'SNAPSHOT_MISSING', attemptId: current.currentAttemptId })
+        await failRunTargets(tx, caseId, current, { failureReason: 'SNAPSHOT_MISSING', attemptId: current.currentAttemptId })
         tx.audit({ caseId, type: 'agent_run.snapshot_missing', target: { collection: collections.agentRuns.name, id: runId, version: current.version + 1 }, detail: { waitRequestId: wait.id } })
       })
     } else if (!wait) {
@@ -124,7 +124,7 @@ export class RunReconciler implements LocalOutboxHandler {
             eventId: fingerprintOf({ runId, attemptId: current.currentAttemptId, reason: 'recovery_attention' }),
             detail: { operation: 'RECONCILE', failureReason: 'RECOVERY_ATTENTION' },
           })
-          await failGuidanceForRun(tx, caseId, current, { failureReason: 'RECOVERY_ATTENTION', attemptId: current.currentAttemptId })
+          await failRunTargets(tx, caseId, current, { failureReason: 'RECOVERY_ATTENTION', attemptId: current.currentAttemptId })
           tx.audit({ caseId, type: 'agent_run.recovery_attention', target: { collection: collections.agentRuns.name, id: runId, version: current.version + 1 }, detail: {} })
           return
         }
@@ -149,7 +149,7 @@ export class RunReconciler implements LocalOutboxHandler {
         eventId: fingerprintOf({ runId: run.id, attemptId: run.currentAttemptId, reason: 'permission_revoked' }),
         detail: { previousStatus: run.status },
       })
-      await failGuidanceForRun(tx, run.caseId!, run, { failureReason: 'PERMISSION_REVOKED', attemptId: run.currentAttemptId })
+      await failRunTargets(tx, run.caseId!, run, { failureReason: 'PERMISSION_REVOKED', attemptId: run.currentAttemptId })
       tx.audit({ caseId: run.caseId, type: 'agent_run.permission_revoked', target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: {} })
       return false
     }

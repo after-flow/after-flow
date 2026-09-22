@@ -13,7 +13,7 @@ import type { Budget } from '../../application/execution/contracts.js'
 import { DurableExecutionRuntime } from './runtime.js'
 import type { ExecutionSession } from './runtime.js'
 import { startExecutionHost } from './host.js'
-import { createChatHandler, createGuidanceHandler, createPlanningHandler } from './handlers.js'
+import { createChatHandler, createDocumentAnalysisHandler, createGuidanceHandler, createPlanningHandler } from './handlers.js'
 import { createAuthorizedModels, createAuthorizedOrcaModels } from '../mastra/authorized-models.js'
 import type { ProviderMetric } from '../mastra/authorized-models.js'
 import { inferenceReservation, providerPolicySchema } from '../../orchestration/models/policy.js'
@@ -107,9 +107,9 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
   try {
     await db.collection('execution_runs').limit(1).get()
     const storage = createRuntimeStore(db), snapshots = new FirestoreWorkflowsStorage(db), providerMetrics = new FirestoreProviderMetrics(db)
-    const prepare = async (session: ExecutionSession) => {
-      await session.guard()
-      const scope = assertResearchScopeCatalogs(await config.researchScope(session.context), catalogs)
+    // Core/Researchの2-Agent構成に共通の認可。case_planning等はさらに案件Research Scopeと
+    // 突き合わせる（呼び出し側）。document_analysisは対象手続きを持たないため、この認可部分だけ使う。
+    const authorizeAgents = async (session: ExecutionSession) => {
       const authorize = async (role: 'core' | 'research') => {
         const dataClass = role === 'core' ? 'minimized_case' as const : 'public_research' as const
         const options = { request: { requestId: randomUUID(), operation: session.receipt.operation, role, dataClass,
@@ -130,9 +130,15 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
         return { tokens: Math.max(...values.map(v => v.tokens)), costMicros: Math.max(...values.map(v => v.costMicros)), maxOutputTokens: Math.max(...values.map(v => v.maxOutputTokens)) }
       }
       const budget: AgentBudget = { charge: session.guard, inferenceChargedByProviderAdapter: true, inference: { core: reservation('core'), research: reservation('research') } }
-      return { models: { core: core.models, research: researchModel.models }, scope, catalogs, research, budget,
+      return { models: { core: core.models, research: researchModel.models }, budget, evidenceId: core.evidenceId }
+    }
+    const prepare = async (session: ExecutionSession) => {
+      await session.guard()
+      const scope = assertResearchScopeCatalogs(await config.researchScope(session.context), catalogs)
+      const agents = await authorizeAgents(session)
+      return { ...agents, scope, catalogs, research,
         maxSourceAgeMs: sourceLimits.age, timeoutMs: sourceLimits.timeout,
-        beforeTool: async () => { await session.guard() }, evidenceId: core.evidenceId }
+        beforeTool: async () => { await session.guard() } }
     }
     const runtime = new DurableExecutionRuntime({ store: new FirestoreExecutions(db, limits), snapshots, vault,
       client: dispatch => new BackendClient(config.backend, dispatch), sectionTimeoutMs: config.sectionTimeoutMs,
@@ -158,6 +164,17 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
           return { routing: { routeId: 'case-planning/v1' as const, evidenceId: prepared.evidenceId },
             agents: { models: prepared.models, budget: prepared.budget, briefs: [selection.brief], researchTools: tools.tools,
               retrievedSourceIds: tools.retrievedSourceIds, signal: session.signal }, sources: () => tools.sources(selection.brief.briefId) }
+        } }),
+        // 案件Contextではなく配信済み書類のページ本文が対象のため、researchScopeは経由しない。
+        // ただしCore/Researchの2-Agent構成そのものはguidance/planningと共通（createPlaybookAgents）。
+        // 検索対象のbriefが無いだけで、Researchへ委任できる余地を持つ専用の第三Agentは作らない。
+        document_analysis: createDocumentAnalysisHandler({ storage, prepare: async session => {
+          const agents = await authorizeAgents(session)
+          const tools = createResearchTools({ briefs: [], catalogs, provider: research, signal: session.signal,
+            maxSourceAgeMs: sourceLimits.age, timeoutMs: sourceLimits.timeout,
+            beforeTool: kind => session.guard(kind === 'search' ? { searches: 1 } : { reads: 1 }) })
+          return { models: agents.models, budget: agents.budget, briefs: [], researchTools: tools.tools,
+            retrievedSourceIds: tools.retrievedSourceIds }
         } }),
       } })
     const host = await startExecutionHost({ ...listen, runtime, worker: runtime, serviceToken: config.serviceToken,

@@ -80,6 +80,8 @@ export interface ApprovalResource {
   decisionNote: string | null
   expiresAt: ISODateTime
   assetDisposal: boolean
+  /** 提案の根拠が書類なら、その書類ID。根拠が無ければ null。 */
+  sourceDocumentId: string | null
   version: number
   createdAt: ISODateTime
   updatedAt: ISODateTime

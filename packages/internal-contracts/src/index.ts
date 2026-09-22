@@ -123,10 +123,12 @@ export const insightDraftSchema = z.object({
 }).strict()
 export type InsightDraft = z.infer<typeof insightDraftSchema>
 const completedSchema = resultBase.extend({ kind: z.literal('case_planning'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']), output: runSummarySchema.optional(), insights: z.array(insightDraftSchema).max(20).optional() }).strict()
+/** 抽出候補自体はrunの途中で `proposals` scope経由で提出済み。ここではrunの完了だけを報告する。 */
+const documentAnalysisResultSchema = resultBase.extend({ kind: z.literal('document_analysis'), status: z.enum(['SUCCEEDED', 'FAILED', 'NEEDS_ATTENTION']) }).strict()
 export const interruptedResultSchema = resultBase.extend({ kind: z.literal('execution_interrupted'), operation: operationSchema,
   status: z.literal('NEEDS_ATTENTION'), failureReason: executionFailureReasonSchema, output: runSummarySchema,
 }).strict()
-export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema, interruptedResultSchema])
+export const internalResultSchema = z.discriminatedUnion('kind', [guidanceSchema, chatSchema, completedSchema, documentAnalysisResultSchema, interruptedResultSchema])
 export type InternalResult = z.infer<typeof internalResultSchema>
 export const heartbeatSchema = z.object({}).strict()
 const progressEventSchema = z.object({

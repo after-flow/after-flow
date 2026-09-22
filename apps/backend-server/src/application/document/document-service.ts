@@ -31,6 +31,8 @@ export type AnalysisBlockedReason =
   | 'AI_NOT_CONNECTED'
   /** 外部 AI への提供同意が無い。 */
   | 'CONSENT_REQUIRED'
+  /** 既に読み取り中（QUEUED/RUNNING）。完了・失敗するまで新たな依頼を受け付けない。 */
+  | 'ALREADY_IN_PROGRESS'
 
 export interface DocumentView {
   extractionCandidates: DocumentResource['extractionCandidates']
@@ -108,6 +110,7 @@ export class DocumentService {
     if (!this.aiConnected) blockedReasons.push('AI_NOT_CONNECTED')
     const policy = await this.consent.policy(user)
     if (!policy.externalAi) blockedReasons.push('CONSENT_REQUIRED')
+    if (entity.analysisState === 'QUEUED' || entity.analysisState === 'RUNNING') blockedReasons.push('ALREADY_IN_PROGRESS')
     const related = links ?? await readDocumentLinks(this.read, user.tenantId, entity.caseId!)
     const run = entity.agentRunId ? await this.read.get<AgentRunEntity>(user.tenantId,
       { collection: collections.agentRuns, caseId: entity.caseId, id: entity.agentRunId }) : null

@@ -38,6 +38,7 @@ export type AnalysisBlockedReasonResource =
   | 'INSPECTION_NOT_PASSED'
   | 'AI_NOT_CONNECTED'
   | 'CONSENT_REQUIRED'
+  | 'ALREADY_IN_PROGRESS'
 
 export type DocumentKindResource =
   | 'DEATH_CERTIFICATE'
