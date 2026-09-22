@@ -2,6 +2,7 @@ import type { CaseService } from '../../../../application/case/case-service.js'
 import type { ConsentService } from '../../../../application/consent/consent-service.js'
 import type { DocumentService } from '../../../../application/document/document-service.js'
 import type { AgentRunService } from '../../../../application/agent/agent-run-service.js'
+import type { AiCapabilityService } from '../../../../application/agent/ai-capability-service.js'
 import type { InheritanceDecisionService } from '../../../../application/decision/decision-service.js'
 import type { MessageService } from '../../../../application/chat/message-service.js'
 import type { CaseOverviewService } from '../../../../application/overview/overview-service.js'
@@ -14,6 +15,7 @@ import { caseSpecs, createCaseRoutes } from './cases.js'
 import { consentSpecs, createConsentRoutes } from './consents.js'
 import { createDocumentRoutes, documentSpecs } from './documents.js'
 import { agentRunSpecs, createAgentRunRoutes } from './agent-runs.js'
+import { aiCapabilitySpecs, createAiCapabilityRoutes } from './ai-capabilities.js'
 import { createMessageRoutes, messageSpecs } from './messages.js'
 import { createOverviewRoutes, overviewSpecs } from './overview.js'
 import { createProposalRoutes, proposalSpecs } from './proposals.js'
@@ -77,6 +79,7 @@ export const publicV1Specs: RouteSpec[] = [
   messageSpecs.getTaskGuidance,
   messageSpecs.requestTaskGuidance,
   overviewSpecs.getCaseOverview,
+  aiCapabilitySpecs.getAiCapabilities,
 ]
 
 export interface PublicRouteDependencies {
@@ -90,6 +93,7 @@ export interface PublicRouteDependencies {
   documentService: DocumentService | null
   taskService: TaskService
   agentRunService: AgentRunService
+  aiCapabilityService: AiCapabilityService
   proposalService: ProposalService
   decisionService: InheritanceDecisionService
   messageService: MessageService
@@ -135,5 +139,6 @@ export function createPublicV1Routes(
     ...createProposalRoutes(dependencies.proposalService, dependencies.decisionService),
     ...createMessageRoutes(dependencies.messageService),
     ...createOverviewRoutes(dependencies.overviewService),
+    ...createAiCapabilityRoutes(dependencies.aiCapabilityService),
   ]
 }

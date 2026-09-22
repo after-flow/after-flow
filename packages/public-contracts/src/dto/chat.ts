@@ -21,14 +21,25 @@ export interface MessageResource {
   createdAt: ISODateTime
 }
 
-/** 発言の受付結果。回答が始まらない場合は理由を返す。 */
-export interface MessageAcceptedResource {
-  message: MessageResource
-  runId: string | null
-  /** 回答の実行を受け付けたか。false のとき reason に理由が入る。 */
-  runAccepted: boolean
-  reason: string | null
-}
+/**
+ * 発言の受付結果。
+ *
+ * 矛盾した状態（runAccepted:true なのに runId が無い、等）を型で
+ * 作れないようにする。reason は任意の文字列ではなく既知の理由に絞る。
+ */
+export type MessageAcceptedResource =
+  | {
+      message: MessageResource
+      runAccepted: true
+      runId: string
+      reason: null
+    }
+  | {
+      message: MessageResource
+      runAccepted: false
+      runId: null
+      reason: 'FEATURE_NOT_CONNECTED'
+    }
 
 export type GuidanceStatusResource =
   | 'NOT_REQUESTED'

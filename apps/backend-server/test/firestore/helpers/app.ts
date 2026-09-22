@@ -13,6 +13,7 @@ import { DocumentService } from '../../../src/application/document/document-serv
 import { RegistrationService } from '../../../src/application/identity/registration-service.js'
 import type { InheritanceDecisionReader } from '../../../src/application/task/task-service.js'
 import { AgentRunService } from '../../../src/application/agent/agent-run-service.js'
+import { AiCapabilityService } from '../../../src/application/agent/ai-capability-service.js'
 import type { AgentOperation } from '../../../src/domain/agent/agent-run.js'
 import type { Clock } from '../../../src/application/ports.js'
 import {
@@ -117,6 +118,7 @@ export function buildApp(tenantId: string, userId: string, options: TestAppOptio
       options.decisions ?? new StoredInheritanceDecisionReader(readRepository()),
     ),
     agentRunService,
+    aiCapabilityService: new AiCapabilityService(new Set(options.connectedOperations ?? [])),
     proposalService: new ProposalService(access, readRepository(), unitOfWork(), options.proposalAppliers ?? [taskProposalApplier, ...entityProposalAppliers, ...taskActionProposalAppliers]),
     decisionService: new InheritanceDecisionService(access, readRepository(), unitOfWork()),
     messageService: new MessageService(access, readRepository(), unitOfWork(), agentRunService, consentService),
