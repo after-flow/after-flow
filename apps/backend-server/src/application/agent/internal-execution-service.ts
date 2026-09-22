@@ -35,6 +35,7 @@ import { createPendingWait, recordWaiting, validateWaitCondition } from './wait-
 import { recordRunTransitionEvent } from './agent-run-events.js'
 import type { ProposalEntity } from '../../domain/proposal/proposal.js'
 import type { WaitRequestEntity } from '../../domain/agent/wait-request.js'
+import { logger } from '../../presentation/http/logger.js'
 
 interface RunArtifactEntity extends EntityBase {
   runId: string
@@ -103,7 +104,12 @@ export class InternalExecutionService {
     try {
       const extracted = await extractPdfPages(object.content, AbortSignal.timeout(10_000))
       return extracted.pages
-    } catch {
+    } catch (error) {
+      // 実際に文字を持たないPDF（スキャンのみ）と、Worker異常・タイムアウト・上限超過を
+      // ここでは区別しない（実OCRは対象外）。後者を静かに「読み取れなかった」に丸めないよう記録は残す。
+      logger.warn('PDF text extraction failed, treating as unreadable', {
+        documentId: target.id, reason: error instanceof Error ? error.message : String(error),
+      })
       return [{ number: 1, text: '' }]
     }
   }
@@ -419,8 +425,9 @@ export class InternalExecutionService {
     // バージョン更新を省略したlegacyデータにも安全側で対処する。
     const documents = artifact.content.documents as { id: string; version: number }[] | undefined
     for (const ref of documents ?? []) {
+      // 版は解析状態（analysisState/agentRunId）の更新でも進むため比較しない（proposal-service.tsと同じ理由）。
       const doc = await tx.get<DocumentEntity>({ collection: collections.documents, caseId: claims.caseId, id: ref.id })
-      if (!doc || doc.version !== ref.version || doc.archived || doc.storageState !== 'STORED' || doc.inspection.status !== 'PASSED') {
+      if (!doc || doc.archived || doc.storageState !== 'STORED' || doc.inspection.status !== 'PASSED') {
         throw errors.conflict({ details: { reason: 'DOCUMENT_NOT_DELIVERABLE' } })
       }
     }
@@ -543,10 +550,13 @@ export class InternalExecutionService {
         if (!Array.isArray(allowed) || !allowed.some(item => item.id === ref.id && item.version === ref.version)) throw errors.forbidden()
         const collection = ref.type === 'DOCUMENT' ? collections.documents : ref.type === 'TASK' ? collections.tasks : collections.messages
         const current = await tx.get<EntityBase>({ collection, caseId: call.claims.caseId, id: ref.id })
-        if (!current || current.version !== ref.version) throw errors.conflict({ details: { reason: 'BASIS_VERSION_CHANGED' } })
+        if (!current) throw errors.conflict({ details: { reason: 'BASIS_VERSION_CHANGED' } })
         if (ref.type === 'DOCUMENT') {
+          // 版は解析状態の更新でも進むため比較しない。利用可否で判定する。
           const document = current as DocumentEntity
           if (document.archived || document.storageState !== 'STORED' || document.inspection.status !== 'PASSED') throw errors.forbidden()
+        } else if (current.version !== ref.version) {
+          throw errors.conflict({ details: { reason: 'BASIS_VERSION_CHANGED' } })
         }
       }
   }

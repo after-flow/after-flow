@@ -10,6 +10,7 @@ import type { CaseMember } from '../../domain/authorization/case-role.js'
 import { roleAllows } from '../../domain/authorization/case-role.js'
 import type { TenantMember } from '../authorization/case-access.js'
 import type { CaseEntity } from '../../domain/case/case.js'
+import type { DocumentEntity } from '../../domain/document/document.js'
 import type {
   ApplicationStatus,
   ApprovalEntity,
@@ -795,7 +796,18 @@ export class ProposalService {
           details: { reason: 'BASIS_NOT_FOUND', basisType: item.type, basisId: item.id },
         })
       }
-      if (found.version !== item.version) {
+      // 書類は解析状態（analysisState/agentRunId）の更新でも版が進む（ContextVersionUnitOfWork）。
+      // 中身（sha256・保存状態）はそれでは変わらないため、書類だけは版の完全一致でなく
+      // 利用可否（未除外・保存済み）で判定する。除外・保存中断は根拠を失ったとして扱う。
+      if (item.type === 'DOCUMENT') {
+        const document = found as DocumentEntity
+        if (document.archived || document.storageState !== 'STORED') {
+          throw errors.conflict({
+            message: '提案の根拠となった書類が使えなくなっています。最新の内容で作り直してください。',
+            details: { reason: 'BASIS_VERSION_CHANGED', basisId: item.id },
+          })
+        }
+      } else if (found.version !== item.version) {
         throw errors.conflict({
           message: '提案の根拠が更新されています。最新の内容で作り直してください。',
           details: {

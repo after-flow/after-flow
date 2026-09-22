@@ -8318,6 +8318,7 @@ paths:
                                 - INSPECTION_NOT_PASSED
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
+                                - ALREADY_IN_PROGRESS
                         required:
                           - run
                           - state
@@ -8808,6 +8809,7 @@ paths:
                                   - INSPECTION_NOT_PASSED
                                   - AI_NOT_CONNECTED
                                   - CONSENT_REQUIRED
+                                  - ALREADY_IN_PROGRESS
                           required:
                             - run
                             - state
@@ -9255,6 +9257,7 @@ paths:
                                 - INSPECTION_NOT_PASSED
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
+                                - ALREADY_IN_PROGRESS
                         required:
                           - run
                           - state
@@ -9803,6 +9806,7 @@ paths:
                                 - INSPECTION_NOT_PASSED
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
+                                - ALREADY_IN_PROGRESS
                         required:
                           - run
                           - state

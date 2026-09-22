@@ -1,10 +1,12 @@
 import type { AgentRunEntity, AgentRunStatus } from '../../domain/agent/agent-run.js'
+import type { DocumentEntity } from '../../domain/document/document.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { GuidanceEntity } from '../../domain/task/guidance.js'
 import type { Tx } from '../ports/persistence.js'
 
 const runLocation = (caseId: string, id: string) => ({ collection: collections.agentRuns, caseId, id })
 const guidanceLocation = (caseId: string, taskId: string) => ({ collection: collections.guidance, caseId, id: taskId })
+const documentLocation = (caseId: string, documentId: string) => ({ collection: collections.documents, caseId, id: documentId })
 
 export interface GuidanceFailure {
   failureReason: string
@@ -42,6 +44,33 @@ export async function failGuidanceForRun(tx: Tx, caseId: string, run: AgentRunEn
   return true
 }
 
+/**
+ * Runが終端・要確認になったとき、対象書類の解析状態を同じTransactionで揃える。
+ * このRunが受け付けた書類でなければ何もしない（既に他Runへ引き継がれた場合等）。
+ * QUEUED/RUNNING以外（既にCOMPLETED/FAILED）も触らない。
+ */
+export async function failDocumentAnalysisForRun(tx: Tx, caseId: string, run: AgentRunEntity): Promise<boolean> {
+  if (run.operation !== 'document_analysis' || run.targetType !== 'DOCUMENT') return false
+  const location = documentLocation(caseId, run.targetId)
+  const current = await tx.get<DocumentEntity>(location)
+  if (!current || current.agentRunId !== run.id) return false
+  if (current.analysisState !== 'QUEUED' && current.analysisState !== 'RUNNING') return false
+  tx.update<DocumentEntity>(location, current.version, { analysisState: 'FAILED' })
+  tx.audit({
+    caseId,
+    type: 'document.analysis_failed',
+    target: { collection: collections.documents.name, id: run.targetId, version: current.version + 1 },
+    detail: { runId: run.id },
+  })
+  return true
+}
+
+/** Runが終端・要確認になったとき、Task側の案内・書類側の解析状態を同じTransactionで揃える。 */
+export async function failRunTargets(tx: Tx, caseId: string, run: AgentRunEntity, failure: GuidanceFailure): Promise<void> {
+  await failGuidanceForRun(tx, caseId, run, failure)
+  await failDocumentAnalysisForRun(tx, caseId, run)
+}
+
 export interface RunTermination {
   status: Extract<AgentRunStatus, 'FAILED' | 'NEEDS_ATTENTION'>
   failureReason: string
@@ -62,5 +91,5 @@ export async function terminateQueuedRun(tx: Tx, caseId: string, run: AgentRunEn
     target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 },
     detail: { failureReason: termination.failureReason, ...termination.detail },
   })
-  await failGuidanceForRun(tx, caseId, run, { failureReason: termination.failureReason, attemptId: run.currentAttemptId })
+  await failRunTargets(tx, caseId, run, { failureReason: termination.failureReason, attemptId: run.currentAttemptId })
 }

@@ -165,5 +165,76 @@ describeFirestore('書類の読み取り（document_analysis, #196）', () => {
     assert.equal(approval.status, 200)
     assert.equal(approval.body.data.sourceDocumentId, doc.id)
     assert.equal(approval.body.data.status, 'PENDING')
+
+    // 解析完了（analysisState更新）で書類の版は進んでいるが、承認は妨げられない
+    // （書類根拠は版ではなく利用可否で判定する）。
+    const approved = await call(h.app, `/cases/${h.caseId}/approvals/${approvalId}/approve`, jsonRequest('POST', {
+      expectedVersion: approval.body.data.version, proposalVersion: approval.body.data.proposalVersion,
+      payloadHash: approval.body.data.payloadHash,
+    }))
+    assert.equal(approved.status, 200, JSON.stringify(approved.body))
+    assert.equal(approved.body.data.status, 'APPROVED')
+    assert.equal(approved.body.data.applicationStatus, 'APPLIED')
+
+    const assets = await call(h.app, `/cases/${h.caseId}/assets`)
+    assert.equal(assets.status, 200)
+    assert.ok(assets.body.data.some((asset: any) => asset.institution === '○○銀行'))
+  })
+
+  it('取消したRunは書類を解析中のまま固定せず、新たな依頼を受け付けられる', async t => {
+    const h = await setup(t)
+    const doc = await h.uploadDocument('BANK_STATEMENT')
+    const exec = await h.acceptAnalysis(doc.id)
+
+    // 依頼直後は解析中で、再依頼は拒否される
+    const duringAnalysis = await call(h.app, `/cases/${h.caseId}/documents/${doc.id}`)
+    assert.ok(duringAnalysis.body.data.analysis.blockedReasons.includes('ALREADY_IN_PROGRESS'))
+    const rejected = await call(h.app, `/cases/${h.caseId}/agent-runs`,
+      jsonRequest('POST', { operation: 'document_analysis', targetType: 'DOCUMENT', targetId: doc.id }))
+    assert.equal(rejected.status, 409)
+
+    // 取消すると書類はFAILEDへ戻り、新たな依頼を受け付けられる（取消したRun自体はretry対象外）
+    const cancelled = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}/cancel`,
+      jsonRequest('POST', { expectedVersion: exec.run.version }))
+    assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body))
+    const afterCancel = (await h.read.get<DocumentEntity>(h.tenantId, { collection: collections.documents, caseId: h.caseId, id: doc.id }))!
+    assert.equal(afterCancel.analysisState, 'FAILED')
+
+    const afterCancelView = await call(h.app, `/cases/${h.caseId}/documents/${doc.id}`)
+    assert.equal(afterCancelView.body.data.analysis.canRequest, true)
+    assert.ok(!afterCancelView.body.data.analysis.blockedReasons.includes('ALREADY_IN_PROGRESS'))
+
+    const restarted = await call(h.app, `/cases/${h.caseId}/agent-runs`,
+      jsonRequest('POST', { operation: 'document_analysis', targetType: 'DOCUMENT', targetId: doc.id }))
+    assert.equal(restarted.status, 202, JSON.stringify(restarted.body))
+    const afterRestart = (await h.read.get<DocumentEntity>(h.tenantId, { collection: collections.documents, caseId: h.caseId, id: doc.id }))!
+    assert.equal(afterRestart.analysisState, 'QUEUED')
+    assert.equal(afterRestart.agentRunId, restarted.body.data.id)
+  })
+
+  it('AIが失敗を報告したRunはretryで同じ書類の解析をやり直せる', async t => {
+    const h = await setup(t)
+    const doc = await h.uploadDocument('BANK_STATEMENT')
+    const exec = await h.acceptAnalysis(doc.id)
+    const contextResult = await h.request(exec, 'context')
+    const artifact = artifactEnvelopeSchema.parse(contextResult.body.data)
+
+    const failed = await h.request(exec, 'result', {
+      caseVersion: artifact.caseVersion, contextSnapshotId: artifact.contextSnapshotId,
+      fencingToken: artifact.fencingToken, artifactVersion: artifact.artifactVersion, contentHash: artifact.contentHash,
+      resultId: 'result-failed', basis: [], kind: 'document_analysis', status: 'FAILED',
+    })
+    assert.equal(failed.status, 200, JSON.stringify(failed.body))
+    const afterFailure = (await h.read.get<DocumentEntity>(h.tenantId, { collection: collections.documents, caseId: h.caseId, id: doc.id }))!
+    assert.equal(afterFailure.analysisState, 'FAILED')
+
+    const failedRun = (await h.read.get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: exec.run.id }))!
+    assert.equal(failedRun.status, 'FAILED')
+    const retried = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}/retry`,
+      jsonRequest('POST', { expectedVersion: failedRun.version }))
+    assert.equal(retried.status, 202, JSON.stringify(retried.body))
+    const afterRetry = (await h.read.get<DocumentEntity>(h.tenantId, { collection: collections.documents, caseId: h.caseId, id: doc.id }))!
+    assert.equal(afterRetry.analysisState, 'QUEUED')
+    assert.equal(afterRetry.agentRunId, exec.run.id)
   })
 })

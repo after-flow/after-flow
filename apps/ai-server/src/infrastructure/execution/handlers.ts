@@ -7,7 +7,7 @@ import type { ProcedureGuidanceDependencies } from '../mastra/workflows/procedur
 import { createChatReplyWorkflow } from '../mastra/workflows/chat-reply.js'
 import type { ChatReplyDependencies } from '../mastra/workflows/chat-reply.js'
 import { createDocumentReviewWorkflow, DOCUMENT_REVIEW_WORKFLOW } from '../mastra/workflows/document-review.js'
-import { documentReviewSchema, extractionSchema } from '../../orchestration/documents/review.js'
+import { documentReviewSchema, extractionSchema, processedDocumentSchema } from '../../orchestration/documents/review.js'
 import type { ProcessedDocument } from '../../orchestration/documents/review.js'
 import { draftProposalsFromCandidates } from '../../orchestration/documents/proposal-mapping.js'
 import type { BackendClient } from '../backend-client/client.js'
@@ -110,26 +110,27 @@ export function createPlanningHandler(config: {
   } }
 }
 
+/** Backend context()のdocument_analysis用content内、書類を特定する型付きフィールドだけを検証する。 */
+const documentContentSchema = processedDocumentSchema
+  .pick({ caseId: true, documentId: true, documentVersion: true, inspectedDocumentVersion: true, inspection: true, maskingPolicyVersion: true, pages: true, fields: true })
+  .passthrough()
+
 /** Backend context()のdocument_analysis用contentから、Document配送に必要なscopeだけを取り出す。 */
 function documentScopeFromContext(content: Record<string, unknown>, runId: string) {
-  return {
-    caseId: String(content.caseId), runId,
-    documentId: String(content.documentId), documentVersion: Number(content.documentVersion),
-  }
+  const parsed = documentContentSchema.parse(content)
+  return { caseId: parsed.caseId, runId, documentId: parsed.documentId, documentVersion: parsed.documentVersion }
 }
 
 /** BackendのContext envelopeをProcessedDocumentへ組み立てる。pagesのcontentHashはここで計算する。 */
 async function deliverDocument(backend: Pick<BackendClient, 'context'>, runId: string, signal: AbortSignal): Promise<ProcessedDocument> {
   const artifact = artifactEnvelopeSchema.parse(await backend.context({ signal }))
-  const content = artifact.content as Record<string, unknown>
-  const pages = content.pages as ProcessedDocument['pages']
+  const content = documentContentSchema.parse(artifact.content)
   return {
-    caseId: String(content.caseId), runId,
-    documentId: String(content.documentId), documentVersion: Number(content.documentVersion),
+    caseId: content.caseId, runId, documentId: content.documentId, documentVersion: content.documentVersion,
     caseVersion: artifact.caseVersion, artifactId: artifact.contextSnapshotId, artifactVersion: artifact.artifactVersion,
-    inspectedDocumentVersion: Number(content.inspectedDocumentVersion), inspection: 'PASSED',
-    maskingPolicyVersion: String(content.maskingPolicyVersion), expiresAt: artifact.expiresAt,
-    contentHash: contentHash(pages), pages, fields: content.fields as ProcessedDocument['fields'],
+    inspectedDocumentVersion: content.inspectedDocumentVersion, inspection: content.inspection,
+    maskingPolicyVersion: content.maskingPolicyVersion, expiresAt: artifact.expiresAt,
+    contentHash: contentHash(content.pages), pages: content.pages, fields: content.fields,
   }
 }
 
@@ -142,7 +143,8 @@ async function deliverDocument(backend: Pick<BackendClient, 'context'>, runId: s
 export function createDocumentAnalysisHandler(config: HandlerConfig<GuidanceAgentDependencies>): WorkflowHandler {
   return { workflowName: DOCUMENT_REVIEW_WORKFLOW, async execute(session) {
     await session.guard()
-    if (session.receipt.resume) throw new Error('Document analysis does not define resume')
+    // 中断からの再開（WAIT）は無い。ユーザーによる再試行（RETRY）は新しいworkflowRunIdで素直にやり直す。
+    if (session.receipt.resume?.kind === 'WAIT') throw new Error('Document analysis does not define approval waits')
     const prepared = await config.prepare(session)
     const budget = bindBudget(prepared, session)
 
@@ -170,10 +172,10 @@ export function createDocumentAnalysisHandler(config: HandlerConfig<GuidanceAgen
 
     await session.guard()
     const latest = artifactEnvelopeSchema.parse(await session.backend.context({ signal: session.signal }))
-    const latestContent = latest.content as Record<string, unknown>
+    const latestContent = documentContentSchema.parse(latest.content)
     const proof = contextProofSchema.parse(latest)
-    const basis = [{ type: 'DOCUMENT' as const, id: String(latestContent.documentId), version: Number(latestContent.documentVersion), label: String(latestContent.documentId) }]
-    const drafts = draftProposalsFromCandidates(review.candidates)
+    const basis = [{ type: 'DOCUMENT' as const, id: latestContent.documentId, version: latestContent.documentVersion, label: latestContent.documentId }]
+    const drafts = draftProposalsFromCandidates(review)
     for (const [index, draft] of drafts.entries()) {
       await session.guard()
       await session.backend.propose({ ...proof, proposalId: `${session.receipt.runId}-asset-${index}`, kind: draft.kind,

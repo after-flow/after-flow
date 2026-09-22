@@ -6,7 +6,7 @@ import type { TenantMember } from '../authorization/case-access.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { randomUUID } from 'node:crypto'
 import type { AgentOperation, AgentRunEntity, AgentRunStatus } from '../../domain/agent/agent-run.js'
-import { failGuidanceForRun } from './run-termination.js'
+import { failRunTargets } from './run-termination.js'
 import { canCancel, canRetry, isRunTerminal, isRunWaiting } from '../../domain/agent/agent-run.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import type { DocumentEntity } from '../../domain/document/document.js'
@@ -339,7 +339,7 @@ export class AgentRunService {
         currentAttemptId: randomUUID(),
       })
       if (cancellation) tx.outbox({ id: cancelId, type: 'agent.cancel', caseId, payload: { runId } })
-      await failGuidanceForRun(tx, caseId, current, { failureReason: 'CANCELLED', attemptId: current.currentAttemptId })
+      await failRunTargets(tx, caseId, current, { failureReason: 'CANCELLED', attemptId: current.currentAttemptId })
       await cancelWait(tx, current)
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       await recordRunTransitionEvent(tx, { ...current, version: expectedVersion }, 'CANCELLED', 'CANCELLED', {
@@ -458,6 +458,14 @@ export class AgentRunService {
         target: { collection: collections.agentRuns.name, id: runId, version: expectedVersion + 1 },
         detail: { attempt: current.attempt + 1 },
       })
+      if (current.operation === 'document_analysis' && current.targetType === 'DOCUMENT') {
+        const location = { collection: collections.documents, caseId, id: current.targetId }
+        const document = await tx.get<DocumentEntity>(location)
+        if (document && document.agentRunId === runId && document.analysisState === 'FAILED'
+          && !document.archived && document.storageState === 'STORED') {
+          tx.update<DocumentEntity>(location, document.version, { analysisState: 'QUEUED' })
+        }
+      }
       tx.outbox({
         id: jobId,
         type: `agent.${current.operation}`,

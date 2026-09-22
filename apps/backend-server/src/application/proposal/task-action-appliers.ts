@@ -39,8 +39,8 @@ async function targetTask(tx: Tx, context: Context, input: { taskId: string; exp
   return { task, location }
 }
 async function verifyDocument(tx: Tx, caseId: string, ref: { id: string; version: number }) {
+  // 版は解析状態（analysisState/agentRunId）の更新でも進むため比較しない（proposal-service.tsと同じ理由）。
   const stored = await tx.require<DocumentEntity>({ collection: collections.documents, caseId, id: ref.id })
-  if (stored.version !== ref.version) throw errors.conflict({ details: { reason: 'BASIS_VERSION_CHANGED' } })
   if (stored.archived || stored.storageState !== 'STORED') throw errors.preconditionFailed({ details: { reason: 'DOCUMENT_UNAVAILABLE' } })
 }
 
