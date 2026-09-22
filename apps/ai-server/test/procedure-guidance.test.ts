@@ -107,6 +107,42 @@ test('P-01 uses both real Mastra agents and tools, rechecks context, and reports
   assert.ok(controls.includes('search') && controls.includes('read-source'))
 })
 
+test('a configured draft pension procedure completes researched guidance through its Definition catalog', async () => {
+  const { deps, reported, artifact } = setup()
+  const pensionCandidate = { id: 'pension-recipient-death', catalogId: 'nenkin-death-procedures', title: '年金を受けている方が亡くなったとき',
+    issuer: '日本年金機構', url: 'https://www.nenkin.go.jp/service/jukyu/tetsuduki/kyotsu/jukyu/20140731-01.html' }
+  const pensionEvidence = [{ sourceId: pensionCandidate.id, sectionId: 's1', quote: SOURCE_TEXT }]
+  const answers = ['届出先', '必要書類', '期限', '届出省略条件'].map((text, index) => ({ questionId: `q${index + 1}`, text, evidence: pensionEvidence }))
+  const research = scriptedModel([{ text: JSON.stringify({ status: 'complete', answers, missing: [], conflicts: [] }) }])
+  const core = scriptedModel([{ text: JSON.stringify({ status: 'complete',
+    where: { text: '日本年金機構へ確認する', questionIds: ['q1'] },
+    bring: [{ text: '必要書類を用意する', questionIds: ['q2'] }],
+    steps: [{ text: '期限と届出省略条件を確認する', questionIds: ['q3', 'q4'] }], missing: [],
+  }) }])
+  const content = { ...artifact.content,
+    procedure: { id: 'pension-stop', version: 1, reviewStatus: 'draft' },
+    profile: { id: 'case-1', version: 1, pension: 'EMPLOYEES' },
+    task: { id: 'task-pension', version: 1, procedureId: 'pension-stop', title: '年金の受給停止の手続きをする' },
+  }
+  deps.backend.context = async () => ({ ...structuredClone(artifact), content, contentHash: contentHash(content) })
+  deps.models = { core: core.model, research: research.model }
+  deps.allowDraftDefinitions = true
+  deps.catalogs = [{ id: 'nenkin-death-procedures', allowedHosts: ['www.nenkin.go.jp'] }]
+  deps.research = {
+    async search() { return [pensionCandidate] },
+    async read() { return sourceDocument(pensionCandidate, SOURCE_TEXT) },
+  }
+  const result = await (await createProcedureGuidanceWorkflow(deps).createRun()).start({ inputData: { resultId: 'result-pension' } })
+  assert.equal(result.status, 'success', JSON.stringify(result))
+  const guidance = reported[0]
+  if (guidance?.kind !== 'task_guidance') assert.fail()
+  assert.equal(guidance.outcome, 'COMPLETED_RESEARCH')
+  assert.equal(guidance.target, '年金の受給停止の手続きをする')
+  assert.equal(guidance.sources[0]?.url, pensionCandidate.url)
+  assert.equal(research.calls.length, 1)
+  assert.equal(core.calls.length, 1)
+})
+
 test('#182 legacy comparison is evaluation-only and sends every playbook Skill to the remaining Core generation stage', async () => {
   const { deps, core, research } = setup()
   const result = await (await createProcedureGuidanceWorkflowForEvaluation(deps, 'legacy-all').createRun())

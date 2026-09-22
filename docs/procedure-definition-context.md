@@ -82,7 +82,7 @@ Context group は `case / profile / persons / relationships / assets / liabiliti
 ## 8. 残課題
 
 - 11 手続き以上の `reviewStatus` が `draft`。業務レビュー後に `reviewed` へ昇格するまで、本番ではカタログ由来 Task の AI 案内が `PROCEDURE_NOT_REVIEWED` で止まる（意図した fail-closed）。
-- `kyoukaikenpo-burial-benefit` 以外は `sourceCatalogIds` が空で、公式情報源カタログが整うまで案内は「公式情報源が未設定」の `needs_input` になる。
+- ハッカソン構成では協会けんぽに加え、年金4手続き、相続方法・相続放棄、準確定申告、相続税、相続登記を審査済み公式カタログへ接続した。その他は `sourceCatalogIds` が空で、「公式情報源が未設定」の `needs_input` になる。
 - `case.lastAddress` 等の Entity 項目追加後に requiredContext へ戻す。
 - `case_planning` の Context は `deceasedName` / `summary` を外した以外は従来の範囲。Definition 単位の絞り込みは未着手。
 - `dependencyProcedureIds` は 2 手続きにだけ設定した。他の順序関係は専門職レビューで追加する。
