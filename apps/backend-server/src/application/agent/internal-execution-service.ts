@@ -16,6 +16,8 @@ import type { CaseMember } from '../../domain/authorization/case-role.js'
 import { roleAllows } from '../../domain/authorization/case-role.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import type { DocumentEntity } from '../../domain/document/document.js'
+import { analysisFieldsFor } from '../../domain/document/analysis-catalog.js'
+import { extractPdfPages } from '../document/pdf-text.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { CollectionDescriptor } from '../../domain/shared/collections.js'
 import type { EntityBase } from '../../domain/shared/entity.js'
@@ -25,6 +27,7 @@ import type { TenantMember } from '../authorization/case-access.js'
 import type { AgentResultIntake } from '../chat/result-intake.js'
 import type { ConsentService } from '../consent/consent-service.js'
 import type { ReadRepository, SnapshotReader, Tx, UnitOfWork } from '../ports/persistence.js'
+import type { ObjectStorage } from '../ports/object-storage.js'
 import type { ProposalService } from '../proposal/proposal-service.js'
 import { acquireLease, assertLease, leaseLocation, releaseLease } from './lease-service.js'
 import { terminateQueuedRun } from './run-termination.js'
@@ -77,6 +80,8 @@ type GuidanceAudit = ReturnType<typeof guidanceContextAudit> | { procedureId: nu
 export interface InternalExecutionServiceOptions {
   /** reviewStatus !== 'reviewed' な Definition の案内を拒否するか。本番では true にする。 */
   rejectDraftDefinitions: boolean
+  /** document_analysis の書類本文読み取りに使う。未設定なら document_analysis の context は拒否する。 */
+  storage?: ObjectStorage | null
 }
 
 export class InternalExecutionService {
@@ -84,6 +89,24 @@ export class InternalExecutionService {
     private readonly consent: ConsentService, private readonly intake: AgentResultIntake,
     private readonly proposals?: ProposalService,
     private readonly options: InternalExecutionServiceOptions = { rejectDraftDefinitions: true }) {}
+
+  /**
+   * PDF はページごとのテキストを取り出す。実OCRは範囲外（#196 対象外）のため、
+   * 画像（JPEG/PNG・文字を持たないPDF）は空ページとして返す。呼び出し側の
+   * モデルは空ページのフィールドを読み取れなかったものとして扱う。
+   */
+  private async loadDocumentPages(target: DocumentEntity): Promise<{ number: number; text: string }[]> {
+    if (!this.options.storage) throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
+    const object = await this.options.storage.get(target.objectKey)
+    if (!object) throw errors.internal({ internal: { reason: 'object missing for stored document', documentId: target.id } })
+    if (object.contentType !== 'application/pdf') return [{ number: 1, text: '' }]
+    try {
+      const extracted = await extractPdfPages(object.content, AbortSignal.timeout(10_000))
+      return extracted.pages
+    } catch {
+      return [{ number: 1, text: '' }]
+    }
+  }
 
   async cancellation(tenantId: string, caseId: string, runId: string, cancelId: string) {
     const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, runId))
@@ -98,11 +121,10 @@ export class InternalExecutionService {
       if (run.currentJobId !== jobId || !run.initiatedByUserId) throw errors.conflict({ details: { reason: 'STALE_JOB' } })
       await this.assertAccess(tx, run)
       this.assertActive(run)
-      if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
       const executionAttempt = run.status === 'QUEUED' ? await this.rebaseIfStale(tx, caseId, run) : run.currentAttemptId
       return { tenantId, caseId, runId, jobId, executionAttempt,
         operation: run.operation, scopes: ['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'wait-requests',
-          ...(run.operation === 'case_planning' ? ['proposals' as const] : [])] }
+          ...(run.operation === 'case_planning' || run.operation === 'document_analysis' ? ['proposals' as const] : [])] }
     })
   }
 
@@ -208,8 +230,27 @@ export class InternalExecutionService {
       })
       if (actions.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
       content.actions = actions.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, status: p.status, proposalVersion: p.proposalVersion, payloadHash: p.payloadHash }))
-      if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
-      if (run.operation === 'task_guidance') {
+      if (run.operation === 'document_analysis') {
+        if (run.targetType !== 'DOCUMENT') throw errors.forbidden()
+        const target = await reader.get<DocumentEntity>(claims.tenantId, { collection: collections.documents, caseId: claims.caseId, id: run.targetId })
+        if (!target) throw errors.notFound()
+        if (target.archived || target.storageState !== 'STORED' || target.inspection.status !== 'PASSED') {
+          throw errors.preconditionFailed({ details: { reason: 'DOCUMENT_NOT_DELIVERABLE' } })
+        }
+        const fields = analysisFieldsFor(target.kind)
+        if (!fields) throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_KIND_NOT_SUPPORTED' } })
+        // AIはdispatch本文からCase IDを知らない。ProcessedDocumentのscopeに必要なので明示する。
+        content.caseId = claims.caseId
+        content.documentId = target.id
+        content.documentVersion = target.version
+        content.inspectedDocumentVersion = target.version
+        content.inspection = 'PASSED'
+        // マスキング方式は #25/#26 未決定。仮のバージョン識別子を返す（実マスキングなし）。
+        content.maskingPolicyVersion = 'none-dev-v1'
+        content.pages = await this.loadDocumentPages(target)
+        content.fields = fields.map(field => ({ id: field.id, label: field.label, required: field.required, current: null }))
+        content.documents = [{ id: target.id, version: target.version }]
+      } else if (run.operation === 'task_guidance') {
         if (run.targetType !== 'TASK') throw errors.forbidden()
         const target = await reader.get<EntityBase & { procedureId?: string | null }>(claims.tenantId, { collection: collections.tasks, caseId: claims.caseId, id: run.targetId })
         if (!target) throw errors.notFound()
@@ -289,7 +330,7 @@ export class InternalExecutionService {
         content.planningHistory = planningHistory.data
         content.planningRestriction = planningRestrictionSchema.parse(entity.aiPlanningRestriction ?? null)
       }
-      if (run.operation !== 'task_guidance') {
+      if (run.operation !== 'task_guidance' && run.operation !== 'document_analysis') {
         // 原本・ファイル名・Storage keyは含めない。検査済みでも文書本文は#27接続まで配信しない。
         const documents = await reader.list<DocumentEntity>(claims.tenantId, collections.documents, claims.caseId, {
           limit: 100, where: [{ field: 'inspection.status', op: '==', value: 'PASSED' }],
@@ -449,9 +490,17 @@ export class InternalExecutionService {
         return this.intake.applyGuidanceInterruption(tx, call.claims.caseId, { ...envelope, resultId: input.resultId,
           failureReason: input.failureReason, output: input.output, caseVersion: input.caseVersion })
       }
+      if (run.operation === 'document_analysis' && run.targetType === 'DOCUMENT') {
+        // 確認（Approval）は proposal() の別呼出しで既に保存済み。ここでは解析状態だけを最後に変える。
+        const location = { collection: collections.documents, caseId: call.claims.caseId, id: run.targetId }
+        const document = await tx.get<DocumentEntity>(location)
+        if (document && document.agentRunId === run.id) {
+          tx.update<DocumentEntity>(location, document.version, { analysisState: input.status === 'SUCCEEDED' ? 'COMPLETED' : 'FAILED' })
+        }
+      }
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString(),
         failureReason: input.kind === 'execution_interrupted' ? input.failureReason : null,
-        outcome: input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
+        outcome: 'output' in input && input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
       // 公開可能な完了履歴。narrative本文・questionsは含めない（別途GET agent-runsで確認する）。
       await recordRunTransitionEvent(tx, run, 'RESULT', input.status, {
         eventId: input.resultId,

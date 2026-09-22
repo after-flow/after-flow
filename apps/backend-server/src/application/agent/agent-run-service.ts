@@ -9,6 +9,8 @@ import type { AgentOperation, AgentRunEntity, AgentRunStatus } from '../../domai
 import { failGuidanceForRun } from './run-termination.js'
 import { canCancel, canRetry, isRunTerminal, isRunWaiting } from '../../domain/agent/agent-run.js'
 import type { CaseEntity } from '../../domain/case/case.js'
+import type { DocumentEntity } from '../../domain/document/document.js'
+import { analysisFieldsFor } from '../../domain/document/analysis-catalog.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { GuidanceEntity } from '../../domain/task/guidance.js'
 import type { TaskEntity } from '../../domain/task/task.js'
@@ -208,6 +210,25 @@ export class AgentRunService {
         else tx.create<GuidanceEntity>(location, { id: input.targetId, ...guidance })
         tx.audit({ caseId, type: 'guidance.requested',
           target: { collection: collections.guidance.name, id: input.targetId, version: (current?.version ?? 0) + 1 },
+          detail: { runId } })
+      }
+
+      if (input.operation === 'document_analysis') {
+        if (input.targetType !== 'DOCUMENT') throw errors.validationFailed()
+        const location = { collection: collections.documents, caseId, id: input.targetId }
+        const document = await tx.require<DocumentEntity>(location)
+        if (document.archived || document.storageState !== 'STORED' || document.inspection.status !== 'PASSED') {
+          throw errors.preconditionFailed({ message: 'この書類はまだ読み取りを依頼できません。', details: { reason: 'DOCUMENT_NOT_DELIVERABLE' } })
+        }
+        if (!analysisFieldsFor(document.kind)) {
+          throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_KIND_NOT_SUPPORTED' } })
+        }
+        if (document.analysisState === 'QUEUED' || document.analysisState === 'RUNNING') {
+          throw errors.conflict({ details: { reason: 'ANALYSIS_ALREADY_IN_PROGRESS' } })
+        }
+        tx.update<DocumentEntity>(location, document.version, { analysisState: 'QUEUED', agentRunId: runId })
+        tx.audit({ caseId, type: 'document.analysis_requested',
+          target: { collection: collections.documents.name, id: input.targetId, version: document.version + 1 },
           detail: { runId } })
       }
 

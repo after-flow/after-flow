@@ -47,9 +47,15 @@ ArtifactはBackendが保存したこのContext生成物で、別Run/attemptか�
 期限はアクセスの期限であり、物理削除完了を意味しません。
 
 未検査・検査中・拒否・検査失敗の書類は配信しません。
-検査済み書類も、この段階ではID/版/種別と `contentAvailable:false` だけです。
-原本・masked原本・ファイル名・Storage keyはContextに含めません。
-書類本文の配送とdocument_analysisは #25/#26/#27 の接続まで明示的に無効です。
+`case_planning` / `task_guidance` / `chat_reply` のContextでは、検査済み書類もID/版/種別と
+`contentAvailable:false` だけです。原本・masked原本・ファイル名・Storage keyは含めません。
+
+`document_analysis` は対象書類1件のページ本文（テキスト）と読み取り対象フィールドをContextへ返す
+唯一の操作です（#196）。配信するのは検査 `PASSED` の書類だけで、実PDFのテキスト抽出はOCRではなく
+埋め込みテキストの取得のみ（画像・スキャンのみのPDFは空ページになる）。マイナンバー等の実検知・
+マスキング方式は #25/#26 が未決定のため、`maskingPolicyVersion` は仮のプレースホルダーを返す。
+本番相当の検査（`inspection.status: PASSED`）自体、素通し検査アダプタ
+（`DOCUMENT_INSPECTION_MODE=passthrough-dev`、本番では起動不可）を明示設定しない限り発生しない。
 
 Contextの最初の取得でCase leaseを取得します。同じCaseで並行して書き込みを伴うAI実行区間を始めると `CASE_BUSY` です。
 heartbeatは生存時刻とlease期限を更新し、認可が現在も有効な実行に限ってcapabilityを更新します。

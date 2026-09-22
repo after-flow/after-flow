@@ -42,4 +42,7 @@ bucketは非公開、Public Access PreventionとUniform bucket-level accessを�
 ローカル保存＋Firestore Emulatorで登録・部分失敗・再送・原本のCase認可・改変・archive・参照表示を検証する。
 GCS SDK境界のFakeで作成条件、同一再送、世代固定読取、世代違い削除拒否、改変、サイズ、404/403/429/500を検証する。
 DockerのCloud Storage Emulatorで同じAdapterの作成・取得・削除を疎通する。ただし、実GCS bucket、IAM、保持/ライフサイクル、KMS、リージョン設定は未検証。本番を有効にする前に専用テストbucketと合成原本で確認する。
-マイナンバーの実検知/マスキング（#25/#26）、AIへの書類本文配送（#27）は未接続のまま。
+マイナンバーの実検知/マスキング（#25/#26）は未接続のまま。AIへの書類本文配送（#196）は
+`document_analysis` を接続済み操作に含めた環境でのみ動く。検査（`inspection.status: PASSED`）自体、
+`DOCUMENT_INSPECTION_MODE=passthrough-dev`（マイナンバー検知なしの素通し。本番では起動不可）を
+明示設定しない限り発生しないため、実運用相当の検知・マスキングが揃うまでは本番で有効化しない。

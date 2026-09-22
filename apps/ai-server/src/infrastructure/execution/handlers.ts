@@ -1,10 +1,19 @@
 import { Mastra } from '@mastra/core/mastra'
 import type { MastraCompositeStore } from '@mastra/core/storage'
 import type { WorkflowRunState } from '@mastra/core/workflows'
+import type { MastraModelConfig } from '@mastra/core/llm'
+import type { ModelWithRetries } from '@mastra/core/agent'
+import { artifactEnvelopeSchema, contextProofSchema } from '@aftercare/internal-contracts'
 import { createProcedureGuidanceWorkflow, PROCEDURE_GUIDANCE_WORKFLOW } from '../mastra/workflows/procedure-guidance.js'
 import type { ProcedureGuidanceDependencies } from '../mastra/workflows/procedure-guidance.js'
 import { createChatReplyWorkflow } from '../mastra/workflows/chat-reply.js'
 import type { ChatReplyDependencies } from '../mastra/workflows/chat-reply.js'
+import { createDocumentReviewWorkflow, DOCUMENT_REVIEW_WORKFLOW } from '../mastra/workflows/document-review.js'
+import { createDocumentExtractionAgent, extractionPrompt } from '../mastra/agents/document-extraction-agent.js'
+import { documentReviewSchema, extractionSchema } from '../../orchestration/documents/review.js'
+import type { ProcessedDocument } from '../../orchestration/documents/review.js'
+import { draftProposalsFromCandidates } from '../../orchestration/documents/proposal-mapping.js'
+import type { BackendClient } from '../backend-client/client.js'
 import type { AgentBudget } from '../mastra/budget-processors.js'
 import { contentHash } from '../../orchestration/context/builder.js'
 import type { ExecutionSession, WorkflowHandler } from './runtime.js'
@@ -99,6 +108,85 @@ export function createPlanningHandler(config: {
       await run.start({ inputData: { runId: session.receipt.runId, resultId: contentHash({ runId: session.receipt.runId, jobId: session.receipt.jobId, kind: 'planning-result' }) } })
     if (result.status === 'suspended') return 'WAITING'
     if (result.status !== 'success') throw workflowFailure(result)
+    return 'COMPLETED'
+  } }
+}
+
+/** Backend context()のdocument_analysis用contentから、Document配送に必要なscopeだけを取り出す。 */
+function documentScopeFromContext(content: Record<string, unknown>, runId: string) {
+  return {
+    caseId: String(content.caseId), runId,
+    documentId: String(content.documentId), documentVersion: Number(content.documentVersion),
+  }
+}
+
+/** BackendのContext envelopeをProcessedDocumentへ組み立てる。pagesのcontentHashはここで計算する。 */
+async function deliverDocument(backend: Pick<BackendClient, 'context'>, runId: string, signal: AbortSignal): Promise<ProcessedDocument> {
+  const artifact = artifactEnvelopeSchema.parse(await backend.context({ signal }))
+  const content = artifact.content as Record<string, unknown>
+  const pages = content.pages as ProcessedDocument['pages']
+  return {
+    caseId: String(content.caseId), runId,
+    documentId: String(content.documentId), documentVersion: Number(content.documentVersion),
+    caseVersion: artifact.caseVersion, artifactId: artifact.contextSnapshotId, artifactVersion: artifact.artifactVersion,
+    inspectedDocumentVersion: Number(content.inspectedDocumentVersion), inspection: 'PASSED',
+    maskingPolicyVersion: String(content.maskingPolicyVersion), expiresAt: artifact.expiresAt,
+    contentHash: contentHash(pages), pages, fields: content.fields as ProcessedDocument['fields'],
+  }
+}
+
+/**
+ * 書類の読み取り（document_analysis, #196）。
+ *
+ * 抽出候補はrunの途中でBackendへ`proposals` scope経由で提出する（承認待ちは個々のApprovalが持つ。
+ * runはcase_planningと違って個々の承認を待たずに終える）。runの完了自体は候補が0件でも成功として報告する。
+ */
+export function createDocumentAnalysisHandler(config: {
+  storage: MastraCompositeStore
+  prepare(session: ExecutionSession): Promise<{ models: MastraModelConfig | ModelWithRetries[]; budget: AgentBudget }>
+}): WorkflowHandler {
+  return { workflowName: DOCUMENT_REVIEW_WORKFLOW, async execute(session) {
+    await session.guard()
+    if (session.receipt.resume) throw new Error('Document analysis does not define resume')
+    const prepared = await config.prepare(session)
+    const budget: AgentBudget = prepared.budget.inferenceChargedByProviderAdapter
+      ? (assertAuthorizedModelSet(prepared.models, { charge: session.guard, role: 'core', operation: session.receipt.operation }),
+        { ...prepared.budget, onLimit: session.exhaust, inferenceChargedByProviderAdapter: true, charge: session.guard })
+      : { ...prepared.budget, onLimit: session.exhaust, charge: session.guard }
+
+    const scope = documentScopeFromContext(session.context.content as Record<string, unknown>, session.receipt.runId)
+    const workflow = createDocumentReviewWorkflow({
+      signal: session.signal, guard: session.guard,
+      deliver: (_scope, signal) => deliverDocument(session.backend, session.receipt.runId, signal),
+      extract: async (document, signal) => {
+        const agent = createDocumentExtractionAgent({ budget, models: prepared.models, signal })
+        const response = await agent.generate(extractionPrompt(document), { structuredOutput: { schema: extractionSchema, errorStrategy: 'strict' }, abortSignal: signal })
+        return extractionSchema.parse(response.object)
+      },
+    })
+    const mastra = new Mastra({ storage: config.storage, workflows: { workflow } })
+    const run = await mastra.getWorkflow('workflow').createRun({ runId: session.receipt.workflowRunId })
+    const result = await run.start({ inputData: scope })
+    if (result.status !== 'success') throw workflowFailure(result)
+    const review = documentReviewSchema.parse(result.result)
+
+    await session.guard()
+    const latest = artifactEnvelopeSchema.parse(await session.backend.context({ signal: session.signal }))
+    const latestContent = latest.content as Record<string, unknown>
+    const proof = contextProofSchema.parse(latest)
+    const basis = [{ type: 'DOCUMENT' as const, id: String(latestContent.documentId), version: Number(latestContent.documentVersion), label: String(latestContent.documentId) }]
+    const drafts = draftProposalsFromCandidates(review.candidates)
+    for (const [index, draft] of drafts.entries()) {
+      await session.guard()
+      await session.backend.propose({ ...proof, proposalId: `${session.receipt.runId}-asset-${index}`, kind: draft.kind,
+        title: draft.title, summary: draft.summary, payload: draft.payload, basis, assetDisposal: false },
+      { requestId: `${session.receipt.jobId}-propose-${index}`, signal: session.signal })
+    }
+
+    await session.guard()
+    const resultId = contentHash({ jobId: session.receipt.jobId, kind: 'document-analysis-result' })
+    await session.backend.result({ ...proof, resultId, basis: [], kind: 'document_analysis', status: 'SUCCEEDED' },
+      { requestId: resultId, signal: session.signal })
     return 'COMPLETED'
   } }
 }

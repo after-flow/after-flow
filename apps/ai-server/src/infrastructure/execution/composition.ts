@@ -13,7 +13,7 @@ import type { Budget } from '../../application/execution/contracts.js'
 import { DurableExecutionRuntime } from './runtime.js'
 import type { ExecutionSession } from './runtime.js'
 import { startExecutionHost } from './host.js'
-import { createChatHandler, createGuidanceHandler, createPlanningHandler } from './handlers.js'
+import { createChatHandler, createDocumentAnalysisHandler, createGuidanceHandler, createPlanningHandler } from './handlers.js'
 import { createAuthorizedModels, createAuthorizedOrcaModels } from '../mastra/authorized-models.js'
 import type { ProviderMetric } from '../mastra/authorized-models.js'
 import { inferenceReservation, providerPolicySchema } from '../../orchestration/models/policy.js'
@@ -158,6 +158,25 @@ export async function startConfiguredAiService(config: AiServiceComposition, lis
           return { routing: { routeId: 'case-planning/v1' as const, evidenceId: prepared.evidenceId },
             agents: { models: prepared.models, budget: prepared.budget, briefs: [selection.brief], researchTools: tools.tools,
               retrievedSourceIds: tools.retrievedSourceIds, signal: session.signal }, sources: () => tools.sources(selection.brief.briefId) }
+        } }),
+        // 検索は使わない（配信済みページ本文だけが対象）ため、researchScopeは経由しない。
+        document_analysis: createDocumentAnalysisHandler({ storage, prepare: async session => {
+          await session.guard()
+          const dataClass = 'minimized_case' as const
+          const request = { requestId: randomUUID(), operation: session.receipt.operation, role: 'core' as const, dataClass,
+            policyIds: policies.filter(p => p.roles.includes('core') && p.dataClasses.includes(dataClass)).map(p => p.id) }
+          const options = { request, policies, models, signal: session.signal,
+            grant: async () => { await session.guard(); return config.grant(session) }, charge: session.guard,
+            record: async (metric: ProviderMetric) => {
+              const identity = { runId: session.receipt.runId, jobId: session.receipt.jobId, executionAttempt: session.receipt.executionAttempt }
+              await providerMetrics.record(metric, identity)
+              await config.recordMetric(metric, identity)
+            } }
+          const core = config.orca ? await createAuthorizedOrcaModels(options) : await createAuthorizedModels({ ...options, router: config.orch })
+          const values = policies.filter(p => p.roles.includes('core')).map(inferenceReservation)
+          const reservation = { tokens: Math.max(...values.map(v => v.tokens)), costMicros: Math.max(...values.map(v => v.costMicros)), maxOutputTokens: Math.max(...values.map(v => v.maxOutputTokens)) }
+          const budget: AgentBudget = { charge: session.guard, inferenceChargedByProviderAdapter: true, inference: { core: reservation, research: reservation } }
+          return { models: core.models, budget }
         } }),
       } })
     const host = await startExecutionHost({ ...listen, runtime, worker: runtime, serviceToken: config.serviceToken,
