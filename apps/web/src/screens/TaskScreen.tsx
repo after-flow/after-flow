@@ -246,7 +246,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                 caseId={caseId}
                 task={task}
                 municipality={overview.data?.case.municipality}
-                caseVersion={overview.data?.case.version}
+                caseBasicInfoVersion={overview.data?.case.basicInfoVersion}
               />
 
               <p className="text-[0.82rem] leading-relaxed text-rd-text-3">

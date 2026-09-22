@@ -23,13 +23,13 @@ export function ResearchBox({
   caseId,
   task,
   municipality,
-  caseVersion,
+  caseBasicInfoVersion,
 }: {
   caseId: string
   task: TaskResource
   municipality?: string | null
-  /** 市区町村の登録に使う Case の版。取得前は未定義で、その間は登録入口を無効にする。 */
-  caseVersion?: number
+  /** 市区町村の登録に使う Case の基本情報版。取得前は未定義で、その間は登録入口を無効にする。 */
+  caseBasicInfoVersion?: number
 }) {
   const guidance = useTaskGuidance(caseId, task.id)
   const g = guidance.data
@@ -99,10 +99,10 @@ export function ResearchBox({
           />
           <Button
             variant="primary"
-            disabled={!draft.trim() || caseVersion == null || updateCase.isPending || request.isPending}
+            disabled={!draft.trim() || caseBasicInfoVersion == null || updateCase.isPending || request.isPending}
             onClick={async () => {
-              if (caseVersion == null) return
-              await updateCase.mutateAsync({ expectedVersion: caseVersion, municipality: draft.trim() })
+              if (caseBasicInfoVersion == null) return
+              await updateCase.mutateAsync({ expectedVersion: caseBasicInfoVersion, municipality: draft.trim() })
               await request.mutateAsync(task.id)
             }}
           >

@@ -123,6 +123,14 @@ function profileEquals(a: CaseProfile | null, b: CaseProfile | null): boolean {
     && a.realEstate === b.realEstate && a.car === b.car && a.mortgage === b.mortgage && a.answeredAt === b.answeredAt
 }
 
+/**
+ * basicInfoVersion 導入前の legacy record では欠落しうる。
+ * 導入前は version がこの役割を兼ねていたため、欠落時はそちらに正規化する。
+ */
+function basicInfoVersionOf(entity: CaseEntity): number {
+  return entity.basicInfoVersion ?? entity.version
+}
+
 export function toCaseResource(entity: CaseEntity, access: CaseAccess): CaseResource {
   const allowedActions: CaseAction[] = []
   if (access.can('case.write')) allowedActions.push('UPDATE_BASIC_INFO')
@@ -148,6 +156,7 @@ export function toCaseResource(entity: CaseEntity, access: CaseAccess): CaseReso
     status: entity.status,
     version: entity.version,
     caseVersion: entity.caseVersion,
+    basicInfoVersion: basicInfoVersionOf(entity),
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
     allowedActions,
@@ -200,6 +209,7 @@ export class CaseService {
           aiPlanningRestriction: null,
           status: 'ACTIVE',
           caseVersion: 1,
+          basicInfoVersion: 1,
         }
         tx.create<CaseEntity>(caseLocation(caseId), { id: caseId, ...created })
 
@@ -346,6 +356,10 @@ export class CaseService {
 
     await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const current = await tx.require<CaseEntity>(caseLocation(caseId))
+      const basicInfoVersion = basicInfoVersionOf(current)
+      if (basicInfoVersion !== expectedVersion) {
+        throw errors.conflict({ details: { expectedVersion, currentVersion: basicInfoVersion } })
+      }
       if (current.status !== 'ACTIVE') {
         throw errors.preconditionFailed({
           message: '終了した案件の基本情報は変更できません。',
@@ -371,8 +385,9 @@ export class CaseService {
         )
       }
 
-      tx.update<CaseEntity>(caseLocation(caseId), expectedVersion, {
+      tx.update<CaseEntity>(caseLocation(caseId), current.version, {
         ...patch,
+        basicInfoVersion: basicInfoVersion + 1,
         // 起算日に影響する変更があるため、Context の版も進める。
         caseVersion: nextCaseVersion(current.caseVersion),
       })
@@ -380,7 +395,7 @@ export class CaseService {
       tx.audit({
         caseId,
         type: 'case.basic_info_updated',
-        target: { collection: collections.cases.name, id: caseId, version: expectedVersion + 1 },
+        target: { collection: collections.cases.name, id: caseId, version: current.version + 1 },
         detail: { changed: Object.keys(patch) },
       })
 
@@ -422,16 +437,21 @@ export class CaseService {
       if (!member?.active || member.userId !== user.userId || !roleAllows(member.role, 'case.administer')
         || !tenant?.active || tenant.userId !== user.userId) throw errors.forbidden()
       const current = await tx.require<CaseEntity>(caseLocation(caseId))
-      if (current.version !== expectedVersion) throw errors.conflict()
+      const basicInfoVersion = basicInfoVersionOf(current)
+      if (basicInfoVersion !== expectedVersion) {
+        throw errors.conflict({ details: { expectedVersion, currentVersion: basicInfoVersion } })
+      }
       if (current.status !== 'ACTIVE') throw errors.preconditionFailed()
       const normalized = restriction === null ? null : { reason: restriction.reason.trim() }
       if (normalized && (!normalized.reason || normalized.reason.length > 1000)) throw errors.validationFailed()
       if ((current.aiPlanningRestriction?.reason ?? null) === (normalized?.reason ?? null)) return
-      tx.update<CaseEntity>(caseLocation(caseId), expectedVersion, {
-        aiPlanningRestriction: normalized, caseVersion: nextCaseVersion(current.caseVersion),
+      tx.update<CaseEntity>(caseLocation(caseId), current.version, {
+        aiPlanningRestriction: normalized,
+        basicInfoVersion: basicInfoVersion + 1,
+        caseVersion: nextCaseVersion(current.caseVersion),
       })
       tx.audit({ caseId, type: 'case.ai_planning_restriction_changed',
-        target: { collection: collections.cases.name, id: caseId, version: expectedVersion + 1 },
+        target: { collection: collections.cases.name, id: caseId, version: current.version + 1 },
         detail: { restricted: normalized !== null } })
     })
     return toCaseResource(await this.requireCase(user.tenantId, caseId), access)

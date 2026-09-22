@@ -466,7 +466,7 @@ describeFirestore('Outbox の配送', () => {
     assert.equal(before.size, expectedInitialCount)
     const current = await call(app, `/cases/${caseId}`)
     assert.equal((await call(app, `/cases/${caseId}`, jsonRequest('PATCH', {
-      expectedVersion: current.body.data.version, knownAt: '2026-05-01',
+      expectedVersion: current.body.data.basicInfoVersion, knownAt: '2026-05-01',
     }))).status, 200)
     await dispatcher.dispatchBatch(tenantId)
     const dates = await call(app, `/cases/${caseId}/deadlines?limit=50`)

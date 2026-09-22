@@ -405,7 +405,7 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(accepted.status, 202)
     const before = (await h.read.get<AgentRunEntity>(h.tenantId, { collection: collections.agentRuns, caseId: h.caseId, id: accepted.body.data.id }))!
     const current = await call(h.app, `/cases/${h.caseId}`)
-    await call(h.app, `/cases/${h.caseId}`, jsonRequest('PATCH', { expectedVersion: current.body.data.version, municipality: '変更市' }))
+    await call(h.app, `/cases/${h.caseId}`, jsonRequest('PATCH', { expectedVersion: current.body.data.basicInfoVersion, municipality: '変更市' }))
     const latest = await call(h.app, `/cases/${h.caseId}`)
     assert.notEqual(latest.body.data.caseVersion, before.caseVersionAtAccept)
     const job = { eventId: before.currentJobId!, tenantId: h.tenantId, caseId: h.caseId, type: 'agent.task_guidance', payload: { runId: before.id }, attempt: 1 }
@@ -543,7 +543,7 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
   it('案件更新後のartifactと結果を拒否する', async t => {
     const h = await setup(t), exec = await h.accept(), context = await h.context(exec)
     const current = await call(h.app, `/cases/${h.caseId}`)
-    await call(h.app, `/cases/${h.caseId}`, jsonRequest('PATCH', { expectedVersion: current.body.data.version, municipality: '変更市' }))
+    await call(h.app, `/cases/${h.caseId}`, jsonRequest('PATCH', { expectedVersion: current.body.data.basicInfoVersion, municipality: '変更市' }))
     assert.equal((await h.request(exec, `artifacts/${context.contextSnapshotId}`)).status, 409)
     assert.equal((await h.request(exec, 'result', { ...proof(context), resultId: randomUUID(), kind: 'case_planning', status: 'SUCCEEDED' })).status, 409)
     assert.equal((await h.request(exec, 'control')).body.data.reason, 'STALE_CONTEXT')

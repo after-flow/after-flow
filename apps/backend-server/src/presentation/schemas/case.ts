@@ -59,6 +59,7 @@ export const caseResourceSchema = z.object({
   status: caseStatusSchema,
   version: z.number().int(),
   caseVersion: z.number().int(),
+  basicInfoVersion: z.number().int(),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
   allowedActions: z.array(caseActionSchema),

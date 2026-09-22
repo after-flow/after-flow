@@ -355,7 +355,7 @@ describeFirestore('初期手続きの生成', () => {
     await call(
       app,
       `/cases/${caseId}`,
-      jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-03' }),
+      jsonRequest('PATCH', { expectedVersion: current.body.data.basicInfoVersion, knownAt: '2026-04-03' }),
     )
     // PATCH と同じ Transaction 内で洗い出しが走るため、期限はここで既に更新されている。
     const after = await call(app, `/cases/${caseId}/deadlines`)
@@ -385,7 +385,7 @@ describeFirestore('初期手続きの生成', () => {
     await call(
       app,
       `/cases/${caseId}`,
-      jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-01' }),
+      jsonRequest('PATCH', { expectedVersion: current.body.data.basicInfoVersion, knownAt: '2026-04-01' }),
     )
     // dueDate/startDate は変わらないが、basisLabel の付記は PATCH と同じ Transaction で消える。
     const after = await call(app, `/cases/${caseId}/deadlines`)
@@ -409,7 +409,7 @@ describeFirestore('初期手続きの生成', () => {
     await call(
       app,
       `/cases/${caseId}`,
-      jsonRequest('PATCH', { expectedVersion: current.body.data.version, knownAt: '2026-04-10' }),
+      jsonRequest('PATCH', { expectedVersion: current.body.data.basicInfoVersion, knownAt: '2026-04-10' }),
     )
     // PATCH と同じ Transaction 内で期限が作り直される。
     const deadlines = await call(app, `/cases/${caseId}/deadlines`)

@@ -165,7 +165,7 @@ export function FlowScreen() {
                 onChange: (done) =>
                   void updateCase
                     .mutateAsync({
-                      expectedVersion: overview.data!.case.version,
+                      expectedVersion: overview.data!.case.basicInfoVersion,
                       funeralCompletedAt: done ? new Date().toISOString() : null,
                     })
                     .catch(() => {}),

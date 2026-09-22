@@ -324,6 +324,7 @@ export const handlers = [
       status: 'ACTIVE',
       version: 1,
       caseVersion: 1,
+      basicInfoVersion: 1,
       createdAt: now,
       updatedAt: now,
       allowedActions: ['UPDATE_BASIC_INFO', 'ADMINISTER'],
@@ -361,7 +362,8 @@ export const handlers = [
     const idem = requireIdempotencyKey(request)
     if (idem) return idem
     const body = await jsonBody(request)
-    const ver = requireExpectedVersion(body, kase)
+    // 基本情報の PATCH は basicInfoVersion で照合する。version は Context 側の書き込みでも進むため使わない。
+    const ver = requireExpectedVersion(body, { version: kase.basicInfoVersion })
     if (ver) return ver
     if ('deceasedName' in body && typeof body.deceasedName === 'string') kase.deceasedName = body.deceasedName
     if ('municipality' in body) kase.municipality = typeof body.municipality === 'string' ? body.municipality : null
@@ -370,6 +372,7 @@ export const handlers = [
     if ('funeralCompletedAt' in body) kase.funeralCompletedAt = typeof body.funeralCompletedAt === 'string' ? body.funeralCompletedAt : null
     kase.version += 1
     kase.caseVersion += 1
+    kase.basicInfoVersion += 1
     kase.updatedAt = new Date().toISOString()
     refreshAllTaskActions(kase.id)
     return ok(kase)

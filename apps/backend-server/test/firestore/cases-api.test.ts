@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
+import { FieldValue } from '@google-cloud/firestore'
 import { createMiddleware } from 'hono/factory'
 import { createApp } from '../../src/app.js'
 import type { Clock } from '../../src/application/ports.js'
@@ -243,6 +244,62 @@ describeFirestore('案件の訂正', () => {
     assert.equal(updated.body.data.municipality, '別の架空市')
     assert.equal(updated.body.data.version, 2)
     assert.equal(updated.body.data.caseVersion, 2)
+  })
+
+  it('Task 作成などの Context 書き込みで version が進んでも、basicInfoVersion は変わらず訂正できる', async () => {
+    const { app } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-patch-basicinfo-0001'))
+    const caseId = created.body.data.id
+    assert.equal(created.body.data.version, 1)
+    assert.equal(created.body.data.basicInfoVersion, 1)
+
+    // Task 作成は ContextVersionUnitOfWork の自動 bump パスで version/caseVersion だけ進める。
+    await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
+
+    const afterTask = await call(app, `/cases/${caseId}`)
+    assert.equal(afterTask.body.data.version, 2, 'Task 作成で version は進む')
+    assert.equal(afterTask.body.data.basicInfoVersion, 1, 'basicInfoVersion は Task 作成では進まない')
+
+    // version（古い実装が使っていた値）を送ると、実際には競合していないのに 409 になる。
+    const usingStorageVersion = await call(
+      app,
+      `/cases/${caseId}`,
+      patch({ expectedVersion: afterTask.body.data.version, municipality: '別の架空市' }),
+    )
+    assert.equal(usingStorageVersion.status, 409, 'version は basicInfoVersion の代わりに使えない(空振り検知)')
+
+    // basicInfoVersion を送れば、version が進んでいても訂正できる。
+    const usingBasicInfoVersion = await call(
+      app,
+      `/cases/${caseId}`,
+      patch({ expectedVersion: afterTask.body.data.basicInfoVersion, municipality: '別の架空市' }),
+    )
+    assert.equal(usingBasicInfoVersion.status, 200, JSON.stringify(usingBasicInfoVersion.body))
+    assert.equal(usingBasicInfoVersion.body.data.municipality, '別の架空市')
+    assert.equal(usingBasicInfoVersion.body.data.basicInfoVersion, 2)
+  })
+
+  it('basicInfoVersion が欠落した legacy record は version に正規化して訂正できる', async () => {
+    const { app, tenantId } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-patch-basicinfo-0002'))
+    const caseId = created.body.data.id
+
+    // Task 作成で version だけ 2 に進める（basicInfoVersion 導入前の状態を模す）。
+    await call(app, `/cases/${caseId}/tasks`, jsonRequest('POST', { title: '架空手続き', category: '手動', stage: 'immediate' }))
+    // basicInfoVersion 導入前に作られた record を模して、フィールドごと消す。
+    await firestore().doc(`tenants/${tenantId}/cases/${caseId}`).update({ basicInfoVersion: FieldValue.delete() })
+
+    const legacy = await call(app, `/cases/${caseId}`)
+    assert.equal(legacy.body.data.version, 2)
+    assert.equal(legacy.body.data.basicInfoVersion, 2, 'legacy record は読み出し時に version へ正規化される')
+
+    const updated = await call(
+      app,
+      `/cases/${caseId}`,
+      patch({ expectedVersion: legacy.body.data.basicInfoVersion, municipality: '別の架空市' }),
+    )
+    assert.equal(updated.status, 200, JSON.stringify(updated.body))
+    assert.equal(updated.body.data.basicInfoVersion, 3)
   })
 
   it('古い版での訂正は 409 になり、先行更新を上書きしない', async () => {
@@ -736,6 +793,8 @@ describeFirestore('案件訂正の日付検証', () => {
     const caseId = created.body.data.id
 
     // legacy な不整合を直接 Firestore に作る（knownAt が dateOfDeath より前）。
+    // この直接書き込みは version（保存層のロック）だけを進め、基本情報 PATCH が
+    // 見る basicInfoVersion には影響しない。
     await unitOfWork().run(workContext(tenantId), async tx => {
       const location = { collection: collections.cases, caseId: null, id: caseId }
       const current = await tx.require(location)
@@ -745,14 +804,14 @@ describeFirestore('案件訂正の日付検証', () => {
     const municipalityOnly = await call(
       app,
       `/cases/${caseId}`,
-      patch({ expectedVersion: 2, municipality: '別の架空市' }),
+      patch({ expectedVersion: 1, municipality: '別の架空市' }),
     )
     assert.equal(municipalityOnly.status, 200, JSON.stringify(municipalityOnly.body))
 
     const fixDates = await call(
       app,
       `/cases/${caseId}`,
-      patch({ expectedVersion: 3, dateOfDeath: '2026-04-01', knownAt: '2026-04-01' }),
+      patch({ expectedVersion: 2, dateOfDeath: '2026-04-01', knownAt: '2026-04-01' }),
     )
     assert.equal(fixDates.status, 200, JSON.stringify(fixDates.body))
   })
