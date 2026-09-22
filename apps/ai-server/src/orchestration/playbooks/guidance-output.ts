@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { GUIDANCE_LIMITS, internalResultSchema, TASK_GUIDANCE_LIMITS } from '@aftercare/internal-contracts'
-import type { ContextProof, GuidanceCitation, InternalResult } from '@aftercare/internal-contracts'
+import { guidanceOutcomeSchema } from '@aftercare/internal-contracts'
+import type { ContextProof, GuidanceCitation, GuidanceOutcome, InternalResult } from '@aftercare/internal-contracts'
 import type { SourceDocument } from '../research/sources.js'
 import { assertCompleteResearch } from '../research/contracts.js'
 import type { ResearchEvidence } from '../research/contracts.js'
@@ -177,6 +178,8 @@ export interface GuidanceDiagnostics {
 
 export function guidanceResult(input: {
   draft: GuidanceDraft; sources: readonly SourceDocument[]; research: ResearchEvidence; proof: ContextProof; resultId: string; target: string | null
+  /** Harness-owned execution outcome. Model output cannot set this value. */
+  outcome?: GuidanceOutcome
   /** 案件への適用で未確認の事項。省略時は確認不要として扱う。 */
   unresolved?: readonly string[]
   /** 主張と根拠の対応を検証する規則。省略時は引用の有無と数量だけを検証する。 */
@@ -197,7 +200,7 @@ export function guidanceResult(input: {
     contractFailure: fitted.ok ? null : fitted.code })
   if (!fitted.ok) {
     // 修復できない場合は成功に見せず、本文を含まない理由だけを返す。
-    return internalResultSchema.parse({ ...input.proof, resultId: input.resultId, kind: 'task_guidance', status: 'FAILED',
+    return internalResultSchema.parse({ ...input.proof, resultId: input.resultId, kind: 'task_guidance', status: 'FAILED', outcome: 'FAILED',
       target: input.target, bring: [], steps: [], missing: [], sources: [], basis: [], failureReason: guidanceFailureReason(fitted.code) })
   }
   const guidance = fitted.guidance
@@ -224,7 +227,7 @@ export function guidanceResult(input: {
   return internalResultSchema.parse({
     ...(form ? { formExampleUrl: form.url, formExampleLabel: form.label } : {}),
     ...input.proof, resultId: input.resultId, kind: 'task_guidance',
-    status: fitted.status, target: input.target,
+    status: fitted.status, outcome: guidanceOutcomeSchema.parse(input.outcome ?? 'COMPLETED_RESEARCH'), target: input.target,
     where: guidance.where?.text ?? null, bring: guidance.bring.map(item => item.text), steps: guidance.steps.map(item => item.text),
     missing: fitted.missing, sources: [...used].map(id => {
       const source = available.get(id)!
