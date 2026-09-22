@@ -570,13 +570,23 @@ export const handlers = [
     const idem = requireIdempotencyKey(request)
     if (idem) return idem
     const body = await jsonBody(request)
-    t.evidences.push({
+    // 添付できるのは、同じケースの保存済みで除外されていない書類だけ（Backend の assertDocument と同じ）
+    const documentId = typeof body.documentId === 'string' ? body.documentId : null
+    const doc = documentId ? db.documents.find((d) => d.id === documentId && d.caseId === t.caseId) : undefined
+    if (documentId && !doc) return notFound()
+    if (doc && (doc.archived || doc.storageState !== 'STORED'))
+      return fail('PRECONDITION_FAILED', 'この書類はまだ添付できません。', { reason: 'DOCUMENT_UNAVAILABLE' })
+    const evidence = {
       id: nextId('ev'),
       label: String(body.label ?? ''),
       kind: (body.kind as (typeof t.evidences)[number]['kind']) ?? 'OTHER',
       note: typeof body.note === 'string' ? body.note : null,
+      documentId,
       recordedAt: new Date().toISOString(),
-    })
+    }
+    t.evidences.push(evidence)
+    // 書類の側からも、どの記録に添付されたかをたどれるようにする
+    if (doc) doc.evidenceRefs.push({ id: evidence.id, taskId: t.id, label: evidence.label, version: 1 })
     t.version += 1
     t.updatedAt = new Date().toISOString()
     refreshTaskActions(t)

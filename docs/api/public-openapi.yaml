@@ -10478,6 +10478,9 @@ paths:
                               note:
                                 nullable: true
                                 type: string
+                              documentId:
+                                nullable: true
+                                type: string
                               recordedAt:
                                 type: string
                                 format: date-time
@@ -10487,6 +10490,7 @@ paths:
                               - label
                               - kind
                               - note
+                              - documentId
                               - recordedAt
                             additionalProperties: false
                         allowedActions:
@@ -11079,6 +11083,9 @@ paths:
                             note:
                               nullable: true
                               type: string
+                            documentId:
+                              nullable: true
+                              type: string
                             recordedAt:
                               type: string
                               format: date-time
@@ -11088,6 +11095,7 @@ paths:
                             - label
                             - kind
                             - note
+                            - documentId
                             - recordedAt
                           additionalProperties: false
                       allowedActions:
@@ -11700,6 +11708,9 @@ paths:
                             note:
                               nullable: true
                               type: string
+                            documentId:
+                              nullable: true
+                              type: string
                             recordedAt:
                               type: string
                               format: date-time
@@ -11709,6 +11720,7 @@ paths:
                             - label
                             - kind
                             - note
+                            - documentId
                             - recordedAt
                           additionalProperties: false
                       allowedActions:
@@ -12288,6 +12300,9 @@ paths:
                             note:
                               nullable: true
                               type: string
+                            documentId:
+                              nullable: true
+                              type: string
                             recordedAt:
                               type: string
                               format: date-time
@@ -12297,6 +12312,7 @@ paths:
                             - label
                             - kind
                             - note
+                            - documentId
                             - recordedAt
                           additionalProperties: false
                       allowedActions:
@@ -12847,6 +12863,9 @@ paths:
                             note:
                               nullable: true
                               type: string
+                            documentId:
+                              nullable: true
+                              type: string
                             recordedAt:
                               type: string
                               format: date-time
@@ -12856,6 +12875,7 @@ paths:
                             - label
                             - kind
                             - note
+                            - documentId
                             - recordedAt
                           additionalProperties: false
                       allowedActions:
@@ -13407,6 +13427,9 @@ paths:
                             note:
                               nullable: true
                               type: string
+                            documentId:
+                              nullable: true
+                              type: string
                             recordedAt:
                               type: string
                               format: date-time
@@ -13416,6 +13439,7 @@ paths:
                             - label
                             - kind
                             - note
+                            - documentId
                             - recordedAt
                           additionalProperties: false
                       allowedActions:
