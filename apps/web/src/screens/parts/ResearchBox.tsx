@@ -143,7 +143,10 @@ export function ResearchBox({
 
     return (
       <div className="rounded-lg border border-rd-warning-line bg-rd-warning-soft p-4">
-        <p className="font-bold text-rd-warning-text">調べるために足りない情報があります</p>
+        <p className="font-bold text-rd-warning-text">情報を追加すると、より具体的に調べられます</p>
+        <p className="mt-1 text-[0.86rem] leading-relaxed text-rd-text-2">
+          未入力のままでも、公式情報から分かる範囲を調べられます。
+        </p>
         <div className="mt-3 flex flex-col gap-3">
           {needsBranch && (
             <Field label="加入していた協会けんぽの支部" required>
@@ -195,39 +198,43 @@ export function ResearchBox({
               情報は保存済みだが再調査を開始できなかった
             </Notice>
           )}
-          <Button
-            variant="primary"
-            className="self-start"
-            disabled={!complete || caseBasicInfoVersion == null || updateCase.isPending || request.isPending}
-            onClick={async () => {
-              if (caseBasicInfoVersion == null) return
-              setResearchRestartFailed(false)
-              try {
-                await updateCase.mutateAsync({
-                  expectedVersion: caseBasicInfoVersion,
-                  kyoukaikenpoBurialBenefit: mergeKyoukaikenpoBurialBenefitInput(
-                    kyoukaikenpoBurialBenefit,
-                    { branch, deceasedInsuranceStatus, applicantStatus },
-                  ),
-                })
-              } catch {
-                return
-              }
-              try {
-                await request.mutateAsync(task.id)
-              } catch {
-                setResearchRestartFailed(true)
-              }
-            }}
-          >
-            保存してもう一度調べる
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="primary"
+              disabled={!complete || caseBasicInfoVersion == null || updateCase.isPending || request.isPending}
+              onClick={async () => {
+                if (caseBasicInfoVersion == null) return
+                setResearchRestartFailed(false)
+                try {
+                  await updateCase.mutateAsync({
+                    expectedVersion: caseBasicInfoVersion,
+                    kyoukaikenpoBurialBenefit: mergeKyoukaikenpoBurialBenefitInput(
+                      kyoukaikenpoBurialBenefit,
+                      { branch, deceasedInsuranceStatus, applicantStatus },
+                    ),
+                  })
+                } catch {
+                  return
+                }
+                try {
+                  await request.mutateAsync(task.id)
+                } catch {
+                  setResearchRestartFailed(true)
+                }
+              }}
+            >
+              保存して詳しく調べる
+            </Button>
+            <Button disabled={request.isPending} onClick={() => void restart()}>
+              このまま分かる範囲で調べる
+            </Button>
+          </div>
         </div>
       </div>
     )
   }
 
-  if (!municipality) {
+  if (!municipality && state === 'NOT_REQUESTED') {
     return (
       <div className="rounded-lg border border-rd-border bg-rd-bg p-4">
         <p className="flex items-center gap-1.5 text-[0.94rem] font-bold">
@@ -235,7 +242,7 @@ export function ResearchBox({
           お住まいの地域に合わせて調べられます
         </p>
         <p className="mt-1 text-[0.86rem] leading-relaxed text-rd-text-2">
-          行き先や持ち物は地域ごとに違います。市区町村を入れると、AIがこの手続きの案内を調べます（番地は不要です）。
+          市区町村を入れると、地域に合った案内を調べられます（番地は不要です）。未入力でも、公式情報から分かる範囲を調べます。
         </p>
         <div className="mt-2.5 flex flex-wrap gap-2">
           <input
@@ -254,7 +261,10 @@ export function ResearchBox({
               await request.mutateAsync(task.id)
             }}
           >
-            登録して調べる
+            登録して詳しく調べる
+          </Button>
+          <Button disabled={request.isPending} onClick={again}>
+            このまま分かる範囲で調べる
           </Button>
         </div>
       </div>
@@ -297,10 +307,10 @@ export function ResearchBox({
     return (
       <Notice
         tone="warning"
-        title="調べるために足りない情報があります"
-        action={<Button size="sm" disabled={request.isPending} onClick={again}>もう一度調べる</Button>}
+        title="情報が不足しているため、前回は調査できませんでした"
+        action={<Button size="sm" disabled={request.isPending} onClick={again}>分かる範囲で調べ直す</Button>}
       >
-        ご家族やお住まいなどの情報がそろうと、この手続きの案内を調べられます。上の案内は一般的な内容です。
+        現在の情報のままでも、公式情報から一般的な手続きと条件を調べ直せます。
         <ConfirmAtDestination destination={destination} />
       </Notice>
     )

@@ -134,17 +134,17 @@ test('death-notification keeps municipality and knownAt, drops deceasedName, pro
   assert.deepEqual(buildProcedureResearchBrief(context, { scope, ...draftAllowed }), { status: 'needs_input', missing: [UNCONFIGURED_SOURCE_MESSAGE] })
 })
 
-test('optional context may be absent while required context missing blocks with structured questions', () => {
+test('optional and required context may be absent without blocking general procedure research', () => {
   const optional = buildCoreContext(guidanceArtifact('death-notification', { case: { id: 'case-1', version: 1, municipality: '架空市', knownAt: null } }), 'task_guidance')
   assert.deepEqual(optional.procedure!.missingRequired, [])
   assert.deepEqual(facts(optional), ['case.knownAt', 'case.municipality'])
-  const missing = buildCoreContext(guidanceArtifact('bank-accounts', { assets: [] }), 'task_guidance')
+  const source = guidanceArtifact('kyoukaikenpo-burial-benefit')
+  const content = { ...source.content, case: { ...(source.content.case as Record<string, unknown>), burialBenefitApplicantStatus: null } }
+  const missing = buildCoreContext({ ...source, content, contentHash: contentHash(content) }, 'task_guidance')
   const selection = buildProcedureResearchBrief(missing, { scope, ...draftAllowed })
-  assert.equal(selection.status, 'needs_input')
-  if (selection.status !== 'needs_input') assert.fail()
-  assert.deepEqual(selection.missing, missing.procedure!.missingRequired.map(missingContextQuestion))
-  assert.ok(selection.missing.some(text => text.includes('資産の金融機関等')))
-  assert.ok(!selection.missing.some(text => text.includes('架空')))
+  assert.equal(selection.status, 'ready')
+  assert.ok(missing.procedure!.missingRequired.map(missingContextQuestion)
+    .some(text => text.includes('生計維持・埋葬費用負担区分')))
 })
 
 test('profile UNKNOWN remains visible as unknown provenance and does not satisfy required context', () => {

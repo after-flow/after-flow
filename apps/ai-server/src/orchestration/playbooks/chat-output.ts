@@ -5,7 +5,10 @@ import type { SourceDocument } from '../research/sources.js'
 import type { ResearchEvidence } from '../research/contracts.js'
 
 export const chatDraftSchema = z.object({
-  paragraphs: z.array(z.object({ text: z.string().min(1).max(1000), sourceIds: z.array(internalId).min(1).max(10) }).strict()).max(8),
+  // Policy and scope replies do not need an external source. Factual replies are
+  // still prompted with retrieved evidence, but a citation formatting mistake
+  // must not discard an otherwise useful answer.
+  paragraphs: z.array(z.object({ text: z.string().min(1).max(1000), sourceIds: z.array(internalId).max(10) }).strict()).max(8),
   questions: z.array(z.string().min(1).max(300)).max(5), professionalNotice: z.boolean(),
 }).strict().refine(value => value.paragraphs.length + value.questions.length > 0, 'Reply must provide grounded text or questions')
 export type ChatDraft = z.infer<typeof chatDraftSchema>
@@ -16,8 +19,9 @@ export function chatReplyResult(input: {
   const sources = new Map(input.sources.map(source => [source.id, source])); const used = new Set<string>()
   const researched = new Set(input.research.outcomes.flatMap(outcome => outcome.findings?.answers.flatMap(answer => answer.sourceIds) ?? []))
   for (const paragraph of draft.paragraphs) for (const id of paragraph.sourceIds) {
-    if (!sources.has(id) || !researched.has(id)) throw new Error('Chat cites an unverified source')
-    used.add(id)
+    // Only render source links that came from this run. Unknown model-produced
+    // citation IDs are ignored instead of failing the whole chat operation.
+    if (sources.has(id) && researched.has(id)) used.add(id)
   }
   const body = [
     ...draft.paragraphs.map(paragraph => paragraph.text),
