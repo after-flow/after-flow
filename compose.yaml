@@ -72,6 +72,10 @@ services:
       BACKEND_INTERNAL_SERVICE_TOKEN: ${BACKEND_INTERNAL_SERVICE_TOKEN:-after-flow-local-backend-service-token}
       BACKEND_EXECUTION_SIGNING_KEY: ${BACKEND_EXECUTION_SIGNING_KEY:-after-flow-local-execution-signing-key-2026}
       AI_CONNECTED_OPERATIONS: ${AI_CONNECTED_OPERATIONS-}
+      # 書類の検査。開発環境の既定は素通し検査（マイナンバー検知・マスキングなし）で、
+      # 書類を登録すると検査済みになり「AIからの確認」の読み取りを依頼できる。
+      # .envで空を指定すると未接続（PENDINGのまま）。本番では起動時に拒否される。
+      DOCUMENT_INSPECTION_MODE: ${DOCUMENT_INSPECTION_MODE-passthrough-dev}
       READINESS_ACCESS_TOKEN: ${READINESS_ACCESS_TOKEN-}
       # 利用者認証。既定は Firebase Auth Emulator（`make up` だけで動く）。
       # 未設定の項目が残ると保護対象APIは401で fail closed する。

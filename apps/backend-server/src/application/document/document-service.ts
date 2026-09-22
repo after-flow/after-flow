@@ -15,6 +15,7 @@ import type { AuthenticatedUser } from '../ports/identity.js'
 import type { DocumentInspector } from '../ports/inspection.js'
 import type { ObjectStorage } from '../ports/object-storage.js'
 import type { DocLocation, ListOptions, Page, ReadRepository, UnitOfWork } from '../ports/persistence.js'
+import { analysisFieldsFor } from '../../domain/document/analysis-catalog.js'
 
 export interface RegisterDocumentInput {
   fileName: string
@@ -33,6 +34,8 @@ export type AnalysisBlockedReason =
   | 'CONSENT_REQUIRED'
   /** 既に読み取り中（QUEUED/RUNNING）。完了・失敗するまで新たな依頼を受け付けない。 */
   | 'ALREADY_IN_PROGRESS'
+  /** この種類の書類は読み取りの対象外（読み取る項目が定義されていない）。 */
+  | 'KIND_NOT_SUPPORTED'
 
 export interface DocumentView {
   extractionCandidates: DocumentResource['extractionCandidates']
@@ -111,6 +114,8 @@ export class DocumentService {
     const policy = await this.consent.policy(user)
     if (!policy.externalAi) blockedReasons.push('CONSENT_REQUIRED')
     if (entity.analysisState === 'QUEUED' || entity.analysisState === 'RUNNING') blockedReasons.push('ALREADY_IN_PROGRESS')
+    // 受付時（agent-runs）は対象外の種類を501で拒否する。画面が依頼の導線を出さないよう、ここでも返す。
+    if (!analysisFieldsFor(entity.kind)) blockedReasons.push('KIND_NOT_SUPPORTED')
     const related = links ?? await readDocumentLinks(this.read, user.tenantId, entity.caseId!)
     const run = entity.agentRunId ? await this.read.get<AgentRunEntity>(user.tenantId,
       { collection: collections.agentRuns, caseId: entity.caseId, id: entity.agentRunId }) : null

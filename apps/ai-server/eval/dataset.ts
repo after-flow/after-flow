@@ -23,7 +23,9 @@ add('doc-correction', 'document', { ...docData, document: { ...document, fields:
 for (const [id, patch] of Object.entries({ foreign: { caseId: 'other' }, stale: { documentVersion: 1 }, inspection: { inspectedDocumentVersion: 1 }, expired: { expiresAt: '2020-01-01T00:00:00Z' }, hash: { contentHash: contentHash('wrong') } })) {
   add(`doc-${id}`, 'document', { ...docData, document: { ...document, ...patch } }, { state: 'REJECTED', error: 'DELIVERY' })
 }
-for (const [id, patch] of Object.entries({ page: { page: 2 }, location: { start: 1 }, invented: { value: 'invented' }, field: { fieldId: 'other' } })) {
+// 引用が本文に無い（quote）・値が引用に無い（invented）・存在しないページや項目は根拠なしとして拒否する。
+// 申告位置のずれはハーネスが本文から位置を求め直すため拒否しない（末尾の doc-location-relocated）。
+for (const [id, patch] of Object.entries({ page: { page: 2 }, quote: { quote: '番号: SYNTHETIC-999', value: 'SYNTHETIC-999' }, invented: { value: 'invented' }, field: { fieldId: 'other' } })) {
   add(`doc-${id}`, 'document', { ...docData, extraction: { ...extraction, candidates: [{ ...candidate, ...patch }] } }, { state: 'REJECTED', error: 'EVIDENCE' })
 }
 add('doc-uninspected', 'document', { ...docData, document: { ...document, inspection: 'PENDING' } }, { state: 'REJECTED', error: 'SCHEMA' })
@@ -71,5 +73,7 @@ const event = { id: 'event', caseId: 'case', caseVersion: 3, expiresAt: '2099-01
 add('insight-missing', 'insight', { event, expected }, { state: 'DRAFT' }, 'quality')
 add('insight-unsupported', 'insight', { event: { id: event.id, caseId: event.caseId, caseVersion: event.caseVersion, expiresAt: event.expiresAt, task: event.task, kind: 'CASE_CHANGED' }, expected }, { state: 'UNSUPPORTED' }, 'quality')
 for (const [id, patch] of Object.entries({ foreign: { caseId: 'other' }, stale: { caseVersion: 2 }, expired: { expiresAt: '2020-01-01T00:00:00Z' }, task: { task: { ...event.task, version: 1 } } })) add(`insight-${id}`, 'insight', { event: { ...event, ...patch }, expected }, { state: 'REJECTED', error: 'EVENT' })
+// 既存ケースのsplitを変えないよう末尾に追加する。
+add('doc-location-relocated', 'document', { ...docData, extraction: { ...extraction, candidates: [{ ...candidate, start: 1 }] } }, { state: 'NEEDS_REVIEW', pairs: ['number=SYNTHETIC-123'] })
 export const dataset = Object.freeze(cases)
 export const datasetVersion = contentHash(dataset)

@@ -5,7 +5,7 @@ import { contractScorer, extractionMetrics } from '../eval/scorers.js'
 import { executeFixture } from '../eval/target.js'
 
 test('synthetic dataset has disjoint reviewed partitions and each development case meets its declared contract', async () => {
-  assert.equal(dataset.length, 37); assert.equal(new Set(dataset.map(item => item.id)).size, dataset.length)
+  assert.equal(dataset.length, 38); assert.equal(new Set(dataset.map(item => item.id)).size, dataset.length)
   for (const split of ['development', 'holdout']) {
     const partition = dataset.filter(item => item.split === split)
     assert.equal(new Set(partition.map(item => item.input.family)).size, 4)

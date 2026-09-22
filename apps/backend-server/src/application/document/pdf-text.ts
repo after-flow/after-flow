@@ -5,8 +5,37 @@ import { z } from 'zod'
 export const ANALYSIS_PDF_MAX_PAGES = 20
 export const ANALYSIS_PDF_PAGE_MAX_CHARS = 12000
 
+/** Workerが返す正規化前の文字数の上限。正規化で空白が減るため、ページ上限より大きく取る。 */
+const RAW_PAGE_MAX_CHARS = ANALYSIS_PDF_PAGE_MAX_CHARS * 4
 const pageSchema = z.object({ number: z.number().int().positive(), text: z.string().max(ANALYSIS_PDF_PAGE_MAX_CHARS) }).strict()
 const extractedSchema = z.object({ pages: z.array(pageSchema).min(1).max(ANALYSIS_PDF_MAX_PAGES) }).strict()
+const textItemSchema = z.object({ str: z.string().max(RAW_PAGE_MAX_CHARS), hasEOL: z.boolean() }).strict()
+const rawSchema = z.object({ pages: z.array(z.object({ number: z.number().int().positive(), items: z.array(textItemSchema).max(RAW_PAGE_MAX_CHARS) }).strict())
+  .min(1).max(ANALYSIS_PDF_MAX_PAGES) }).strict()
+export type PdfTextItem = z.infer<typeof textItemSchema>
+
+/**
+ * pdf.jsの文字列断片を1ページの本文にする。
+ *
+ * pdf.jsはフォントが切り替わる位置で文字列を分割する（日本語PDFでは1語の途中でも起きる）。
+ * 空白を挟んでつなぐと「架空信 用 金 庫」のように語の途中に空白が入るため、そのままつなぎ、
+ * 行末（hasEOL）だけ改行にする。語の間の空白はpdf.jsが断片の中に含めて返す。
+ */
+export function pageText(items: readonly PdfTextItem[]): string {
+  return normalizeExtractedText(items.map(item => item.str + (item.hasEOL ? '\n' : '')).join('')).slice(0, ANALYSIS_PDF_PAGE_MAX_CHARS)
+}
+
+/**
+ * 抽出した本文を、AIが引用・照合できる形に整える。
+ *
+ * - NFKC正規化: 日本語フォントのPDFでは「高」「金」「日」などが見た目の同じ康熙部首
+ *   （U+2F00台）として抽出されることがあり、そのままでは金融機関名などが別の文字になる。
+ *   全角英数字もここで半角にそろう。
+ * - 空白: 行内の連続する空白は1つにし、改行は1行ずつ残す。
+ */
+export function normalizeExtractedText(raw: string): string {
+  return raw.normalize('NFKC').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{2,}/g, '\n').trim()
+}
 
 /**
  * PDF からページごとのテキストを取り出す（読み取りに使う実装、#25/#26 未決定分の暫定）。
@@ -31,8 +60,16 @@ const { parentPort, workerData } = require('node:worker_threads');
     for (let number = 1; number <= document.numPages; number++) {
       const page = await document.getPage(number);
       const content = await page.getTextContent();
-      const body = content.items.filter(item => typeof item.str === 'string').map(item => item.str).join(' ').replace(/\s+/g, ' ').trim();
-      pages.push({ number, text: body.slice(0, ${ANALYSIS_PDF_PAGE_MAX_CHARS}) });
+      // 断片のつなぎ方と正規化はWorkerの外（pageText）で行う。ここでは上限内の断片だけを返す。
+      const items = [];
+      let length = 0;
+      for (const item of content.items) {
+        if (typeof item.str !== 'string' || length >= ${RAW_PAGE_MAX_CHARS}) continue;
+        const str = item.str.slice(0, ${RAW_PAGE_MAX_CHARS} - length);
+        length += str.length + 1;
+        items.push({ str, hasEOL: item.hasEOL === true });
+      }
+      pages.push({ number, items });
       page.cleanup();
     }
     parentPort.postMessage({ pages });
@@ -41,13 +78,18 @@ const { parentPort, workerData } = require('node:worker_threads');
 `
 
 export async function extractPdfPages(bytes: Uint8Array, signal: AbortSignal): Promise<z.infer<typeof extractedSchema>> {
+  const raw = await extractRawPdfPages(bytes, signal)
+  return extractedSchema.parse({ pages: raw.pages.map(page => ({ number: page.number, text: pageText(page.items) })) })
+}
+
+async function extractRawPdfPages(bytes: Uint8Array, signal: AbortSignal): Promise<z.infer<typeof rawSchema>> {
   signal.throwIfAborted()
   return new Promise((resolve, reject) => {
     const worker = new Worker(parser, { eval: true, execArgv: [], env: {},
       workerData: { bytes, moduleUrl: import.meta.resolve('pdfjs-dist/legacy/build/pdf.mjs') },
       resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 } })
     let settled = false
-    const finish = (result?: z.infer<typeof extractedSchema>) => {
+    const finish = (result?: z.infer<typeof rawSchema>) => {
       if (settled) return
       settled = true; clearTimeout(timer); signal.removeEventListener('abort', aborted)
       void worker.terminate()
@@ -56,7 +98,7 @@ export async function extractPdfPages(bytes: Uint8Array, signal: AbortSignal): P
     }
     const aborted = () => finish()
     const timer = setTimeout(aborted, 10000)
-    worker.once('message', (message: unknown) => { const result = extractedSchema.safeParse(message); finish(result.success ? result.data : undefined) })
+    worker.once('message', (message: unknown) => { const result = rawSchema.safeParse(message); finish(result.success ? result.data : undefined) })
     worker.once('error', aborted); worker.once('exit', aborted)
     signal.addEventListener('abort', aborted, { once: true })
     if (signal.aborted) aborted()

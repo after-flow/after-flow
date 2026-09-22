@@ -147,7 +147,8 @@ describeFirestore('原本の登録', () => {
     const response = await call(
       app,
       `/cases/${caseId}/documents`,
-      withKey(uploadRequest(syntheticPdf()), 'idem-doc-0002'),
+      // 読み取り対象の種類で、検査とAI接続による可否だけを確かめる。
+      withKey(uploadRequest(syntheticPdf(), { kind: 'BANK_STATEMENT' }), 'idem-doc-0002'),
     )
 
     assert.equal(response.body.data.analysis.state, 'NOT_REQUESTED')
@@ -339,7 +340,7 @@ describeFirestore('検査の結果', () => {
     const response = await call(
       app,
       `/cases/${caseId}/documents`,
-      withKey(uploadRequest(syntheticPdf()), 'idem-doc-0020'),
+      withKey(uploadRequest(syntheticPdf(), { kind: 'BANK_STATEMENT' }), 'idem-doc-0020'),
     )
     assert.equal(response.body.data.inspection.status, 'PASSED')
     assert.equal(response.body.data.inspection.completed, true)
@@ -351,6 +352,19 @@ describeFirestore('検査の結果', () => {
     const after = await call(app, `/cases/${caseId}/documents/${response.body.data.id}`)
     assert.deepEqual(after.body.data.analysis.blockedReasons, ['CONSENT_REQUIRED'])
     assert.equal(after.body.data.analysis.canRequest, false)
+  })
+
+  it('読み取りの対象外の種類は、前提がそろっても依頼できない理由として返す', async () => {
+    const { app, caseId } = await setup({ inspector: passingInspector, aiConnected: true })
+    const response = await call(
+      app,
+      `/cases/${caseId}/documents`,
+      withKey(uploadRequest(syntheticPdf(), { kind: 'DEATH_CERTIFICATE' }), 'idem-doc-0021'),
+    )
+    assert.equal(response.body.data.inspection.status, 'PASSED')
+    // 受付（agent-runs）は対象外の種類を501で拒否する。画面が依頼の導線を出さないよう、ここでも返す。
+    assert.deepEqual(response.body.data.analysis.blockedReasons, ['KIND_NOT_SUPPORTED'])
+    assert.equal(response.body.data.analysis.canRequest, false)
   })
 
   it('拒否された書類は原本を保持せず、理由を残す', async () => {

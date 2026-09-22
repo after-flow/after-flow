@@ -49,10 +49,10 @@ function syntheticPdf(marker = 'synthetic'): Uint8Array {
   return new Uint8Array([...Buffer.from('%PDF-1.7\n'), ...Buffer.from(marker), 0x0a])
 }
 
-function uploadRequest(content: Uint8Array): RequestInit {
+function uploadRequest(content: Uint8Array, kind = 'DEATH_CERTIFICATE'): RequestInit {
   const form = new FormData()
   form.append('file', new File([new Uint8Array(content)], 'synthetic.pdf', { type: 'application/pdf' }))
-  form.append('kind', 'DEATH_CERTIFICATE')
+  form.append('kind', kind)
   return { method: 'POST', body: form }
 }
 
@@ -301,7 +301,8 @@ describeFirestore('外部AI同意（CROSS_BORDER_AI）のサーバー側強制',
     const created = await call(app, '/cases', jsonRequest('POST', caseBody, nextKey('idem-case')))
     const caseId = created.body.data.id as string
 
-    const registered = await call(app, `/cases/${caseId}/documents`, withKey(uploadRequest(syntheticPdf()), nextKey('idem-doc')))
+    // 読み取り対象の種類で、同意による可否だけを確かめる。
+    const registered = await call(app, `/cases/${caseId}/documents`, withKey(uploadRequest(syntheticPdf(), 'BANK_STATEMENT'), nextKey('idem-doc')))
     assert.equal(registered.status, 201, JSON.stringify(registered.body))
     assert.deepEqual(registered.body.data.analysis.blockedReasons, [])
     assert.equal(registered.body.data.analysis.canRequest, true)
