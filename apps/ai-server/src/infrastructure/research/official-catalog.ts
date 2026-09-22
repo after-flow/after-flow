@@ -49,8 +49,13 @@ export function createOfficialCatalogProvider(inputs: readonly OfficialCatalog[]
       if (!query.trim() || query.length > 600 || !catalogIds.length || catalogIds.length > 10) throw new Error('Invalid catalog query')
       const terms = [...new Set(query.normalize('NFKC').toLocaleLowerCase('ja').split(/\s+/).filter(Boolean))]
       const candidates = [...new Set(catalogIds)].flatMap(id => active(id).entries).map(entry => {
-        const text = [entry.title, entry.issuer, ...entry.keywords].join(' ').normalize('NFKC').toLocaleLowerCase('ja')
-        return { entry, score: terms.filter(term => text.includes(term)).length }
+        const metadataTerms = [entry.title, entry.issuer, ...entry.keywords]
+          .map(term => term.normalize('NFKC').toLocaleLowerCase('ja'))
+        // Harness queries contain full procedure/question sentences. Match reviewed metadata in
+        // either direction so a keyword such as「相続登記」also matches「不動産の相続登記をする」.
+        const score = metadataTerms.filter(metadata =>
+          terms.some(term => metadata.includes(term) || term.includes(metadata))).length
+        return { entry, score }
       }).filter(item => item.score > 0).sort((a, b) => b.score - a.score || a.entry.id.localeCompare(b.entry.id)).slice(0, 10)
       return candidates.map(({ entry }) => candidateOf(entry))
     },

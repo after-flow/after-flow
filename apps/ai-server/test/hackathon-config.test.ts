@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { readHackathonComposition } from '../src/infrastructure/execution/hackathon-config.js'
 import { assertResearchScopeCatalogs } from '../src/infrastructure/execution/composition.js'
 import { createOfficialCatalogProvider } from '../src/infrastructure/research/official-catalog.js'
-import { findProcedureDefinition } from '@aftercare/internal-contracts'
+import { findProcedureDefinition, procedureResearchBrief } from '@aftercare/internal-contracts'
 
 const valid = (): NodeJS.ProcessEnv => ({
   AI_RUNTIME_MODE: 'hackathon',
@@ -64,6 +64,15 @@ test('hackathon composition binds two model families, fixed official sources and
   for (const [catalogId, query] of searches) {
     const results = await provider.search({ query, catalogIds: [catalogId], signal })
     assert.ok(results.length > 0, catalogId)
+    assert.ok(results.every(candidate => candidate.catalogId === catalogId))
+  }
+  for (const [procedureId, catalogId] of Object.entries(procedureCatalogs)) {
+    const definition = findProcedureDefinition(procedureId)
+    assert.ok(definition)
+    const brief = procedureResearchBrief(definition)
+    const harnessQuery = `${brief.institution} ${brief.procedure} ${brief.questions.map(question => question.text).join(' ')}`.slice(0, 600)
+    const results = await provider.search({ query: harnessQuery, catalogIds: brief.sourceCatalogIds, signal })
+    assert.ok(results.length > 0, `${procedureId} must be discoverable with the actual harness query`)
     assert.ok(results.every(candidate => candidate.catalogId === catalogId))
   }
   const restarted = readHackathonComposition(valid())!
