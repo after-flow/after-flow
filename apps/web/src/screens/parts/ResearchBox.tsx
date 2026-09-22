@@ -94,11 +94,18 @@ export function ResearchBox({
     return consent.loading ? null : <AiConsentNotice feature="窓口の自動調査" />
   }
 
-  // 自動で調べられない手続きは、市区町村を聞いても結果が変わらない。先に伝えて入力を求めない。
+  // 未対応手続きは入力を求めずに伝える。情報源設定の古い結果は、再調査できる入口を残す。
   if (state === 'NOT_RESEARCHABLE') {
+    const sourceNotConfigured = g?.outcome === 'SOURCE_NOT_CONFIGURED'
     return (
-      <Notice tone="info" title="この手続きは自動で調べられません">
-        公式の案内を自動で確認できる手続きではありません。上の案内は一般的な内容です。
+      <Notice
+        tone="info"
+        title={sourceNotConfigured ? '公式案内をまだ確認できていません' : 'この手続きは自動で調べられません'}
+        action={sourceNotConfigured ? <Button size="sm" disabled={request.isPending} onClick={again}>もう一度調べる</Button> : undefined}
+      >
+        {sourceNotConfigured
+          ? '前回の調査では公式情報源の設定を確認できませんでした。もう一度調べ直せます。'
+          : '公式の案内を自動で確認できる手続きではありません。上の案内は一般的な内容です。'}
         <ConfirmAtDestination destination={destination} />
       </Notice>
     )

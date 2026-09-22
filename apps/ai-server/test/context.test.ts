@@ -154,6 +154,8 @@ test('profile UNKNOWN remains visible as unknown provenance and does not satisfy
   const fact = context.modelInput.facts.find(item => item.group === 'profile' && item.field === 'healthInsurance')
   assert.equal(fact?.state, 'unknown')
   assert.deepEqual(context.procedure?.missingRequired.map(item => `${item.group}.${item.field}`), ['profile.healthInsurance'])
+  const selection = buildProcedureResearchBrief(context, { scope, allowDraftDefinitions: true, configuredCatalogIds: new Set(['health-insurance-loss']) })
+  assert.equal(selection.status, 'ready')
 })
 
 test('kyoukaikenpo guidance carries only the three formal case values and uses the matching reviewed scope or the Definition brief', () => {

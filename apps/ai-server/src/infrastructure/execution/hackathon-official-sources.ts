@@ -40,6 +40,17 @@ export const HACKATHON_OFFICIAL_CATALOGS = Object.freeze([
     ],
   }),
   catalog({
+    id: 'health-insurance-loss',
+    reviewReference: 'https://www.mhlw.go.jp/stf/newpage_21539.html',
+    allowedHosts: ['www.mhlw.go.jp', 'www.nenkin.go.jp'],
+    entries: [
+      { id: 'national-health-insurance-loss', catalogId: 'health-insurance-loss', title: '国民健康保険の加入・脱退について', issuer: '厚生労働省',
+        url: 'https://www.mhlw.go.jp/stf/newpage_21539.html', keywords: ['国民健康保険', '資格喪失', '脱退', '死亡', '14日以内', '市町村', '提出先', '必要書類'] },
+      { id: 'employee-health-insurance-loss', catalogId: 'health-insurance-loss', title: '従業員が退職・死亡したとき（健康保険・厚生年金保険の資格喪失）の手続き', issuer: '日本年金機構',
+        url: 'https://www.nenkin.go.jp/service/kounen/tekiyo/hihokensha1/20150407-02.html', keywords: ['健康保険', '厚生年金保険', '資格喪失', '死亡', '5日以内', '事業主', '年金事務所', '提出先', '必要書類'] },
+    ],
+  }),
+  catalog({
     id: 'nenkin-death-procedures',
     reviewReference: 'https://www.nenkin.go.jp/service/jukyu/tetsuduki/kyotsu/jukyu/20140731-01.html',
     allowedHosts: ['www.nenkin.go.jp'],
