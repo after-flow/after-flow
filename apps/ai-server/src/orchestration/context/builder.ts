@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import {
   artifactEnvelopeSchema, contextProofSchema, internalId, operationSchema, planningHistorySchema, planningRestrictionSchema, clarificationHistorySchema, insightEventSchema,
-  findProcedureDefinition, projectGuidanceContext, procedureResearchBrief, missingContextQuestion,
+  findProcedureDefinition, projectGuidanceContext, procedureResearchBrief,
 } from '@aftercare/internal-contracts'
 import type { ContextProof, PlanningHistory, PlanningRestriction, ClarificationHistory, ProcedureDefinition, ContextRequirement, GuidanceProjectionSource } from '@aftercare/internal-contracts'
 import { researchBriefSchema } from '../research/contracts.js'
@@ -312,14 +312,14 @@ export const UNCONFIGURED_SOURCE_MESSAGE = 'この手続きの公式情報源が
 /**
  * task_guidance 用。Task の表示名や提出先ではなく、Task.procedureId が指す ProcedureDefinition だけを根拠にする。
  * 審査済み scope は procedureId が一致するときだけ使い（詳細な問い・grounding 規則を持つ）、無ければ Definition の
- * researchScope から Brief を作る。未マッピング・未レビュー・必須 Context 欠落・未設定カタログでは推測せず needs_input にする。
+ * researchScope から Brief を作る。必須 Context の欠落は一般的な調査を止めず、結果の未確認事項として扱う。
+ * 未マッピング・未レビュー・未設定カタログでは調査対象や根拠を定められないため needs_input にする。
  */
 export function buildProcedureResearchBrief(context: CoreContext, options: { scope?: ReviewedResearchScope | null; allowDraftDefinitions: boolean; configuredCatalogIds: ReadonlySet<string> }) {
   if (context.operation !== 'task_guidance') throw new ContextError('INVALID_CONTEXT')
   if (!context.procedure) return { status: 'needs_input' as const, missing: [UNMAPPED_PROCEDURE_MESSAGE] }
-  const { definition, missingRequired } = context.procedure
+  const { definition } = context.procedure
   if (definition.reviewStatus !== 'reviewed' && !options.allowDraftDefinitions) throw new ContextError('PROCEDURE_NOT_REVIEWED')
-  if (missingRequired.length) return { status: 'needs_input' as const, missing: missingRequired.map(missingContextQuestion) }
   const scope = options.scope ? reviewedResearchScopeSchema.parse(options.scope) : null
   if (scope && scope.procedureIds.includes(definition.id)) {
     const municipality = context.modelInput.facts.find(fact => fact.group === 'case' && fact.field === 'municipality')?.value

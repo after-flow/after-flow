@@ -3,7 +3,7 @@ import { createStep, createWorkflow } from '@mastra/core/workflows'
 import type { ModelWithRetries } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
-import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId, guidanceContextAudit, guidanceOutcomeSchema } from '@aftercare/internal-contracts'
+import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId, guidanceContextAudit, guidanceOutcomeSchema, missingContextQuestion } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
 import { buildCoreContext, assertContextFresh, buildProcedureResearchBrief, minimizedModelInput, reviewedResearchScopeSchema, UNCONFIGURED_SOURCE_MESSAGE } from '../../../orchestration/context/builder.js'
 import { guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
@@ -79,8 +79,7 @@ function buildProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies, ski
       const modelInput = minimizedModelInput(context, 'task_guidance')
       if (selection.status === 'needs_input') {
         const preflightOutcome = preflightOutcomeSchema.parse(!context.procedure ? 'NOT_APPLICABLE'
-          : context.procedure.missingRequired.length ? 'MISSING_CONTEXT'
-            : selection.missing.includes(UNCONFIGURED_SOURCE_MESSAGE) ? 'SOURCE_NOT_CONFIGURED' : 'MISSING_CONTEXT')
+          : selection.missing.includes(UNCONFIGURED_SOURCE_MESSAGE) ? 'SOURCE_NOT_CONFIGURED' : 'MISSING_CONTEXT')
         const decision = guidancePlanDecisionSchema.parse({ plan: [{ action: 'NEEDS_INPUT', questionIds: [] }, { action: 'REPORT', questionIds: [] }], nextAction: 'NEEDS_INPUT' })
         return { ...inputData, brief: null, preflightOutcome, workingState: createGuidanceWorkingState({ decision, brief: null, modelInput, missing: selection.missing }) }
       }
@@ -219,6 +218,7 @@ function buildProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies, ski
 - 項目はanswersのevidence（公式資料からの引用）に書かれている内容だけで書く。textは要約で、evidenceに無い書類・金額・期限・提出先・提出方法（窓口への持参、特定の支部名や自治体、最寄りの支部など）を足さない。
 - answersにあるquestionIdごとに、少なくとも1つの項目で扱う。給付の種類（埋葬料・埋葬費・家族埋葬料）で条件・支給額・起算日が異なる場合は、種類ごとに書き分ける。
 - 条件によって内容が変わる場合は条件を省かない。
+- 案件情報が不足していても、answersから分かる一般的な結論と手続きを必ず作る。個別条件で結論が分かれる部分は、条件ごとに書き分ける。
 ハーネスが各項目をevidenceと照合し、根拠の無い項目は表示しません。すべてのquestionを扱えた場合だけstatusをcompleteにする。
 これは制度の一般的な案内です。この案件に当てはまるかの確認はハーネスが別に行います。`,
         // allowlistの項目だけを送る。Case全体は鮮度・scope検証のためハーネスに残す（#166）。
@@ -293,7 +293,14 @@ function buildProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies, ski
       // 適用条件・grounding 規則は、この手続きに対応する審査済み scope のものだけを使う。
       const scoped = latest.procedure && scope.procedureIds.includes(latest.procedure.definition.id)
       // 適用条件は最新のContextで判定する。モデルの自己申告では確認済みにしない（#162）。
-      const unresolved = unresolvedApplicability(scoped ? scope.applicabilityChecks ?? [] : [], latest.modelInput.facts)
+      // 必須情報が未登録でも一般的な調査結果は返し、個別適用に必要な項目だけを未確認事項として残す。
+      const missingContext = inputData.preflightOutcome === null
+        ? latest.procedure?.missingRequired.map(missingContextQuestion) ?? []
+        : []
+      const unresolved = [...new Set([
+        ...missingContext,
+        ...unresolvedApplicability(scoped ? scope.applicabilityChecks ?? [] : [], latest.modelInput.facts),
+      ])]
       const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target, unresolved,
         outcome: inputData.preflightOutcome ?? 'COMPLETED_RESEARCH',
         ...(scoped && scope.groundingRules ? { rules: scope.groundingRules } : {}) })

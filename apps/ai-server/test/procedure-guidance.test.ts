@@ -310,19 +310,23 @@ test('an unmapped Task (procedure: null) asks for input without models or search
   assert.equal(reported[0].target, null)
 })
 
-test('missing required context blocks with structured questions instead of guessing', async () => {
-  const { deps, reported, core, artifact } = setup()
+test('missing required context still researches and returns a useful partial answer', async () => {
+  const { deps, reported, core, research, artifact } = setup()
   const content = { ...artifact.content, case: {
     ...(artifact.content.case as Record<string, unknown>), burialBenefitApplicantStatus: null,
   } }
   deps.backend.context = async () => ({ ...structuredClone(artifact), content, contentHash: contentHash(content) })
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
-  assert.equal(core.calls.length, 0)
+  assert.equal(core.calls.length, 1)
+  assert.equal(research.calls.length, 1)
   assert.equal(reported[0].kind, 'task_guidance')
   if (reported[0].kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'PARTIAL')
-  assert.equal(reported[0].outcome, 'MISSING_CONTEXT')
+  assert.equal(reported[0].outcome, 'COMPLETED_RESEARCH')
+  assert.equal(reported[0].where, '架空機関の窓口')
+  assert.deepEqual(reported[0].bring, ['架空書類A'])
+  assert.deepEqual(reported[0].steps, ['窓口で確認する'])
   assert.equal(reported[0].missing.length, 1)
   assert.ok(reported[0].missing[0]!.includes('生計維持・埋葬費用負担区分'))
 })

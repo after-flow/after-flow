@@ -718,21 +718,22 @@ export const handlers = [
       run.allowedActions = []
       run.version += 1
       const burialBenefit = caseOf(t.caseId)?.kyoukaikenpoBurialBenefit
-      const missingContext = t.procedureId === 'kyoukaikenpo-burial-benefit'
+      const incompleteContext = t.procedureId === 'kyoukaikenpo-burial-benefit'
         && (burialBenefit?.missingFields.length ?? 0) > 0
       db.guidance[taskId] = {
         ...researching,
-        status: 'COMPLETED',
-        outcome: missingContext ? 'MISSING_CONTEXT' : 'COMPLETED_RESEARCH',
-        where: missingContext ? null : t.submitTo ?? '窓口にご確認ください',
+        status: incompleteContext ? 'PARTIAL' : 'COMPLETED',
+        outcome: 'COMPLETED_RESEARCH',
+        where: t.submitTo ?? '窓口にご確認ください',
         // 持ち物は、その手続きの持ち物の一覧から作る。どの手続きにも同じ「印鑑」を返すと、
         // 押印が任意の死亡届などにも印鑑が出てしまう
-        bring: missingContext ? [] : t.requiredDocuments.length > 0 ? t.requiredDocuments.map((r) => r.label) : ['手続きをする方の本人確認書類'],
+        bring: t.requiredDocuments.length > 0 ? t.requiredDocuments.map((r) => r.label) : ['手続きをする方の本人確認書類'],
         // どの手続きにも当てはまる手順だけにする（死亡届のように、用紙を窓口でもらわない手続きもある）
-        steps: missingContext ? [] : ['持ち物をそろえて、窓口へ行きます。', '窓口の案内にしたがって提出します。'],
-        note: missingContext ? null : '受付時間は自治体・機関によって異なります。事前にご確認ください。',
-        sources: missingContext ? [] : [{ label: `${t.submitTo ?? '窓口'}の案内`, url: 'https://example.com/guidance', checkedAt: new Date().toISOString() }],
-        researchedBy: missingContext ? null : 'AI',
+        steps: ['持ち物をそろえて、窓口へ行きます。', '窓口の案内にしたがって提出します。'],
+        note: '受付時間は自治体・機関によって異なります。事前にご確認ください。',
+        sources: [{ label: `${t.submitTo ?? '窓口'}の案内`, url: 'https://example.com/guidance', checkedAt: new Date().toISOString() }],
+        missing: incompleteContext ? ['個別の対象条件を確定するため、未登録の情報を確認してください。'] : [],
+        researchedBy: 'AI',
         version: researching.version + 1,
         updatedAt: new Date().toISOString(),
       }
