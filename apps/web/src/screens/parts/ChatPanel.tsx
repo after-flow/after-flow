@@ -30,6 +30,9 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const messages = data ?? []
+  // 送信中（202を受け取るまで）と、受け付け後の返答待ち（ポーリング中）の両方を「送れない・返答待ち」として扱う
+  const waitingForReply = awaitingSince !== null
+  const pending = send.isPending || waitingForReply
   const consent = useAiConsent()
   const capabilities = useAiCapabilities()
   // 受付結果でも未接続が分かる。取得前に送った場合や、取得後に接続が切れた場合はこちらで拾う。
@@ -48,7 +51,7 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length, send.isPending])
+  }, [messages.length, pending])
 
   // 書き出しを入れたら、続きをすぐ打てるよう末尾にカーソルを置く。
   // 入力欄は AI の利用に同意しているときだけ出るので、同意が確かめられてからも一度行う
@@ -64,7 +67,7 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
   async function submit(text?: string, e?: FormEvent) {
     e?.preventDefault()
     const body = (text ?? input).trim()
-    if (!body || send.isPending || !consent.allowed) return
+    if (!body || pending || !consent.allowed) return
     // 例の質問を押したときは、書きかけ（手続きの画面からの書き出しを含む）を消さない
     if (text == null) setInput('')
     const accepted = await send.mutateAsync(body)
@@ -93,8 +96,9 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
                 <button
                   key={s}
                   type="button"
+                  disabled={pending}
                   onClick={() => void submit(s)}
-                  className="rounded-lg border border-rd-border bg-rd-card px-3 py-2.5 text-left text-[0.9rem] hover:border-rd-primary-line hover:bg-rd-primary-soft"
+                  className="rounded-lg border border-rd-border bg-rd-card px-3 py-2.5 text-left text-[0.9rem] hover:border-rd-primary-line hover:bg-rd-primary-soft disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {s}
                 </button>
@@ -139,13 +143,13 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
             )
           })}
         </ul>
-        {send.isPending && (
-          // 待っている間は、ゆっくり明滅させて止まっていないことを伝える（読み込み中の印と同じ扱い）
+        {pending && (
+          // 送信中〜返答が届くまでの間、ずっと表示し続ける。ゆっくり明滅させて止まっていないことを伝える（読み込み中の印と同じ扱い）
           <p className="animate-pulse pb-4 text-[0.9rem] text-rd-text-2" aria-live="polite">
-            答えを考えています…
+            {send.isPending ? '送信しています…' : '答えを考えています…'}
           </p>
         )}
-        {consent.allowed && showUnavailable && !send.isPending && (
+        {consent.allowed && showUnavailable && !pending && (
           <div className="pb-4">
             <Notice tone="warning" role="status" title="いまはAIからの返信をお届けできません">
               {replyUnavailable
@@ -170,12 +174,13 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
             // 窓は狭く、スマホでは Ctrl キーも無いので、送り方の説明は広い画面だけに出す
             placeholder={compact ? '質問を入力' : '質問を入力（Ctrl + Enter で送信）'}
             value={input}
+            disabled={pending}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
             }}
           />
-          <Button type="submit" variant="primary" disabled={!input.trim() || send.isPending}>
+          <Button type="submit" variant="primary" disabled={!input.trim() || pending}>
             送る
           </Button>
         </div>
