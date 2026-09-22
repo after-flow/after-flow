@@ -10,7 +10,7 @@ import { createProcedureGuidanceWorkflow, createProcedureGuidanceWorkflowForEval
 import type { ProcedureGuidanceDependencies } from '../src/infrastructure/mastra/workflows/procedure-guidance.js'
 import { scriptedModel } from './helpers/scripted-model.js'
 import { assertCompleteResearch, researchEvidenceSchema, researchRequestSchema } from '../src/orchestration/research/contracts.js'
-import { guidanceDraftSchema } from '../src/orchestration/playbooks/guidance-output.js'
+import { guidanceDraftSchema, unresolvedApplicability } from '../src/orchestration/playbooks/guidance-output.js'
 import { sourceDocument } from './helpers/source-document.js'
 
 const candidate = { id: 'source-1', catalogId: 'catalog-1', title: '架空機関の資料', issuer: '架空機関', url: 'https://official.example/procedure' }
@@ -177,6 +177,39 @@ test('#162 general research stays PARTIAL until Case applicability is confirmed'
   assert.equal(reported[0].status, 'PARTIAL')
   assert.equal(reported[0].outcome, 'COMPLETED_RESEARCH')
   assert.deepEqual(reported[0].missing, applicabilityChecks.map(item => item.question))
+})
+
+test('#162 Backendの正式状態で確認済みの適用条件をmissingへ再掲しない', async () => {
+  const { deps, reported } = setup()
+  deps.scope = { ...scope, applicabilityChecks: [
+    { id: 'enrollment', question: '加入支部を確認してください。',
+      confirmedBy: { group: 'case', field: 'healthInsuranceBranch', present: true } },
+    { id: 'deceased-status', question: '被保険者区分を確認してください。',
+      confirmedBy: { group: 'case', field: 'deceasedInsuranceStatus', oneOf: ['INSURED', 'DEPENDENT'] } },
+    { id: 'applicant', question: '申請者区分を確認してください。',
+      confirmedBy: { group: 'case', field: 'burialBenefitApplicantStatus', oneOf: ['LIVELIHOOD_MAINTAINER', 'BURIAL_EXPENSE_PAYER'] } },
+  ] }
+  const run = await createProcedureGuidanceWorkflow(deps).createRun()
+  assert.equal((await run.start({ inputData: { resultId: 'result-confirmed-context' } })).status, 'success')
+  const guidance = reported[0]
+  if (guidance?.kind !== 'task_guidance') assert.fail()
+  assert.equal(guidance.status, 'COMPLETED')
+  assert.deepEqual(guidance.missing, [])
+})
+
+test('#162 present/oneOfは未確認・空値・許可外の値を確認済みにしない', () => {
+  const checks = [
+    { id: 'branch', question: '支部を確認', confirmedBy: { group: 'case' as const, field: 'branch', present: true as const } },
+    { id: 'status', question: '区分を確認', confirmedBy: { group: 'case' as const, field: 'status', oneOf: ['A', 'B'] } },
+  ]
+  assert.deepEqual(unresolvedApplicability(checks, [
+    { group: 'case', field: 'branch', value: '', state: 'confirmed' },
+    { group: 'case', field: 'status', value: 'C', state: 'confirmed' },
+  ]), ['支部を確認', '区分を確認'])
+  assert.deepEqual(unresolvedApplicability(checks, [
+    { group: 'case', field: 'branch', value: '東京支部', state: 'reported' },
+    { group: 'case', field: 'status', value: 'A', state: 'reported' },
+  ]), ['支部を確認', '区分を確認'])
 })
 
 test('no reviewed source returns a bounded partial result without guidance generation', async () => {

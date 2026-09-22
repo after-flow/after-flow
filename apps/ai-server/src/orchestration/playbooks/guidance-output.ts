@@ -118,20 +118,38 @@ function fitClaims(claims: readonly GroundedClaim[], max: number, code: Guidance
  * 申請できるものと受け取る。確認の根拠はBackendの正式な記録だけとし、
  * モデルの推測や利用者の申告では確認済みにしない。
  */
+const applicabilityConfirmationBase = z.object({
+  group: z.enum(['case', 'task']),
+  field: z.string().min(1).max(64),
+})
+const applicabilityConfirmationValue = z.union([z.string(), z.number(), z.boolean()])
+const applicabilityConfirmationSchema = z.union([
+  applicabilityConfirmationBase.extend({ equals: applicabilityConfirmationValue }).strict(),
+  applicabilityConfirmationBase.extend({ oneOf: z.array(applicabilityConfirmationValue).min(1).max(20) }).strict(),
+  applicabilityConfirmationBase.extend({ present: z.literal(true) }).strict(),
+])
+
 export const applicabilityCheckSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/),
   /** 未確認のときに利用者へ示す確認事項。 */
   question: z.string().min(1).max(GUIDANCE_LIMITS.missingItem),
-  /** 確認済みとみなすBackendの記録。無ければ常に未確認として扱う。 */
-  confirmedBy: z.object({ group: z.enum(['case', 'task']), field: z.string().min(1).max(64), equals: z.union([z.string(), z.number(), z.boolean()]) }).strict().optional(),
+  /** 確認済みとみなすBackendの正式な記録。無ければ常に未確認として扱う。 */
+  confirmedBy: applicabilityConfirmationSchema.optional(),
 }).strict()
 export type ApplicabilityCheck = z.infer<typeof applicabilityCheckSchema>
 
 export interface ApplicabilityFact { group: string; field: string; value: unknown; state: string }
 
+function confirmsApplicability(check: ApplicabilityCheck, fact: ApplicabilityFact): boolean {
+  const confirmation = check.confirmedBy
+  if (!confirmation || fact.group !== confirmation.group || fact.field !== confirmation.field || fact.state !== 'confirmed') return false
+  if ('equals' in confirmation) return fact.value === confirmation.equals
+  if ('oneOf' in confirmation) return confirmation.oneOf.some(value => fact.value === value)
+  return fact.value !== null && fact.value !== undefined && (typeof fact.value !== 'string' || fact.value.trim().length > 0)
+}
+
 export function unresolvedApplicability(checks: readonly ApplicabilityCheck[], facts: readonly ApplicabilityFact[]): string[] {
-  return checks.filter(check => !check.confirmedBy || !facts.some(fact => fact.group === check.confirmedBy!.group &&
-    fact.field === check.confirmedBy!.field && fact.state === 'confirmed' && fact.value === check.confirmedBy!.equals))
+  return checks.filter(check => !facts.some(fact => confirmsApplicability(check, fact)))
     .map(check => check.question)
 }
 

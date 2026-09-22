@@ -28,7 +28,7 @@ type FactState = 'confirmed' | 'user_reported' | 'extracted_candidate' | 'unknow
 // These fields describe the Backend's authoritative record, not independently
 // verified real-world events. Descriptive facts keep their own provenance below.
 const backendStateFields: Partial<Record<Group, readonly string[]>> = {
-  case: ['status'],
+  case: ['status', 'healthInsuranceBranch', 'deceasedInsuranceStatus', 'burialBenefitApplicantStatus'],
   task: ['status', 'stage', 'source', 'dependencyTaskIds', 'evidenceRequired', 'assetDisposal', 'conditional', 'procedureId'],
   tasks: ['status', 'stage', 'source', 'dependencyTaskIds', 'evidenceRequired', 'assetDisposal', 'conditional', 'procedureId'],
   message: ['role'],
