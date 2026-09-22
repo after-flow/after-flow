@@ -29,6 +29,19 @@ describe('PROCEDURE_DEFINITIONS', () => {
     assert.deepEqual(PROCEDURE_DEFINITIONS.filter(def => def.reviewStatus === 'reviewed').map(def => def.id), ['kyoukaikenpo-burial-benefit'])
   })
 
+  it('全国共通の9手続きは審査済み公式カタログIDへだけ接続する', () => {
+    const expected = new Map<string, string>([
+      ['pension-stop', 'nenkin-death-procedures'], ['unpaid-pension-claim', 'nenkin-death-procedures'],
+      ['survivor-pension-check', 'nenkin-death-procedures'], ['death-lump-sum-check', 'nenkin-death-procedures'],
+      ['inheritance-choice', 'inheritance-renunciation'], ['inheritance-renunciation', 'inheritance-renunciation'],
+      ['final-income-tax-return', 'final-income-tax-return'], ['inheritance-tax-return', 'inheritance-tax-return'],
+      ['real-estate-registration', 'real-estate-registration'],
+    ])
+    for (const [procedureId, catalogId] of expected) {
+      assert.deepEqual(findProcedureDefinition(procedureId)?.guidance.researchScope.sourceCatalogIds, [catalogId])
+    }
+  })
+
   it('CONTEXT_FIELD_LABELS は CONTEXT_FIELDS の全 key を網羅する', () => {
     for (const [group, fields] of Object.entries(CONTEXT_FIELDS)) for (const field of fields) assert.ok(CONTEXT_FIELD_LABELS[`${group}.${field}`], `${group}.${field}`)
   })

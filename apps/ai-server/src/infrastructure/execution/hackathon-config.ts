@@ -3,6 +3,7 @@ import { orcaSdkProvider } from '../orcarouter/models.js'
 import type { AiServiceComposition } from './composition.js'
 import type { ProviderMetric } from '../mastra/authorized-models.js'
 import type { GroundingRules } from '../../orchestration/playbooks/guidance-grounding.js'
+import { HACKATHON_CATALOG_VERSION, HACKATHON_OFFICIAL_CATALOGS } from './hackathon-official-sources.js'
 
 const modeSchema = z.enum(['auto', 'disabled', 'hackathon'])
 const envSchema = z.object({
@@ -18,10 +19,9 @@ const envSchema = z.object({
 
 const REVIEW_REFERENCE = 'https://docs.orcarouter.ai/operations/data-handling reviewed for hackathon demo 2026-09-21; upstream provider terms require separate production review'
 const CATALOG_ID = 'kyoukaikenpo-burial-benefit'
-const CATALOG_VERSION = '2026-09-21'
 const POLICY_IDS = ['orca-core-primary', 'orca-core-fallback'] as const
-const REVIEWED_AT = '2026-09-21T00:00:00.000Z'
-const REVIEW_EXPIRES_AT = '2027-09-21T00:00:00.000Z'
+const REVIEWED_AT = '2026-09-22T00:00:00.000Z'
+const REVIEW_EXPIRES_AT = '2027-09-22T00:00:00.000Z'
 
 /** 協会けんぽの支部名に使われる都道府県名。 */
 const PREFECTURES = ['北海道', '青森', '岩手', '宮城', '秋田', '山形', '福島', '茨城', '栃木', '群馬', '埼玉', '千葉', '東京', '神奈川',
@@ -91,7 +91,7 @@ export function readHackathonComposition(
   const scope = {
     id: 'burial-benefit-guidance', version: 'hackathon-v1', reviewedAt: approvedAt,
     procedure: '健康保険の埋葬料（費）支給申請', institution: '全国健康保険協会', jurisdiction: '日本', municipality: null,
-    procedureIds: [CATALOG_ID], sourceCatalogIds: [CATALOG_ID], sourceCatalogVersions: { [CATALOG_ID]: CATALOG_VERSION },
+    procedureIds: [CATALOG_ID], sourceCatalogIds: [CATALOG_ID], sourceCatalogVersions: { [CATALOG_ID]: HACKATHON_CATALOG_VERSION },
     // 案内の各区分（提出先・必要書類・手順・期限）に根拠の問いが対応するように分ける（#163）。
     questions: [
       { id: 'eligibility', text: '申請できる人と支給条件を確認してください。' },
@@ -135,17 +135,7 @@ export function readHackathonComposition(
     grant: async () => ({ revision: 'hackathon-v1', providerPolicyIds: [...POLICY_IDS],
       dataClasses: ['minimized_case', 'public_research'], expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), maxRetentionDays: 0 }),
     recordMetric: async (metric: ProviderMetric, identity) => writeMetric({ event: 'ai_provider_attempt', ...identity, ...metric }),
-    catalogs: [{
-      id: CATALOG_ID, version: CATALOG_VERSION, reviewedAt: approvedAt, expiresAt,
-      reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/',
-      allowedHosts: ['www.kyoukaikenpo.or.jp'],
-      entries: [
-        { id: 'burial-application', catalogId: CATALOG_ID, title: '健康保険埋葬料（費）支給申請書', issuer: '全国健康保険協会',
-          url: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/', keywords: ['埋葬料', '埋葬費', '必要書類', '申請期限', '死亡'] },
-        { id: 'burial-benefit', catalogId: CATALOG_ID, title: '埋葬料・埋葬費', issuer: '全国健康保険協会',
-          url: 'https://www.kyoukaikenpo.or.jp/benefit/burial_charges/', keywords: ['埋葬料', '埋葬費', '支給条件', '死亡'] },
-      ],
-    }],
+    catalogs: HACKATHON_OFFICIAL_CATALOGS,
     templates: [{ id: 'burial-benefit-task', version: 'hackathon-v1', reviewedAt: approvedAt, expiresAt,
       reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/', procedureId: CATALOG_ID, sourceCatalogIds: [CATALOG_ID],
       task: { title: '健康保険の埋葬料（費）を確認する', summary: '加入状況と申請者の関係に応じて、支給条件と必要書類を確認します。',
