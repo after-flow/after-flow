@@ -1,4 +1,5 @@
 import type { ApprovalResource, ProposalResource } from '@aftercare/public-contracts'
+import { ASSET_KIND_LABEL } from '@/lib/labels'
 
 export interface ApprovalView {
   approval: ApprovalResource
@@ -29,6 +30,28 @@ function toDisplayValue(v: unknown): string {
   }
 }
 
+/**
+ * 財産の登録（書類の読み取りから届く提案）の項目。利用者に内部のキー名や列挙値を見せない。
+ * 種類と税の確認は選択肢の値なので、この画面では直さず表示だけにする。
+ */
+const ASSET_FIELDS: Record<string, { label: string; editable: boolean; display?: (value: unknown) => string }> = {
+  name: { label: '名前', editable: true },
+  kind: { label: '種類', editable: false, display: (value) => ASSET_KIND_LABEL[String(value)] ?? toDisplayValue(value) },
+  institution: { label: '金融機関', editable: true },
+  amount: { label: '金額（円）', editable: true },
+  taxAttention: { label: '税の確認', editable: false, display: (value) => (value === true ? '必要' : value === false ? '不要' : '') },
+  note: { label: 'メモ', editable: true },
+}
+
+/** 直した値を保存する型に戻す。金額は数値で保存されるため、桁区切りや「円」を除いて数値にする。 */
+function coerceEdit(key: string, original: unknown, value: string): unknown {
+  if (key !== 'amount' && typeof original !== 'number') return value
+  const normalized = value.normalize('NFKC').replace(/[,円\s]/g, '')
+  if (normalized === '') return null
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : value
+}
+
 const TASK_PROPOSAL_HIDDEN_KEYS = new Set(['taskId', 'expectedTaskVersion', 'operation', 'targetId', 'expectedVersion'])
 
 /**
@@ -39,7 +62,18 @@ export function proposalRows(proposal: ProposalResource): ProposalRow[] {
   const payload = proposal.payload
 
   switch (proposal.kind) {
-    case 'ASSET_PROPOSAL':
+    case 'ASSET_PROPOSAL': {
+      const fields = (payload.fields ?? payload) as Record<string, unknown>
+      return Object.entries(fields).map(([key, value]) => {
+        const field = ASSET_FIELDS[key]
+        return {
+          key,
+          label: field?.label ?? key,
+          value: field?.display ? field.display(value) : toDisplayValue(value),
+          editable: field?.editable ?? true,
+        }
+      })
+    }
     case 'LIABILITY_PROPOSAL':
     case 'CONTRACT_PROPOSAL':
     case 'PERSON_PROPOSAL': {
@@ -98,7 +132,7 @@ export function applyProposalEdits(proposal: ProposalResource, edits: Record<str
     }
     if (proposal.kind === 'ASSET_PROPOSAL' || proposal.kind === 'LIABILITY_PROPOSAL' || proposal.kind === 'CONTRACT_PROPOSAL' || proposal.kind === 'PERSON_PROPOSAL') {
       const fields = (payload.fields ?? payload) as Record<string, unknown>
-      fields[key] = value
+      fields[key] = coerceEdit(key, fields[key], value)
       continue
     }
     payload[key] = value

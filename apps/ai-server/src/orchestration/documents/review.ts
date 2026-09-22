@@ -37,16 +37,39 @@ export function assertDeliveredDocument(input: unknown, expected: DocumentScope,
     new Set(document.fields.map(field => field.id)).size !== document.fields.length || Buffer.byteLength(JSON.stringify(document)) > 100000) throw new Error('Document delivery is outside the authorized version or bounds')
   return document
 }
+/** 値と引用の照合用。全角半角・空白・数字の桁区切りの違いだけを吸収する。 */
+function evidenceKey(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/g, '').replace(/(\d),(?=\d)/g, '$1')
+}
+
+/**
+ * 引用の位置は、モデルの申告ではなく本文から決める。
+ *
+ * モデルは文字数を正確に数えられず、実モデルでは引用が本文にあっても申告位置がずれていた。
+ * 申告位置の切り出しが引用と一致すればそれを使い、一致しなければ本文中の出現位置を探す
+ * （複数あれば申告位置に最も近いもの）。引用が本文に無ければ根拠なしとする。
+ */
+function locateQuote(text: string, quote: string, hint: { start: number; end: number }): { start: number; end: number } | null {
+  if (hint.start < hint.end && text.slice(hint.start, hint.end) === quote) return hint
+  let best: number | null = null
+  for (let index = text.indexOf(quote); index !== -1; index = text.indexOf(quote, index + 1)) {
+    if (best === null || Math.abs(index - hint.start) < Math.abs(best - hint.start)) best = index
+  }
+  return best === null ? null : { start: best, end: best + quote.length }
+}
+
 export function reviewExtraction(document: ProcessedDocument, raw: unknown) {
   const extraction = extractionSchema.parse(raw)
   const fields = new Map(document.fields.map(field => [field.id, field]))
   if (new Set(extraction.unreadableFields).size !== extraction.unreadableFields.length || extraction.unreadableFields.some(id => !fields.has(id))) throw new Error('Unknown or duplicate unreadable field')
   const seen = new Set<string>()
-  const candidates = extraction.candidates.map(candidate => {
-    const field = fields.get(candidate.fieldId); const page = document.pages.find(page => page.number === candidate.page)
+  const candidates = extraction.candidates.map(raw => {
+    const field = fields.get(raw.fieldId); const page = document.pages.find(page => page.number === raw.page)
+    const position = page ? locateQuote(page.text, raw.quote, raw) : null
+    const candidate = position ? { ...raw, ...position } : raw
     const key = contentHash(candidate)
-    if (!field || !page || candidate.end > page.text.length || candidate.start >= candidate.end || page.text.slice(candidate.start, candidate.end) !== candidate.quote ||
-      !candidate.quote.includes(candidate.value) || seen.has(key) || extraction.unreadableFields.includes(candidate.fieldId)) throw new Error('Extraction lacks exact document evidence')
+    if (!field || !page || !position || !evidenceKey(candidate.quote).includes(evidenceKey(candidate.value)) ||
+      seen.has(key) || extraction.unreadableFields.includes(candidate.fieldId)) throw new Error('Extraction lacks exact document evidence')
     seen.add(key)
     const conflicts = field.current && field.current.state !== 'unknown' && field.current.value !== candidate.value
     return { ...candidate, state: 'extracted_candidate' as const, difference: conflicts ? 'CONFLICT' as const : field.current?.value === candidate.value ? 'MATCH' as const : 'NEW' as const,

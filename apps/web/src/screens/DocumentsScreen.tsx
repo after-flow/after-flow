@@ -174,6 +174,13 @@ export function DocumentScreen() {
       >
         {doc.analysis.state === 'QUEUED' || doc.analysis.state === 'RUNNING' ? (
           <p className="text-[0.94rem] text-rd-text-2">読み取っています。しばらくお待ちください。</p>
+        ) : doc.analysis.state === 'NOT_REQUESTED' || doc.analysis.state === 'NOT_CONNECTED' ? (
+          // 依頼前に「読み取れた内容はありませんでした」と言わない。
+          <p className="text-[0.94rem] text-rd-text-2">
+            {doc.analysis.blockedReasons.includes('KIND_NOT_SUPPORTED')
+              ? 'この種類の書類は、まだ自動での読み取りに対応していません。書類は保管されています。'
+              : 'まだ読み取っていません。'}
+          </p>
         ) : doc.extractionCandidates.length === 0 ? (
           <p className="text-[0.94rem] text-rd-text-2">読み取れた内容はありませんでした。</p>
         ) : (

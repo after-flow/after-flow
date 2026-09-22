@@ -238,6 +238,7 @@ export class ProposalService {
     if (!applier) throw errors.featureNotConnected()
     applier.validate?.(input.payload)
     await this.assertBasisBelongsToCase(tx, caseId, input.basis)
+    const basis = await this.labelDocumentBasis(tx, caseId, input.basis)
     const proposalId = fingerprintOf({ runId: run.id, proposalId: input.proposalId })
     const previous = await tx.get<ProposalEntity>(proposalLocation(caseId, proposalId))
     if (previous?.status === 'APPLIED') {
@@ -256,7 +257,7 @@ export class ProposalService {
     const approvalId = fingerprintOf({ proposalId, proposalVersion })
     const content: ProposalVersionEntity['content'] = {
       kind: input.kind, source: 'AI', agentRunId: run.id, title: input.title, summary: input.summary,
-      actionId: input.proposalId, proposalVersion, payload: input.payload, payloadHash: hashPayload(input.payload), basis: input.basis,
+      actionId: input.proposalId, proposalVersion, payload: input.payload, payloadHash: hashPayload(input.payload), basis,
       caseVersionAtProposal: input.caseVersion, assetDisposal: input.assetDisposal, supersedesProposalVersion: previous?.proposalVersion ?? null,
       execution: { attemptId: run.currentAttemptId, jobId: run.currentJobId, fencingToken: input.fencingToken, contextSnapshotId: input.contextSnapshotId },
     }
@@ -770,6 +771,20 @@ export class ProposalService {
     tx.audit({ caseId, type: 'proposal.application_fenced',
       target: { collection: collections.proposals.name, id: proposal.id, version: proposal.version },
       detail: { submissionFencingToken: proposal.execution.fencingToken, applicationFencingToken: fencingToken } })
+  }
+
+  /**
+   * 書類を根拠とする項目の表示名を、Backend が保存している書類のファイル名にする。
+   *
+   * AI Server にはファイル名を渡さないため、AI が付けたラベルは書類 ID になっている。
+   * 画面は「◯◯ から」や原本表示の見出しにこのラベルを使う。
+   */
+  private async labelDocumentBasis(tx: Tx, caseId: string, basis: ProposalBasis[]): Promise<ProposalBasis[]> {
+    return Promise.all(basis.map(async (item) => {
+      if (item.type !== 'DOCUMENT') return item
+      const document = await tx.get<DocumentEntity>({ collection: collections.documents, caseId, id: item.id })
+      return document ? { ...item, label: document.fileName.slice(0, 120) } : item
+    }))
   }
 
   /**

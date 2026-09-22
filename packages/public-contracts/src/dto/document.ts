@@ -39,6 +39,8 @@ export type AnalysisBlockedReasonResource =
   | 'AI_NOT_CONNECTED'
   | 'CONSENT_REQUIRED'
   | 'ALREADY_IN_PROGRESS'
+  /** この種類の書類は読み取りの対象外。 */
+  | 'KIND_NOT_SUPPORTED'
 
 export type DocumentKindResource =
   | 'DEATH_CERTIFICATE'

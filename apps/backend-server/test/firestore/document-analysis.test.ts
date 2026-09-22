@@ -144,7 +144,8 @@ describeFirestore('書類の読み取り（document_analysis, #196）', () => {
       proposalId: 'extracted-asset-1', kind: 'ASSET_PROPOSAL' as const,
       title: '預金口座を財産として登録する', summary: '通帳の表紙から読み取りました。',
       payload: { operation: 'CREATE', fields: { name: '○○銀行 普通預金', kind: 'BANK', institution: '○○銀行', amount: 1_000_000, taxAttention: false, note: null } },
-      basis: [{ type: 'DOCUMENT' as const, id: doc.id, version: documentVersion, label: doc.fileName }],
+      // AI Serverには書類のファイル名を渡さないため、AIが付けるラベルは書類IDになる。
+      basis: [{ type: 'DOCUMENT' as const, id: doc.id, version: documentVersion, label: doc.id }],
       assetDisposal: false,
     }
     const proposed = await h.request(exec, 'proposals', proposalInput)
@@ -164,6 +165,10 @@ describeFirestore('書類の読み取り（document_analysis, #196）', () => {
     const approval = await call(h.app, `/cases/${h.caseId}/approvals/${approvalId}`)
     assert.equal(approval.status, 200)
     assert.equal(approval.body.data.sourceDocumentId, doc.id)
+    // 画面が「◯◯ から」と表示する根拠のラベルは、Backendが書類のファイル名に置き換える。
+    const proposals = await call(h.app, `/cases/${h.caseId}/proposals`)
+    const submitted = proposals.body.data.find((item: any) => item.id === approval.body.data.proposalId)
+    assert.deepEqual(submitted.basis.map((item: any) => item.label), [doc.fileName])
     assert.equal(approval.body.data.status, 'PENDING')
 
     // 解析完了（analysisState更新）で書類の版は進んでいるが、承認は妨げられない

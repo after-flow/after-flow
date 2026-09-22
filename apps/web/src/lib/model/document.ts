@@ -12,6 +12,7 @@ const BLOCKED_REASON_LABEL: Record<string, string> = {
   AI_NOT_CONNECTED: 'この環境では自動での読み取りが接続されていません',
   CONSENT_REQUIRED: '外部AIへの提供に同意すると読み取りを依頼できます',
   INSPECTION_NOT_PASSED: '検査に合格していないため読み取れません',
+  KIND_NOT_SUPPORTED: 'この種類の書類は、まだ自動での読み取りに対応していません',
 }
 
 /**
@@ -33,6 +34,9 @@ export function documentDisplayStatus(doc: DocumentResource): DocumentDisplay {
   }
   if (doc.inspection.status === 'PENDING' || doc.inspection.status === 'IN_PROGRESS') {
     return { label: '読み取り前（内容を確認中）', tone: 'gray' }
+  }
+  if (doc.analysis.state === 'NOT_REQUESTED' && doc.analysis.blockedReasons.includes('KIND_NOT_SUPPORTED')) {
+    return { label: '保管済み', tone: 'gray', hint: BLOCKED_REASON_LABEL.KIND_NOT_SUPPORTED }
   }
   if (doc.analysis.state === 'NOT_REQUESTED') return { label: '読み取り前', tone: 'gray' }
   if (doc.analysis.state === 'NOT_CONNECTED') {

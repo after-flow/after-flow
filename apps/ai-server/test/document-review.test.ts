@@ -30,11 +30,32 @@ test('document boundary refuses foreign case, stale inspection, expired or modif
   for (const patch of [{ caseId: 'other' }, { documentVersion: 1 }, { inspectedDocumentVersion: 1 }, { inspection: 'PENDING' }, { expiresAt: '2020-01-01T00:00:00Z' }, { contentHash: contentHash('wrong') }]) {
     assert.throws(() => assertDeliveredDocument({ ...document, ...patch }, scope))
   }
-  for (const patch of [{ page: 2 }, { value: 'invented' }, { start: 1 }, { fieldId: 'unrequested' }]) {
+  for (const patch of [{ page: 2 }, { value: 'invented' }, { quote: '契約番号: SYNTHETIC-999', value: 'SYNTHETIC-999' }, { fieldId: 'unrequested' }]) {
     assert.throws(() => reviewExtraction(document, { ...extraction, candidates: [{ ...candidate, ...patch }] }), /evidence/)
   }
   assert.throws(() => reviewExtraction(document, { ...extraction, unreadableFields: ['number'] }), /evidence/)
   assert.throws(() => reviewExtraction(document, { ...extraction, candidates: [candidate, candidate] }), /evidence/)
+})
+
+test('引用の位置はモデルの申告ではなく本文から求め、値の表記の揺れだけを吸収する', () => {
+  const pages = [{ number: 1, text: '残高証明書\n架空信用金庫 本店営業部\n残高 1,234,567円\n架空信用金庫' }]
+  const document = { ...fixture(), pages, contentHash: contentHash(pages),
+    fields: [{ id: 'institution', label: '金融機関名', required: true, current: null }, { id: 'amount', label: '残高', required: true, current: null }] }
+  // 実モデルで見られた申告位置のずれ。本文中の出現位置に直す。
+  const review = reviewExtraction(document, { unreadableFields: [], candidates: [
+    { fieldId: 'amount', value: '1234567円', page: 1, start: 36, end: 44, quote: '残高 1,234,567円' },
+    { fieldId: 'institution', value: '架空信用金庫', page: 1, start: 40, end: 46, quote: '架空信用金庫' },
+  ] })
+  const amount = review.candidates[0]!
+  assert.equal(pages[0]!.text.slice(amount.start, amount.end), '残高 1,234,567円')
+  // 同じ引用が複数あれば、申告位置に最も近い出現を使う。
+  const institution = review.candidates[1]!
+  assert.equal(institution.start, pages[0]!.text.lastIndexOf('架空信用金庫'))
+  assert.deepEqual(review.missingFields, [])
+  // 本文に無い引用、引用に無い値は、位置を探し直しても根拠にしない。
+  for (const forged of [{ quote: '架空銀行 本店', value: '架空銀行' }, { quote: '架空信用金庫', value: '架空銀行' }]) {
+    assert.throws(() => reviewExtraction(document, { unreadableFields: [], candidates: [{ fieldId: 'institution', page: 1, start: 0, end: 5, ...forged }] }), /evidence/)
+  }
 })
 
 test('document workflow rejects concurrent correction and live delivery withdrawal after extraction', async () => {

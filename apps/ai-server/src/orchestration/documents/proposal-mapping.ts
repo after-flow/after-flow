@@ -37,7 +37,7 @@ export function draftProposalsFromCandidates(
   return [{
     kind: 'ASSET_PROPOSAL',
     title: '預金口座を財産として登録する',
-    summary: `通帳から「${institution.value}」の口座を見つけました。`,
+    summary: `書類から「${institution.value}」の口座を見つけました。`,
     payload: {
       operation: 'CREATE',
       fields: {

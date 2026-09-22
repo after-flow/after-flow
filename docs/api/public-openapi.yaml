@@ -8529,6 +8529,7 @@ paths:
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
                                 - ALREADY_IN_PROGRESS
+                                - KIND_NOT_SUPPORTED
                         required:
                           - run
                           - state
@@ -9020,6 +9021,7 @@ paths:
                                   - AI_NOT_CONNECTED
                                   - CONSENT_REQUIRED
                                   - ALREADY_IN_PROGRESS
+                                  - KIND_NOT_SUPPORTED
                           required:
                             - run
                             - state
@@ -9468,6 +9470,7 @@ paths:
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
                                 - ALREADY_IN_PROGRESS
+                                - KIND_NOT_SUPPORTED
                         required:
                           - run
                           - state
@@ -10017,6 +10020,7 @@ paths:
                                 - AI_NOT_CONNECTED
                                 - CONSENT_REQUIRED
                                 - ALREADY_IN_PROGRESS
+                                - KIND_NOT_SUPPORTED
                         required:
                           - run
                           - state

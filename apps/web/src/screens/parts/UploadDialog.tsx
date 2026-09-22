@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { DocumentKind } from '@aftercare/public-contracts'
 import { ApiError } from '@/lib/api/client'
-import { useUploadDocument } from '@/lib/api/queries'
+import { useRequestDocumentAnalysis, useUploadDocument } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { formatFileSize } from '@/lib/format'
 import { DOCUMENT_KIND_LABEL } from '@/lib/labels'
@@ -62,6 +62,7 @@ function DropzoneBody({
   onBusyChange?: (busy: boolean) => void
 }) {
   const upload = useUploadDocument(caseId)
+  const requestAnalysis = useRequestDocumentAnalysis(caseId)
   const [kind, setKind] = useState<DocumentKind>('OTHER')
   const inputRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
@@ -94,7 +95,19 @@ function DropzoneBody({
           const findings = doc.inspection.findings.map((f) => f.message)
           patch(key, { phase: 'error', message: findings.length > 0 ? findings.join('。') : 'お預かりできませんでした。' })
         } else {
-          patch(key, { phase: 'done' })
+          // 読み取れる書類は、追加したらそのまま読み取りを依頼する。結果は「AIからの確認」に届く。
+          // 依頼できない（対象外の種類・AI未接続など）場合や依頼に失敗した場合も、追加自体は完了している。
+          // 書類の詳細から依頼し直せる。
+          let message: string | undefined
+          if (doc.analysis.canRequest && doc.analysis.state === 'NOT_REQUESTED') {
+            try {
+              await requestAnalysis.mutateAsync(doc.id)
+              message = '読み取りを始めました。終わると「AIからの確認」に届きます。'
+            } catch {
+              message = '読み取りを始められませんでした。書類の詳細から依頼し直せます。'
+            }
+          }
+          patch(key, { phase: 'done', message })
           anyDone = true
         }
       } catch (err) {
@@ -205,7 +218,7 @@ function DropzoneBody({
 
       {doneCount > 0 && !busy && (
         <Notice tone="success" title={`${doneCount}件追加しました`}>
-          書類の詳細から「読み取りを依頼する」と、AIが内容を読み取ります。進み具合は「書類」で確かめられます。
+          読み取れる書類は、AIがそのまま内容を読み取り、終わると「AIからの確認」に届きます。進み具合は「書類」で確かめられます。
         </Notice>
       )}
 
