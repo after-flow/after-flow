@@ -294,7 +294,16 @@ export class InternalExecutionService {
             }
             entities[group] = items
           }
-          const projection = projectGuidanceContext(definition, { case: entity as unknown as Record<string, unknown>, profile: (entity.profile ?? null) as Record<string, unknown> | null, entities })
+          const burialBenefit = entity.kyoukaikenpoBurialBenefit
+          const projectionCase = {
+            ...(entity as unknown as Record<string, unknown>),
+            // Caseの正式な専用状態を、ProcedureDefinitionが列挙したキーだけに展開する。
+            // 他手続きではallowlistに無いため、値はContextへ出ない。
+            healthInsuranceBranch: burialBenefit?.branch ?? null,
+            deceasedInsuranceStatus: burialBenefit?.deceasedInsuranceStatus ?? null,
+            burialBenefitApplicantStatus: burialBenefit?.applicantStatus ?? null,
+          }
+          const projection = projectGuidanceContext(definition, { case: projectionCase, profile: (entity.profile ?? null) as Record<string, unknown> | null, entities })
           Object.assign(content, projection.content)
           content.procedure = { id: definition.id, version: definition.version, reviewStatus: definition.reviewStatus }
           guidanceAudit = guidanceContextAudit(definition, projection)

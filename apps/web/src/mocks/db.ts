@@ -112,6 +112,12 @@ export const db: Store = {
       selfPersonId: SELF_PERSON_ID,
       funeralCompletedAt: null,
       aiPlanningRestriction: null,
+      kyoukaikenpoBurialBenefit: {
+        branch: null,
+        deceasedInsuranceStatus: null,
+        applicantStatus: null,
+        missingFields: ['BRANCH', 'DECEASED_INSURANCE_STATUS', 'APPLICANT_STATUS'],
+      },
       status: 'ACTIVE',
       version: 1,
       caseVersion: 1,
@@ -511,6 +517,7 @@ db.agentRuns.push({
   waiting: false,
   waitingFor: null,
   failureReason: null,
+  guidanceOutcome: null,
   outcome: {
     resultId: 'result_2',
     attemptId: 'attempt_2',

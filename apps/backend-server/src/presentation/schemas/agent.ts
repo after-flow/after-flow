@@ -32,6 +32,7 @@ export const agentRunResourceSchema = z.object({
   waiting: z.boolean(),
   waitingFor: z.string().nullable(),
   failureReason: z.string().nullable(),
+  guidanceOutcome: z.enum(['COMPLETED_RESEARCH', 'MISSING_CONTEXT', 'SOURCE_NOT_CONFIGURED', 'NOT_APPLICABLE', 'FAILED']).nullable(),
   outcome: runSummarySchema.extend({ resultId: idSchema, attemptId: idSchema, caseVersion: z.number().int().positive() }).nullable(),
   caseVersionAtAccept: z.number().int(),
   startedAt: isoDateTimeSchema.nullable(),

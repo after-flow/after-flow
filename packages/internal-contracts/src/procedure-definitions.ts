@@ -10,7 +10,10 @@ export const SINGLE_ENTITY_GROUPS = ['case', 'profile'] as const satisfies reado
 
 /** 投影を許可しうるフィールド。氏名・自由文（name / note / summary / deceasedName / body）は含めない。 */
 export const CONTEXT_FIELDS = {
-  case: ['dateOfDeath', 'knownAt', 'municipality', 'status'],
+  case: [
+    'dateOfDeath', 'knownAt', 'municipality', 'status',
+    'healthInsuranceBranch', 'deceasedInsuranceStatus', 'burialBenefitApplicantStatus',
+  ],
   profile: ['healthInsurance', 'pension', 'occupation', 'realEstate', 'car', 'mortgage'],
   persons: ['relationshipLabel', 'role', 'isHeir', 'specialCircumstance'],
   relationships: ['kind'],
@@ -69,6 +72,9 @@ const P = {
   jurisdictionMunicipality: req('case', 'municipality', '最後の住所地から管轄の家庭裁判所・税務署を特定するため'),
   knownAt: req('case', 'knownAt', '期限の起算日や緊急度を個別に判断するため'),
   dateOfDeath: req('case', 'dateOfDeath', '死亡年・制度上の基準日・申告期間を判断するため'),
+  healthInsuranceBranch: req('case', 'healthInsuranceBranch', '加入支部固有の提出先を案内するため'),
+  deceasedInsuranceStatus: req('case', 'deceasedInsuranceStatus', '被保険者死亡と被扶養者死亡で給付を区別するため'),
+  burialBenefitApplicantStatus: req('case', 'burialBenefitApplicantStatus', '埋葬料と埋葬費の申請者要件を区別するため'),
   dueDate: req('deadlines', 'dueDate', '算出済みの期限を案内に反映するため'),
   healthInsurance: req('profile', 'healthInsurance', '加入していた健康保険の種類で窓口・給付・書類を分けるため'),
   pension: req('profile', 'pension', '受給していた年金の種類で届出先・期限を分けるため'),
@@ -114,7 +120,7 @@ export const PROCEDURE_DEFINITIONS: readonly ProcedureDefinition[] = [
     guidance: { requiredContext: [P.municipality], optionalContext: [], researchScope: scope('municipality', null),
       questions: ['申請窓口はどこか', '死亡届と同時申請か', '必要書類・手数料は何か', '許可証の受領方法は何か'] } }),
   define({ id: 'kyoukaikenpo-burial-benefit', title: '健康保険の埋葬料（費）を確認する', summary: '協会けんぽの埋葬料・埋葬費について、対象者・提出先・添付書類を案内する。', reviewStatus: 'reviewed',
-    guidance: { requiredContext: [P.contractKind, P.contractProvider, P.relationshipLabel], optionalContext: [P.contractPolicyState, P.benefitProgressState, P.healthInsurance], personScope: 'initiating-member',
+    guidance: { requiredContext: [P.healthInsuranceBranch, P.deceasedInsuranceStatus, P.burialBenefitApplicantStatus], optionalContext: [P.healthInsurance],
       researchScope: scope('public-insurer', '全国健康保険協会', ['kyoukaikenpo-burial-benefit']),
       questions: ['埋葬料と埋葬費のどちらか', '申請者要件は何か', '添付書類は何か', '提出方法・期限は何か'] } }),
   define({ id: 'funeral-benefit-claim', title: '葬祭費・埋葬料を請求する', summary: '加入していた健康保険から葬祭費または埋葬料を請求する方法を案内する。',
@@ -307,7 +313,14 @@ export function projectGuidanceContext(def: ProcedureDefinition, source: Guidanc
     requiredByGroup.set(requirement.group, requirements)
   }
   const missingRequired = [...requiredByGroup.entries()].flatMap(([group, requirements]) => {
-    const oneEntityHasEveryRequiredField = (projectedByGroup.get(group) ?? [])
+    const projected = projectedByGroup.get(group) ?? []
+    // Case/Profileは1件だけなので、不足したfieldを個別に返す。
+    // 複数件groupは別々のentityの値を継ぎ合わせず、1件で要件が揃うことを要求する。
+    if ((SINGLE_ENTITY_GROUPS as readonly ContextGroup[]).includes(group)) {
+      const entity = projected[0]
+      return requirements.filter(requirement => !entity || !isKnown(entity[requirement.field]))
+    }
+    const oneEntityHasEveryRequiredField = projected
       .some(entity => requirements.every(requirement => isKnown(entity[requirement.field])))
     return oneEntityHasEveryRequiredField ? [] : requirements
   })
@@ -331,6 +344,9 @@ export function procedureResearchBrief(def: ProcedureDefinition): {
 /** 'case.municipality' → '市区町村' など、CONTEXT_FIELDS の全 key を網羅する。 */
 export const CONTEXT_FIELD_LABELS: Record<string, string> = {
   'case.dateOfDeath': '死亡日', 'case.knownAt': '死亡を知った日', 'case.municipality': '市区町村', 'case.status': 'ケースの状態',
+  'case.healthInsuranceBranch': '加入していた協会けんぽ支部',
+  'case.deceasedInsuranceStatus': '亡くなった方の被保険者・被扶養者区分',
+  'case.burialBenefitApplicantStatus': '申請者の生計維持・埋葬費用負担区分',
   'profile.healthInsurance': '健康保険の種類', 'profile.pension': '年金の種類', 'profile.occupation': '職業区分',
   'profile.realEstate': '不動産の有無', 'profile.car': '自動車の有無', 'profile.mortgage': '住宅ローンの有無',
   'persons.relationshipLabel': '続柄', 'persons.role': '役割', 'persons.isHeir': '相続人区分', 'persons.specialCircumstance': '特別な事情',

@@ -79,6 +79,12 @@ describeFirestore('案件の作成', () => {
     assert.equal(created.body.data.status, 'ACTIVE')
     assert.equal(created.body.data.version, 1)
     assert.equal(created.body.data.caseVersion, 1)
+    assert.deepEqual(created.body.data.kyoukaikenpoBurialBenefit, {
+      branch: null,
+      deceasedInsuranceStatus: null,
+      applicantStatus: null,
+      missingFields: ['BRANCH', 'DECEASED_INSURANCE_STATUS', 'APPLICANT_STATUS'],
+    })
     assert.deepEqual(created.body.data.allowedActions, ['UPDATE_BASIC_INFO', 'ADMINISTER'])
     assert.ok(created.body.meta.requestId)
 
@@ -229,6 +235,45 @@ describeFirestore('案件の取得と一覧', () => {
 })
 
 describeFirestore('案件の訂正', () => {
+  it('協会けんぽ案内の正式状態を保存・再取得・更新し、未入力項目を返す', async () => {
+    const { tenantId, app } = await setup()
+    const created = await call(app, '/cases', post(validBody, 'idem-burial-context-create'))
+    const caseId = created.body.data.id
+    const firstBody = {
+      expectedVersion: 1,
+      kyoukaikenpoBurialBenefit: {
+        branch: ' 東京支部 ', deceasedInsuranceStatus: 'INSURED', applicantStatus: null,
+      },
+    }
+    const first = await call(app, `/cases/${caseId}`, patch(firstBody, 'idem-burial-context-update'))
+    assert.equal(first.status, 200, JSON.stringify(first.body))
+    assert.deepEqual(first.body.data.kyoukaikenpoBurialBenefit, {
+      branch: '東京支部', deceasedInsuranceStatus: 'INSURED', applicantStatus: null,
+      missingFields: ['APPLICANT_STATUS'],
+    })
+    assert.equal(first.body.data.version, 2)
+    assert.equal(first.body.data.caseVersion, 2)
+
+    const replay = await call(app, `/cases/${caseId}`, patch(firstBody, 'idem-burial-context-update'))
+    assert.equal(replay.status, 200)
+    assert.equal(replay.body.data.version, 2)
+    const fetched = await call(app, `/cases/${caseId}`)
+    assert.deepEqual(fetched.body.data.kyoukaikenpoBurialBenefit, first.body.data.kyoukaikenpoBurialBenefit)
+
+    const completed = await call(app, `/cases/${caseId}`, patch({
+      expectedVersion: 2,
+      kyoukaikenpoBurialBenefit: {
+        branch: '東京支部', deceasedInsuranceStatus: 'INSURED', applicantStatus: 'LIVELIHOOD_MAINTAINER',
+      },
+    }, 'idem-burial-context-complete'))
+    assert.deepEqual(completed.body.data.kyoukaikenpoBurialBenefit.missingFields, [])
+    const audits = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/auditEvents`)
+      .where('type', '==', 'case.basic_info_updated').get()
+    assert.equal(audits.size, 2)
+    assert.ok(audits.docs.every(doc => JSON.stringify(doc.get('detail')).includes('kyoukaikenpoBurialBenefit')))
+    assert.ok(audits.docs.every(doc => !JSON.stringify(doc.get('detail')).includes('東京支部')))
+  })
+
   it('自治体を訂正すると版と Case 版が進む', async () => {
     const { app } = await setup()
     const created = await call(app, '/cases', post(validBody, 'idem-patch-0001'))

@@ -320,6 +320,12 @@ export const handlers = [
       ownerPersonId: null,
       selfPersonId: null,
       aiPlanningRestriction: null,
+      kyoukaikenpoBurialBenefit: {
+        branch: null,
+        deceasedInsuranceStatus: null,
+        applicantStatus: null,
+        missingFields: ['BRANCH', 'DECEASED_INSURANCE_STATUS', 'APPLICANT_STATUS'],
+      },
       status: 'ACTIVE',
       version: 1,
       caseVersion: 1,
@@ -583,6 +589,7 @@ export const handlers = [
     return ok<GuidanceResource>({
       taskId,
       status: 'NOT_REQUESTED',
+      outcome: null,
       target: null,
       where: null,
       bring: [],
@@ -610,6 +617,7 @@ export const handlers = [
     const researching: GuidanceResource = {
       taskId,
       status: 'RESEARCHING',
+      outcome: null,
       target: t.submitTo ?? t.title,
       where: null,
       bring: [],
@@ -621,7 +629,7 @@ export const handlers = [
       citations: [],
       missing: [],
       failureReason: null,
-      researchedBy: 'AI',
+      researchedBy: null,
       agentRunId: nextId('run'),
       version: 1,
       updatedAt: now,
@@ -631,6 +639,7 @@ export const handlers = [
       db.guidance[taskId] = {
         ...researching,
         status: 'COMPLETED',
+        outcome: 'COMPLETED_RESEARCH',
         where: t.submitTo ?? '窓口にご確認ください',
         // 持ち物は、その手続きの持ち物の一覧から作る。どの手続きにも同じ「印鑑」を返すと、
         // 押印が任意の死亡届などにも印鑑が出てしまう
@@ -639,6 +648,7 @@ export const handlers = [
         steps: ['持ち物をそろえて、窓口へ行きます。', '窓口の案内にしたがって提出します。'],
         note: '受付時間は自治体・機関によって異なります。事前にご確認ください。',
         sources: [{ label: `${t.submitTo ?? '窓口'}の案内`, url: 'https://example.com/guidance', checkedAt: new Date().toISOString() }],
+        researchedBy: 'AI',
         version: researching.version + 1,
         updatedAt: new Date().toISOString(),
       }

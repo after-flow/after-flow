@@ -6920,6 +6920,31 @@ paths:
                   required:
                     - isHeir
                   additionalProperties: false
+                kyoukaikenpoBurialBenefit:
+                  type: object
+                  properties:
+                    branch:
+                      nullable: true
+                      type: string
+                      minLength: 1
+                      maxLength: 100
+                    deceasedInsuranceStatus:
+                      nullable: true
+                      type: string
+                      enum:
+                        - INSURED
+                        - DEPENDENT
+                    applicantStatus:
+                      nullable: true
+                      type: string
+                      enum:
+                        - LIVELIHOOD_MAINTAINER
+                        - BURIAL_EXPENSE_PAYER
+                  required:
+                    - branch
+                    - deceasedInsuranceStatus
+                    - applicantStatus
+                  additionalProperties: false
               required:
                 - deceasedName
                 - dateOfDeath
@@ -7036,6 +7061,40 @@ paths:
                         required:
                           - reason
                         additionalProperties: false
+                      kyoukaikenpoBurialBenefit:
+                        type: object
+                        properties:
+                          branch:
+                            nullable: true
+                            type: string
+                            minLength: 1
+                            maxLength: 100
+                          deceasedInsuranceStatus:
+                            nullable: true
+                            type: string
+                            enum:
+                              - INSURED
+                              - DEPENDENT
+                          applicantStatus:
+                            nullable: true
+                            type: string
+                            enum:
+                              - LIVELIHOOD_MAINTAINER
+                              - BURIAL_EXPENSE_PAYER
+                          missingFields:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - BRANCH
+                                - DECEASED_INSURANCE_STATUS
+                                - APPLICANT_STATUS
+                        required:
+                          - branch
+                          - deceasedInsuranceStatus
+                          - applicantStatus
+                          - missingFields
+                        additionalProperties: false
                       status:
                         type: string
                         enum:
@@ -7078,6 +7137,7 @@ paths:
                       - ownerPersonId
                       - selfPersonId
                       - aiPlanningRestriction
+                      - kyoukaikenpoBurialBenefit
                       - status
                       - version
                       - caseVersion
@@ -7280,6 +7340,40 @@ paths:
                           required:
                             - reason
                           additionalProperties: false
+                        kyoukaikenpoBurialBenefit:
+                          type: object
+                          properties:
+                            branch:
+                              nullable: true
+                              type: string
+                              minLength: 1
+                              maxLength: 100
+                            deceasedInsuranceStatus:
+                              nullable: true
+                              type: string
+                              enum:
+                                - INSURED
+                                - DEPENDENT
+                            applicantStatus:
+                              nullable: true
+                              type: string
+                              enum:
+                                - LIVELIHOOD_MAINTAINER
+                                - BURIAL_EXPENSE_PAYER
+                            missingFields:
+                              type: array
+                              items:
+                                type: string
+                                enum:
+                                  - BRANCH
+                                  - DECEASED_INSURANCE_STATUS
+                                  - APPLICANT_STATUS
+                          required:
+                            - branch
+                            - deceasedInsuranceStatus
+                            - applicantStatus
+                            - missingFields
+                          additionalProperties: false
                         status:
                           type: string
                           enum:
@@ -7322,6 +7416,7 @@ paths:
                         - ownerPersonId
                         - selfPersonId
                         - aiPlanningRestriction
+                        - kyoukaikenpoBurialBenefit
                         - status
                         - version
                         - caseVersion
@@ -7502,6 +7597,40 @@ paths:
                         required:
                           - reason
                         additionalProperties: false
+                      kyoukaikenpoBurialBenefit:
+                        type: object
+                        properties:
+                          branch:
+                            nullable: true
+                            type: string
+                            minLength: 1
+                            maxLength: 100
+                          deceasedInsuranceStatus:
+                            nullable: true
+                            type: string
+                            enum:
+                              - INSURED
+                              - DEPENDENT
+                          applicantStatus:
+                            nullable: true
+                            type: string
+                            enum:
+                              - LIVELIHOOD_MAINTAINER
+                              - BURIAL_EXPENSE_PAYER
+                          missingFields:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - BRANCH
+                                - DECEASED_INSURANCE_STATUS
+                                - APPLICANT_STATUS
+                        required:
+                          - branch
+                          - deceasedInsuranceStatus
+                          - applicantStatus
+                          - missingFields
+                        additionalProperties: false
                       status:
                         type: string
                         enum:
@@ -7544,6 +7673,7 @@ paths:
                       - ownerPersonId
                       - selfPersonId
                       - aiPlanningRestriction
+                      - kyoukaikenpoBurialBenefit
                       - status
                       - version
                       - caseVersion
@@ -7727,6 +7857,31 @@ paths:
                   type: string
                   format: date-time
                   pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+                kyoukaikenpoBurialBenefit:
+                  type: object
+                  properties:
+                    branch:
+                      nullable: true
+                      type: string
+                      minLength: 1
+                      maxLength: 100
+                    deceasedInsuranceStatus:
+                      nullable: true
+                      type: string
+                      enum:
+                        - INSURED
+                        - DEPENDENT
+                    applicantStatus:
+                      nullable: true
+                      type: string
+                      enum:
+                        - LIVELIHOOD_MAINTAINER
+                        - BURIAL_EXPENSE_PAYER
+                  required:
+                    - branch
+                    - deceasedInsuranceStatus
+                    - applicantStatus
+                  additionalProperties: false
               required:
                 - expectedVersion
               additionalProperties: false
@@ -7840,6 +7995,40 @@ paths:
                         required:
                           - reason
                         additionalProperties: false
+                      kyoukaikenpoBurialBenefit:
+                        type: object
+                        properties:
+                          branch:
+                            nullable: true
+                            type: string
+                            minLength: 1
+                            maxLength: 100
+                          deceasedInsuranceStatus:
+                            nullable: true
+                            type: string
+                            enum:
+                              - INSURED
+                              - DEPENDENT
+                          applicantStatus:
+                            nullable: true
+                            type: string
+                            enum:
+                              - LIVELIHOOD_MAINTAINER
+                              - BURIAL_EXPENSE_PAYER
+                          missingFields:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - BRANCH
+                                - DECEASED_INSURANCE_STATUS
+                                - APPLICANT_STATUS
+                        required:
+                          - branch
+                          - deceasedInsuranceStatus
+                          - applicantStatus
+                          - missingFields
+                        additionalProperties: false
                       status:
                         type: string
                         enum:
@@ -7882,6 +8071,7 @@ paths:
                       - ownerPersonId
                       - selfPersonId
                       - aiPlanningRestriction
+                      - kyoukaikenpoBurialBenefit
                       - status
                       - version
                       - caseVersion
@@ -13778,6 +13968,15 @@ paths:
                       failureReason:
                         nullable: true
                         type: string
+                      guidanceOutcome:
+                        nullable: true
+                        type: string
+                        enum:
+                          - COMPLETED_RESEARCH
+                          - MISSING_CONTEXT
+                          - SOURCE_NOT_CONFIGURED
+                          - NOT_APPLICABLE
+                          - FAILED
                       outcome:
                         nullable: true
                         type: object
@@ -13874,6 +14073,7 @@ paths:
                       - waiting
                       - waitingFor
                       - failureReason
+                      - guidanceOutcome
                       - outcome
                       - caseVersionAtAccept
                       - startedAt
@@ -14042,6 +14242,15 @@ paths:
                         failureReason:
                           nullable: true
                           type: string
+                        guidanceOutcome:
+                          nullable: true
+                          type: string
+                          enum:
+                            - COMPLETED_RESEARCH
+                            - MISSING_CONTEXT
+                            - SOURCE_NOT_CONFIGURED
+                            - NOT_APPLICABLE
+                            - FAILED
                         outcome:
                           nullable: true
                           type: object
@@ -14138,6 +14347,7 @@ paths:
                         - waiting
                         - waitingFor
                         - failureReason
+                        - guidanceOutcome
                         - outcome
                         - caseVersionAtAccept
                         - startedAt
@@ -14280,6 +14490,15 @@ paths:
                       failureReason:
                         nullable: true
                         type: string
+                      guidanceOutcome:
+                        nullable: true
+                        type: string
+                        enum:
+                          - COMPLETED_RESEARCH
+                          - MISSING_CONTEXT
+                          - SOURCE_NOT_CONFIGURED
+                          - NOT_APPLICABLE
+                          - FAILED
                       outcome:
                         nullable: true
                         type: object
@@ -14376,6 +14595,7 @@ paths:
                       - waiting
                       - waitingFor
                       - failureReason
+                      - guidanceOutcome
                       - outcome
                       - caseVersionAtAccept
                       - startedAt
@@ -14702,6 +14922,15 @@ paths:
                       failureReason:
                         nullable: true
                         type: string
+                      guidanceOutcome:
+                        nullable: true
+                        type: string
+                        enum:
+                          - COMPLETED_RESEARCH
+                          - MISSING_CONTEXT
+                          - SOURCE_NOT_CONFIGURED
+                          - NOT_APPLICABLE
+                          - FAILED
                       outcome:
                         nullable: true
                         type: object
@@ -14798,6 +15027,7 @@ paths:
                       - waiting
                       - waitingFor
                       - failureReason
+                      - guidanceOutcome
                       - outcome
                       - caseVersionAtAccept
                       - startedAt
@@ -14974,6 +15204,15 @@ paths:
                       failureReason:
                         nullable: true
                         type: string
+                      guidanceOutcome:
+                        nullable: true
+                        type: string
+                        enum:
+                          - COMPLETED_RESEARCH
+                          - MISSING_CONTEXT
+                          - SOURCE_NOT_CONFIGURED
+                          - NOT_APPLICABLE
+                          - FAILED
                       outcome:
                         nullable: true
                         type: object
@@ -15070,6 +15309,7 @@ paths:
                       - waiting
                       - waitingFor
                       - failureReason
+                      - guidanceOutcome
                       - outcome
                       - caseVersionAtAccept
                       - startedAt
@@ -18126,6 +18366,15 @@ paths:
                           - COMPLETED
                           - PARTIAL
                           - FAILED
+                      outcome:
+                        nullable: true
+                        type: string
+                        enum:
+                          - COMPLETED_RESEARCH
+                          - MISSING_CONTEXT
+                          - SOURCE_NOT_CONFIGURED
+                          - NOT_APPLICABLE
+                          - FAILED
                       target:
                         nullable: true
                         type: string
@@ -18221,6 +18470,7 @@ paths:
                     required:
                       - taskId
                       - status
+                      - outcome
                       - target
                       - where
                       - bring
@@ -18345,6 +18595,15 @@ paths:
                           - COMPLETED
                           - PARTIAL
                           - FAILED
+                      outcome:
+                        nullable: true
+                        type: string
+                        enum:
+                          - COMPLETED_RESEARCH
+                          - MISSING_CONTEXT
+                          - SOURCE_NOT_CONFIGURED
+                          - NOT_APPLICABLE
+                          - FAILED
                       target:
                         nullable: true
                         type: string
@@ -18440,6 +18699,7 @@ paths:
                     required:
                       - taskId
                       - status
+                      - outcome
                       - target
                       - where
                       - bring
@@ -18657,6 +18917,40 @@ paths:
                             required:
                               - reason
                             additionalProperties: false
+                          kyoukaikenpoBurialBenefit:
+                            type: object
+                            properties:
+                              branch:
+                                nullable: true
+                                type: string
+                                minLength: 1
+                                maxLength: 100
+                              deceasedInsuranceStatus:
+                                nullable: true
+                                type: string
+                                enum:
+                                  - INSURED
+                                  - DEPENDENT
+                              applicantStatus:
+                                nullable: true
+                                type: string
+                                enum:
+                                  - LIVELIHOOD_MAINTAINER
+                                  - BURIAL_EXPENSE_PAYER
+                              missingFields:
+                                type: array
+                                items:
+                                  type: string
+                                  enum:
+                                    - BRANCH
+                                    - DECEASED_INSURANCE_STATUS
+                                    - APPLICANT_STATUS
+                            required:
+                              - branch
+                              - deceasedInsuranceStatus
+                              - applicantStatus
+                              - missingFields
+                            additionalProperties: false
                           status:
                             type: string
                             enum:
@@ -18699,6 +18993,7 @@ paths:
                           - ownerPersonId
                           - selfPersonId
                           - aiPlanningRestriction
+                          - kyoukaikenpoBurialBenefit
                           - status
                           - version
                           - caseVersion
@@ -19041,6 +19336,15 @@ paths:
                             failureReason:
                               nullable: true
                               type: string
+                            guidanceOutcome:
+                              nullable: true
+                              type: string
+                              enum:
+                                - COMPLETED_RESEARCH
+                                - MISSING_CONTEXT
+                                - SOURCE_NOT_CONFIGURED
+                                - NOT_APPLICABLE
+                                - FAILED
                             outcome:
                               nullable: true
                               type: object
@@ -19137,6 +19441,7 @@ paths:
                             - waiting
                             - waitingFor
                             - failureReason
+                            - guidanceOutcome
                             - outcome
                             - caseVersionAtAccept
                             - startedAt
