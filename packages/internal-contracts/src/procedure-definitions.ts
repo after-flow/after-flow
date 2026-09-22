@@ -130,7 +130,7 @@ export const PROCEDURE_DEFINITIONS: readonly ProcedureDefinition[] = [
     guidance: { requiredContext: [P.municipality], optionalContext: [P.dueDate], researchScope: scope('municipality', null),
       questions: ['届出が必要な世帯構成か', '届出先はどこか', '必要書類は何か', '期限はいつか'] } }),
   define({ id: 'health-insurance-loss', title: '健康保険の資格喪失の手続きをする', summary: '加入していた健康保険の種類に応じた資格喪失の手続きを案内する。',
-    guidance: { requiredContext: [P.healthInsurance], optionalContext: [P.municipality, P.dueDate], researchScope: scope('public-insurer', null), questions: GENERIC_QUESTIONS } }),
+    guidance: { requiredContext: [P.healthInsurance], optionalContext: [P.municipality, P.dueDate], researchScope: scope('public-insurer', null, ['health-insurance-loss']), questions: GENERIC_QUESTIONS } }),
   define({ id: 'long-term-care-loss', title: '介護保険の資格喪失届を出す', summary: '介護保険の資格喪失届の提出先・必要書類・期限を案内する。',
     guidance: { requiredContext: [P.municipality], optionalContext: [P.dueDate], researchScope: scope('municipality', null), questions: GENERIC_QUESTIONS } }),
   define({ id: 'pension-stop', title: '年金の受給停止の手続きをする', summary: '受給していた年金の種類に応じた受給停止の届出を案内する。',

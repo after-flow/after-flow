@@ -30,7 +30,7 @@ test('hackathon composition binds two model families, fixed official sources and
   assert.deepEqual(config.policies.map(policy => policy.modelId), ['openai/gpt-4o-mini', 'google/gemini-2.5-flash'])
   assert.equal(new Set(config.policies.map(policy => policy.sdkProvider)).size, 2)
   assert.deepEqual(config.catalogs.map(catalog => catalog.id), [
-    'death-notification', 'kyoukaikenpo-burial-benefit', 'nenkin-death-procedures', 'inheritance-renunciation',
+    'death-notification', 'kyoukaikenpo-burial-benefit', 'health-insurance-loss', 'nenkin-death-procedures', 'inheritance-renunciation',
     'final-income-tax-return', 'inheritance-tax-return', 'real-estate-registration',
   ])
   const sourceIds = config.catalogs.flatMap(catalog => catalog.entries.map(entry => entry.id))
@@ -39,6 +39,7 @@ test('hackathon composition binds two model families, fixed official sources and
     assert.ok(catalog.entries.every(entry => entry.catalogId === catalog.id && catalog.allowedHosts.includes(new URL(entry.url).hostname)))
   }
   const procedureCatalogs = {
+    'health-insurance-loss': 'health-insurance-loss',
     'pension-stop': 'nenkin-death-procedures',
     'unpaid-pension-claim': 'nenkin-death-procedures',
     'survivor-pension-check': 'nenkin-death-procedures',
@@ -56,6 +57,7 @@ test('hackathon composition binds two model families, fixed official sources and
   const signal = new AbortController().signal
   const searches = [
     ['death-notification', '法務省 死亡届'],
+    ['health-insurance-loss', '厚生労働省 国民健康保険 資格喪失'],
     ['nenkin-death-procedures', '日本年金機構 未支給年金'],
     ['inheritance-renunciation', '裁判所 相続放棄'],
     ['final-income-tax-return', '国税庁 準確定申告'],
