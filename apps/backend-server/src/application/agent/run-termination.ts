@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { AgentRunEntity, AgentRunStatus } from '../../domain/agent/agent-run.js'
 import type { DocumentEntity } from '../../domain/document/document.js'
 import { collections } from '../../domain/shared/collections.js'
@@ -78,6 +79,8 @@ export interface RunTermination {
   failureReason: string
   auditType: string
   detail?: Record<string, unknown>
+  /** 未開始の旧配送が後から到着しても実行できないようattempt世代を更新する。 */
+  rotateAttempt?: boolean
 }
 
 /** 配送できなかったQUEUEDのRunを終端させる。実行中のRunはlease/snapshot経由で別に扱う。 */
@@ -86,6 +89,7 @@ export async function terminateQueuedRun(tx: Tx, caseId: string, run: AgentRunEn
     status: termination.status,
     failureReason: termination.failureReason,
     finishedAt: new Date().toISOString(),
+    ...(termination.rotateAttempt ? { currentAttemptId: randomUUID() } : {}),
     ...(run.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
   })
   tx.audit({

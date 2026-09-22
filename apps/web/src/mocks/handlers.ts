@@ -9,6 +9,7 @@
 import { HttpResponse, http, delay } from 'msw'
 import type {
   AcknowledgeInsightRequest,
+  AgentRunResource,
   AiCapabilitiesResource,
   Asset,
   Benefit,
@@ -342,6 +343,7 @@ export const handlers = [
       status: 'ACTIVE',
       version: 1,
       caseVersion: 1,
+      basicInfoVersion: 1,
       createdAt: now,
       updatedAt: now,
       allowedActions: ['UPDATE_BASIC_INFO', 'ADMINISTER'],
@@ -379,7 +381,8 @@ export const handlers = [
     const idem = requireIdempotencyKey(request)
     if (idem) return idem
     const body = await jsonBody(request)
-    const ver = requireExpectedVersion(body, kase)
+    // 基本情報の PATCH は basicInfoVersion で照合する。version は Context 側の書き込みでも進むため使わない。
+    const ver = requireExpectedVersion(body, { version: kase.basicInfoVersion })
     if (ver) return ver
     if ('deceasedName' in body && typeof body.deceasedName === 'string') kase.deceasedName = body.deceasedName
     if ('municipality' in body) kase.municipality = typeof body.municipality === 'string' ? body.municipality : null
@@ -407,6 +410,7 @@ export const handlers = [
     }
     kase.version += 1
     kase.caseVersion += 1
+    kase.basicInfoVersion += 1
     kase.updatedAt = new Date().toISOString()
     refreshAllTaskActions(kase.id)
     return ok(kase)
@@ -655,7 +659,35 @@ export const handlers = [
     const idem = requireIdempotencyKey(request)
     if (idem) return idem
     const taskId = t.id
+    const existing = db.guidance[taskId]
+    const existingRun = existing?.agentRunId ? db.agentRuns.find((run) => run.id === existing.agentRunId) : null
+    if (existing && existingRun && ['QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'RETRY_SCHEDULED'].includes(existingRun.status)) {
+      return ok(existing, 202)
+    }
     const now = new Date().toISOString()
+    const runId = nextId('run')
+    const run: AgentRunResource = {
+      id: runId,
+      caseId: String(params.caseId),
+      operation: 'task_guidance',
+      status: 'QUEUED',
+      targetType: 'TASK',
+      targetId: taskId,
+      attempt: 1,
+      waiting: false,
+      waitingFor: null,
+      failureReason: null,
+      outcome: null,
+      guidanceOutcome: null,
+      caseVersionAtAccept: caseOf(String(params.caseId))?.caseVersion ?? 1,
+      startedAt: null,
+      finishedAt: null,
+      allowedActions: ['cancel'],
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    }
+    db.agentRuns.unshift(run)
     const researching: GuidanceResource = {
       taskId,
       status: 'RESEARCHING',
@@ -672,12 +704,19 @@ export const handlers = [
       missing: [],
       failureReason: null,
       researchedBy: null,
-      agentRunId: nextId('run'),
-      version: 1,
+      agentRunId: runId,
+      version: (existing?.version ?? 0) + 1,
       updatedAt: now,
     }
     db.guidance[taskId] = researching
     setTimeout(() => {
+      if (run.status === 'CANCELLED') return
+      const finishedAt = new Date().toISOString()
+      run.status = 'SUCCEEDED'
+      run.finishedAt = finishedAt
+      run.updatedAt = finishedAt
+      run.allowedActions = []
+      run.version += 1
       const burialBenefit = caseOf(t.caseId)?.kyoukaikenpoBurialBenefit
       const missingContext = t.procedureId === 'kyoukaikenpo-burial-benefit'
         && (burialBenefit?.missingFields.length ?? 0) > 0
@@ -1142,6 +1181,26 @@ export const handlers = [
   }),
 
   /* ---------- Agent Run（自動調査の依頼） ---------- */
+  http.get(`${BASE}/cases/:caseId/agent-runs/:runId`, ({ params }) => {
+    const run = db.agentRuns.find((item) => item.id === String(params.runId) && item.caseId === String(params.caseId))
+    return run ? ok(run) : notFound()
+  }),
+  http.post(`${BASE}/cases/:caseId/agent-runs/:runId/cancel`, async ({ params, request }) => {
+    const run = db.agentRuns.find((item) => item.id === String(params.runId) && item.caseId === String(params.caseId))
+    if (!run) return notFound()
+    const idem = requireIdempotencyKey(request)
+    if (idem) return idem
+    const body = await jsonBody(request)
+    const version = requireExpectedVersion(body, run)
+    if (version) return version
+    if (!run.allowedActions.includes('cancel')) return fail('PRECONDITION_FAILED', 'この実行は既に終了しています。')
+    run.status = 'CANCELLED'
+    run.finishedAt = new Date().toISOString()
+    run.updatedAt = run.finishedAt
+    run.allowedActions = []
+    run.version += 1
+    return ok(run)
+  }),
   http.post(`${BASE}/cases/:caseId/agent-runs`, async ({ params, request }) => {
     const caseId = String(params.caseId)
     const idem = requireIdempotencyKey(request)

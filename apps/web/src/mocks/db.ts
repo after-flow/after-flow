@@ -121,6 +121,7 @@ export const db: Store = {
       status: 'ACTIVE',
       version: 1,
       caseVersion: 1,
+      basicInfoVersion: 1,
       createdAt: NOW,
       updatedAt: NOW,
       allowedActions: ['UPDATE_BASIC_INFO', 'ADMINISTER'],

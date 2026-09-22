@@ -69,10 +69,19 @@ export interface CaseResource {
   aiPlanningRestriction: { reason: string } | null
   kyoukaikenpoBurialBenefit: KyoukaikenpoBurialBenefitResource
   status: CaseStatus
-  /** 楽観ロックの版。更新時に expectedVersion として送り返す。 */
+  /**
+   * 保存層の楽観ロックの版。Context の変更（タスク・書類・メッセージ等）でも
+   * 副次的に進むため、UPDATE_BASIC_INFO / ADMINISTER の expectedVersion には使わない。
+   */
   version: number
   /** Case 全体の版。Context の鮮度判定に使う。 */
   caseVersion: number
+  /**
+   * 基本情報（自治体・生年月日・profile・葬儀完了日など）専用の楽観ロックの版。
+   * UPDATE_BASIC_INFO / ADMINISTER の PATCH では expectedVersion にこれを使う。
+   * `version` と違い、Context 側の書き込みだけでは進まない。
+   */
+  basicInfoVersion: number
   createdAt: ISODateTime
   updatedAt: ISODateTime
   allowedActions: CaseAction[]

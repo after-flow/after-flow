@@ -548,7 +548,7 @@ describeFirestore('承認と反映', () => {
     await call(
       app,
       `/cases/${caseId}`,
-      jsonRequest('PATCH', { expectedVersion: current.body.data.version, municipality: '別の架空市' }),
+      jsonRequest('PATCH', { expectedVersion: current.body.data.basicInfoVersion, municipality: '別の架空市' }),
     )
 
     const response = await call(

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { KyoukaikenpoBurialBenefitResource, TaskResource } from '@aftercare/public-contracts'
-import { RESEARCH_POLL_TIMEOUT_MS, useRequestGuidance, useTaskGuidance, useUpdateCase } from '@/lib/api/queries'
+import { RESEARCH_POLL_TIMEOUT_MS, useForceRestartGuidance, useRequestGuidance, useTaskGuidance, useUpdateCase } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { daysSince, formatDate, formatDateTime, msSince } from '@/lib/format'
 import { safeExternalUrl, urlHostname } from '@/lib/url'
@@ -26,20 +26,21 @@ export function ResearchBox({
   caseId,
   task,
   municipality,
-  caseVersion,
+  caseBasicInfoVersion,
   kyoukaikenpoBurialBenefit,
 }: {
   caseId: string
   task: TaskResource
   municipality?: string | null
-  /** 市区町村の登録に使う Case の版。取得前は未定義で、その間は登録入口を無効にする。 */
-  caseVersion?: number
+  /** 市区町村・協会けんぽ情報の登録に使う Case の基本情報版。取得前は未定義で、その間は登録入口を無効にする。 */
+  caseBasicInfoVersion?: number
   kyoukaikenpoBurialBenefit?: KyoukaikenpoBurialBenefitResource
 }) {
   const guidance = useTaskGuidance(caseId, task.id)
   const g = guidance.data
   const sources = g?.sources ?? []
   const request = useRequestGuidance(caseId)
+  const forceRestart = useForceRestartGuidance(caseId)
   const updateCase = useUpdateCase(caseId)
   const [draft, setDraft] = useState('')
   const [branch, setBranch] = useState('')
@@ -62,11 +63,16 @@ export function ResearchBox({
   if (state === 'RESEARCHING') {
     const elapsed = msSince(g?.updatedAt)
     if (elapsed != null && elapsed > RESEARCH_POLL_TIMEOUT_MS) {
+      const restart = () => {
+        if (consent.allowed && g?.agentRunId) {
+          void forceRestart.mutateAsync({ taskId: task.id, runId: g.agentRunId })
+        }
+      }
       return (
         <Notice
           tone="warning"
           title="調べるのに時間がかかっています"
-          action={<Button size="sm" disabled={request.isPending} onClick={again}>もう一度調べる</Button>}
+          action={<Button size="sm" disabled={!consent.allowed || forceRestart.isPending || !g?.agentRunId} onClick={restart}>キャンセルしてやり直す</Button>}
         >
           {target}の案内をまだ確認できていません。上の案内は一般的な内容です。
         </Notice>
@@ -192,13 +198,13 @@ export function ResearchBox({
           <Button
             variant="primary"
             className="self-start"
-            disabled={!complete || caseVersion == null || updateCase.isPending || request.isPending}
+            disabled={!complete || caseBasicInfoVersion == null || updateCase.isPending || request.isPending}
             onClick={async () => {
-              if (caseVersion == null) return
+              if (caseBasicInfoVersion == null) return
               setResearchRestartFailed(false)
               try {
                 await updateCase.mutateAsync({
-                  expectedVersion: caseVersion,
+                  expectedVersion: caseBasicInfoVersion,
                   kyoukaikenpoBurialBenefit: mergeKyoukaikenpoBurialBenefitInput(
                     kyoukaikenpoBurialBenefit,
                     { branch, deceasedInsuranceStatus, applicantStatus },
@@ -241,10 +247,10 @@ export function ResearchBox({
           />
           <Button
             variant="primary"
-            disabled={!draft.trim() || caseVersion == null || updateCase.isPending || request.isPending}
+            disabled={!draft.trim() || caseBasicInfoVersion == null || updateCase.isPending || request.isPending}
             onClick={async () => {
-              if (caseVersion == null) return
-              await updateCase.mutateAsync({ expectedVersion: caseVersion, municipality: draft.trim() })
+              if (caseBasicInfoVersion == null) return
+              await updateCase.mutateAsync({ expectedVersion: caseBasicInfoVersion, municipality: draft.trim() })
               await request.mutateAsync(task.id)
             }}
           >

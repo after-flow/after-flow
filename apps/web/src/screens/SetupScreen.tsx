@@ -70,7 +70,7 @@ export function SetupScreen() {
         const before = tasks.data?.items
         const profile: CaseProfileInput = { ...answers, answeredAt: new Date().toISOString() }
         await update.mutateAsync({
-          expectedVersion: c.version,
+          expectedVersion: c.basicInfoVersion,
           // 空にしたら消す（null を送る）。undefined だと前の生年月日が残る
           dateOfBirth: dateOfBirth || null,
           profile,

@@ -7108,6 +7108,10 @@ paths:
                         type: integer
                         minimum: -9007199254740991
                         maximum: 9007199254740991
+                      basicInfoVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
                       createdAt:
                         type: string
                         format: date-time
@@ -7141,6 +7145,7 @@ paths:
                       - status
                       - version
                       - caseVersion
+                      - basicInfoVersion
                       - createdAt
                       - updatedAt
                       - allowedActions
@@ -7387,6 +7392,10 @@ paths:
                           type: integer
                           minimum: -9007199254740991
                           maximum: 9007199254740991
+                        basicInfoVersion:
+                          type: integer
+                          minimum: -9007199254740991
+                          maximum: 9007199254740991
                         createdAt:
                           type: string
                           format: date-time
@@ -7420,6 +7429,7 @@ paths:
                         - status
                         - version
                         - caseVersion
+                        - basicInfoVersion
                         - createdAt
                         - updatedAt
                         - allowedActions
@@ -7644,6 +7654,10 @@ paths:
                         type: integer
                         minimum: -9007199254740991
                         maximum: 9007199254740991
+                      basicInfoVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
                       createdAt:
                         type: string
                         format: date-time
@@ -7677,6 +7691,7 @@ paths:
                       - status
                       - version
                       - caseVersion
+                      - basicInfoVersion
                       - createdAt
                       - updatedAt
                       - allowedActions
@@ -8042,6 +8057,10 @@ paths:
                         type: integer
                         minimum: -9007199254740991
                         maximum: 9007199254740991
+                      basicInfoVersion:
+                        type: integer
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
                       createdAt:
                         type: string
                         format: date-time
@@ -8075,6 +8094,7 @@ paths:
                       - status
                       - version
                       - caseVersion
+                      - basicInfoVersion
                       - createdAt
                       - updatedAt
                       - allowedActions
@@ -19053,6 +19073,10 @@ paths:
                             type: integer
                             minimum: -9007199254740991
                             maximum: 9007199254740991
+                          basicInfoVersion:
+                            type: integer
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
                           createdAt:
                             type: string
                             format: date-time
@@ -19086,6 +19110,7 @@ paths:
                           - status
                           - version
                           - caseVersion
+                          - basicInfoVersion
                           - createdAt
                           - updatedAt
                           - allowedActions

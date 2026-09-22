@@ -109,12 +109,7 @@ export class AgentResultIntake {
   }
 
   private assertRun(run: AgentRunEntity, envelope: ResultEnvelope, operation: AgentOperation): void {
-    if (run.operation !== operation) {
-      throw errors.preconditionFailed({
-        message: 'この実行の種類では受け付けられない結果です。',
-        details: { reason: 'OPERATION_MISMATCH' },
-      })
-    }
+    this.assertOperation(run, operation)
     if (isRunTerminal(run.status)) {
       // 取消後や完了後に届いた結果を適用しない。
       throw errors.conflict({
@@ -130,6 +125,15 @@ export class AgentResultIntake {
     }
   }
 
+  private assertOperation(run: AgentRunEntity, operation: AgentOperation): void {
+    if (run.operation !== operation) {
+      throw errors.preconditionFailed({
+        message: 'この実行の種類では受け付けられない結果です。',
+        details: { reason: 'OPERATION_MISMATCH' },
+      })
+    }
+  }
+
   async submitGuidanceResult(
     tenantId: string,
     caseId: string,
@@ -140,7 +144,10 @@ export class AgentResultIntake {
     const duplicate = await this.findGuidanceByResultId(tenantId, caseId, input)
     if (duplicate) return { applied: false, reason: 'DUPLICATE_RESULT' }
 
-    const run = await this.verifyRun(tenantId, caseId, input, 'task_guidance')
+    const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, input.runId))
+    if (!run) throw errors.notFound()
+    // Guidance所有権をRunの終端・attemptより先にTransaction内で判定する。
+    this.assertOperation(run, 'task_guidance')
     const access = new AgentAccess(tenantId, caseId, run.id)
 
     return this.uow.run(access.toWorkContext(null), tx => this.applyGuidanceResult(tx, caseId, input))

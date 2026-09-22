@@ -10,6 +10,7 @@ import { StoredInheritanceDecisionReader } from './application/decision/decision
 import { createFirestore, readFirestoreConfig } from './infrastructure/firestore/client.js'
 import { FirestoreReadRepository } from './infrastructure/firestore/read-repository.js'
 import { FirestoreUnitOfWork } from './infrastructure/firestore/unit-of-work.js'
+import { FirestoreOutboxJobReader } from './infrastructure/firestore/outbox-job-reader.js'
 import { ContextVersionUnitOfWork } from './application/case/context-version-unit-of-work.js'
 import { assertValidId } from './infrastructure/firestore/paths.js'
 import { readConsentCatalog } from './infrastructure/consent/catalog-config.js'
@@ -28,10 +29,14 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   const intervalMs = Number(env.OUTBOX_INTERVAL_MS || 5_000)
   const visibilityMs = Number(env.OUTBOX_VISIBILITY_MS || 120_000)
   const deliveryTimeoutMs = Number(env.OUTBOX_DELIVERY_TIMEOUT_MS || 15 * 60_000)
+  const agentStartTimeoutMs = Number(env.AGENT_START_TIMEOUT_MS || 600_000)
   if (!Number.isInteger(deliveryTimeoutMs) || deliveryTimeoutMs <= visibilityMs || deliveryTimeoutMs > 24 * 3_600_000) {
     throw new Error('OUTBOX_DELIVERY_TIMEOUT_MS must exceed OUTBOX_VISIBILITY_MS and stay within 24 hours')
   }
   if (!Number.isInteger(intervalMs) || intervalMs < 100 || intervalMs > 60_000) throw new Error('Invalid OUTBOX_INTERVAL_MS')
+  if (!Number.isInteger(agentStartTimeoutMs) || agentStartTimeoutMs <= 0 || agentStartTimeoutMs > 24 * 3_600_000) {
+    throw new Error('AGENT_START_TIMEOUT_MS must be positive and stay within 24 hours')
+  }
   const config = readAgentClientConfig(env)
   if (!Number.isInteger(visibilityMs) || visibilityMs < 1000 || visibilityMs > 3_600_000
     || (config && (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0 || config.timeoutMs >= visibilityMs))) {
@@ -51,7 +56,9 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
     { rejectDraftDefinitions: env.NODE_ENV === 'production' })
   const scopedClient = config && authorization ? new ScopedHttpAgentJobClient(config, execution, authorization) : null
   const client = scopedClient ?? unavailable
-  const reconciler = new RunReconciler(read, uow, execution, scopedClient ?? { status: async () => { throw new Error('AI_NOT_CONNECTED') } })
+  const reconciler = new RunReconciler(read, uow, execution,
+    scopedClient ?? { status: async () => { throw new Error('AI_NOT_CONNECTED') } },
+    new FirestoreOutboxJobReader(db), agentStartTimeoutMs)
   const local = combineLocalHandlers(caseTaskHandler(tasks), reconciler, acknowledgeLocally(['task.completed', 'decision.confirmed']))
   const dispatcher = new OutboxDispatcher(db, client, consent, visibilityMs, local, {
     deliveryTimeoutMs,

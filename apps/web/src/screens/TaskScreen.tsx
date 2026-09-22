@@ -249,7 +249,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                 caseId={caseId}
                 task={task}
                 municipality={overview.data?.case.municipality}
-                caseVersion={overview.data?.case.version}
+                caseBasicInfoVersion={overview.data?.case.basicInfoVersion}
                 kyoukaikenpoBurialBenefit={overview.data?.case.kyoukaikenpoBurialBenefit}
               />
 

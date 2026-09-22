@@ -34,6 +34,81 @@ async function cancelWait(tx: Tx, run: AgentRunEntity) {
   tx.update<WaitRequestEntity>(location, wait.version, { state: 'CANCELLED' })
 }
 
+const GUIDANCE_REUSE_STATUSES: ReadonlySet<AgentRunStatus> = new Set([
+  'QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'RETRY_SCHEDULED',
+])
+
+const GUIDANCE_NEW_ATTEMPT_STATUSES: ReadonlySet<AgentRunStatus> = new Set([
+  'NEEDS_ATTENTION', 'WAITING_DOCUMENT',
+])
+
+function freshGuidance(taskId: string, runId: string) {
+  return {
+    taskId, status: 'RESEARCHING' as const, agentRunId: runId,
+    researchedBy: null, outcome: null, failureReason: null, resultId: null, attemptId: null,
+    target: null, where: null, bring: [], steps: [], formExampleUrl: null,
+    formExampleLabel: null, note: null, sources: [], citations: [], missing: [],
+  }
+}
+
+interface PrepareNewAttemptInput {
+  initiatedByUserId: string
+  expectedVersion: number
+  outcome: string
+}
+
+/** 呼び出し元が状態・所有権を検証したRunを、同じTransactionで次のattemptへ進める。 */
+async function prepareNewAttempt(
+  tx: Tx,
+  caseEntity: CaseEntity,
+  run: AgentRunEntity,
+  input: PrepareNewAttemptInput,
+): Promise<void> {
+  const caseId = run.caseId!
+  const jobId = randomUUID()
+  if (run.fencingToken) await releaseLease(tx, caseId, run.id, run.fencingToken)
+  await cancelWait(tx, run)
+  tx.update<AgentRunEntity>(runLocation(caseId, run.id), input.expectedVersion, {
+    status: 'QUEUED',
+    attempt: run.attempt + 1,
+    currentAttemptId: randomUUID(),
+    currentJobId: jobId,
+    initiatedByUserId: input.initiatedByUserId,
+    caseVersionAtAccept: caseEntity.caseVersion,
+    progressSequence: -1,
+    fencingToken: null,
+    activeWaitRequestId: null,
+    pendingResume: {
+      kind: 'RETRY', previousAttemptId: run.currentAttemptId, snapshotId: null,
+      waitRequestId: null, outcome: input.outcome,
+    },
+    failureReason: null,
+    guidanceOutcome: null,
+    waitingFor: null,
+    finishedAt: null,
+  })
+  await recordRunTransitionEvent(tx, { ...run, version: input.expectedVersion }, 'RETRIED', 'QUEUED', {
+    eventId: jobId,
+    attempt: run.attempt + 1,
+    detail: { attempt: run.attempt + 1, outcome: input.outcome },
+  })
+  tx.audit({
+    caseId,
+    type: 'agent_run.retried',
+    target: { collection: collections.agentRuns.name, id: run.id, version: input.expectedVersion + 1 },
+    detail: { attempt: run.attempt + 1, outcome: input.outcome },
+  })
+  tx.outbox({
+    id: jobId,
+    type: `agent.${run.operation}`,
+    caseId,
+    payload: {
+      caseId, runId: run.id, operation: run.operation, targetType: run.targetType,
+      targetId: run.targetId, attempt: run.attempt + 1,
+    },
+  })
+}
+
 export interface AgentRunView {
   id: string
   caseId: string
@@ -169,8 +244,6 @@ export class AgentRunService {
       })
     }
 
-    const runId = randomUUID()
-    const jobId = randomUUID()
     const storedId = await this.uow.run(access.toWorkContext(meta.requestId, meta.idempotency), async (tx) => {
       const caseEntity = await tx.require<CaseEntity>({
         collection: collections.cases,
@@ -178,6 +251,46 @@ export class AgentRunService {
         id: caseId,
       })
 
+      if (input.operation === 'task_guidance') {
+        if (input.targetType !== 'TASK') throw errors.validationFailed()
+        await tx.require<TaskEntity>({ collection: collections.tasks, caseId, id: input.targetId })
+        const location = { collection: collections.guidance, caseId, id: input.targetId }
+        const guidance = await tx.get<GuidanceEntity>(location)
+        const current = guidance?.agentRunId
+          ? await tx.get<AgentRunEntity>(runLocation(caseId, guidance.agentRunId))
+          : null
+
+        if (current && current.operation === 'task_guidance' && current.targetType === 'TASK'
+          && current.targetId === input.targetId && GUIDANCE_REUSE_STATUSES.has(current.status)) {
+          tx.audit({
+            caseId,
+            type: 'guidance.request_reused',
+            target: { collection: collections.guidance.name, id: input.targetId, version: guidance!.version },
+            detail: { runId: current.id, status: current.status },
+          })
+          return current.id
+        }
+
+        if (current && current.operation === 'task_guidance' && current.targetType === 'TASK'
+          && current.targetId === input.targetId && GUIDANCE_NEW_ATTEMPT_STATUSES.has(current.status)) {
+          await prepareNewAttempt(tx, caseEntity, current, {
+            initiatedByUserId: user.userId,
+            expectedVersion: current.version,
+            outcome: 'GUIDANCE_REQUEST',
+          })
+          tx.update<GuidanceEntity>(location, guidance!.version, freshGuidance(input.targetId, current.id))
+          tx.audit({
+            caseId,
+            type: 'guidance.requested',
+            target: { collection: collections.guidance.name, id: input.targetId, version: guidance!.version + 1 },
+            detail: { runId: current.id, attempt: current.attempt + 1 },
+          })
+          return current.id
+        }
+      }
+
+      const runId = randomUUID()
+      const jobId = randomUUID()
       tx.create<AgentRunEntity>(runLocation(caseId, runId), {
         id: runId,
         operation: input.operation,
@@ -199,16 +312,9 @@ export class AgentRunService {
       })
 
       if (input.operation === 'task_guidance') {
-        if (input.targetType !== 'TASK') throw errors.validationFailed()
-        await tx.require<TaskEntity>({ collection: collections.tasks, caseId, id: input.targetId })
         const location = { collection: collections.guidance, caseId, id: input.targetId }
         const current = await tx.get<GuidanceEntity>(location)
-        const guidance = {
-          taskId: input.targetId, status: 'RESEARCHING' as const, agentRunId: runId,
-          researchedBy: null, outcome: null, failureReason: null, resultId: null, attemptId: null,
-          target: null, where: null, bring: [], steps: [], formExampleUrl: null,
-          formExampleLabel: null, note: null, sources: [], citations: [], missing: [],
-        }
+        const guidance = freshGuidance(input.targetId, runId)
         if (current) tx.update<GuidanceEntity>(location, current.version, guidance)
         else tx.create<GuidanceEntity>(location, { id: input.targetId, ...guidance })
         tx.audit({ caseId, type: 'guidance.requested',
@@ -435,33 +541,17 @@ export class AgentRunService {
         })
       }
       const caseEntity = await tx.require<CaseEntity>({ collection: collections.cases, caseId: null, id: caseId })
-      const jobId = randomUUID()
-      if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
-      await cancelWait(tx, current)
-      tx.update<AgentRunEntity>(runLocation(caseId, runId), expectedVersion, {
-        status: 'QUEUED',
-        attempt: current.attempt + 1,
-        currentAttemptId: randomUUID(),
-        currentJobId: jobId,
+      if (current.operation === 'task_guidance') {
+        if (current.targetType !== 'TASK') throw errors.conflict({ details: { reason: 'GUIDANCE_SUPERSEDED' } })
+        const guidance = await tx.get<GuidanceEntity>({ collection: collections.guidance, caseId, id: current.targetId })
+        if (guidance?.agentRunId !== current.id) {
+          throw errors.conflict({ details: { reason: 'GUIDANCE_SUPERSEDED' } })
+        }
+      }
+      await prepareNewAttempt(tx, caseEntity, current, {
         initiatedByUserId: user.userId,
-        caseVersionAtAccept: caseEntity.caseVersion,
-        progressSequence: -1,
-        fencingToken: null,
-        activeWaitRequestId: null,
-        pendingResume: { kind: 'RETRY', previousAttemptId: current.currentAttemptId, snapshotId: null, waitRequestId: null, outcome: 'USER_RETRY' },
-        failureReason: null,
-        guidanceOutcome: null,
-        waitingFor: null,
-        finishedAt: null,
-      })
-      await recordRunTransitionEvent(tx, { ...current, version: expectedVersion }, 'RETRIED', 'QUEUED', {
-        attempt: current.attempt + 1, detail: { attempt: current.attempt + 1 },
-      })
-      tx.audit({
-        caseId,
-        type: 'agent_run.retried',
-        target: { collection: collections.agentRuns.name, id: runId, version: expectedVersion + 1 },
-        detail: { attempt: current.attempt + 1 },
+        expectedVersion,
+        outcome: 'USER_RETRY',
       })
       if (current.operation === 'document_analysis' && current.targetType === 'DOCUMENT') {
         const location = { collection: collections.documents, caseId, id: current.targetId }
@@ -475,26 +565,9 @@ export class AgentRunService {
         const location = { collection: collections.guidance, caseId, id: current.targetId }
         const guidance = await tx.get<GuidanceEntity>(location)
         if (guidance?.agentRunId === runId) {
-          tx.update<GuidanceEntity>(location, guidance.version, {
-            status: 'RESEARCHING', outcome: null, researchedBy: null, failureReason: null,
-            resultId: null, attemptId: null, target: null, where: null, bring: [], steps: [],
-            formExampleUrl: null, formExampleLabel: null, note: null, sources: [], citations: [], missing: [],
-          })
+          tx.update<GuidanceEntity>(location, guidance.version, freshGuidance(current.targetId, runId))
         }
       }
-      tx.outbox({
-        id: jobId,
-        type: `agent.${current.operation}`,
-        caseId,
-        payload: {
-          caseId,
-          runId,
-          operation: current.operation,
-          targetType: current.targetType,
-          targetId: current.targetId,
-          attempt: current.attempt + 1,
-        },
-      })
     })
 
     return this.get(user, caseId, runId)

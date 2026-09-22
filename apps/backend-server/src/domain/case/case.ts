@@ -72,6 +72,18 @@ export interface CaseEntity extends EntityBase {
    * 増やし、AI の提案が古い Context に基づいていないかの判定に使う。
    */
   caseVersion: number
+  /**
+   * 基本情報（本 Entity のユーザー編集項目）専用の楽観ロックの版。
+   *
+   * Entity 自身の楽観ロック（version）は、ContextVersionUnitOfWork が
+   * caseVersion を進めるためだけに書き込んだ場合にも増える。そのため
+   * `update`/`setPlanningRestriction` の expectedVersion 照合には使えない
+   * （他の Context 書き込みと空振りの競合を起こす）。この版は
+   * 基本情報が実際に変わったときだけ増やす。
+   * この版が導入される前に作られた legacy record では欠落しうるため optional。
+   * 読み出し側は version に正規化する（導入前は version がこの役割を兼ねていたため）。
+   */
+  basicInfoVersion?: number
 }
 
 /** Case 配下の変更から Case 全体の版を進める。 */
