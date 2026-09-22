@@ -99,7 +99,7 @@ export type ResearchFindings = z.infer<typeof researchFindingsSchema>
 export const researchSynthesisSchema = z.object({
   status: z.enum(['complete', 'partial', 'needs_input', 'failed']),
   answers: z.array(z.object({
-    questionId: id, text: z.string().min(1).max(2000),
+    questionId: id, text: z.string().min(1).max(600),
     /** 本文からそのまま写した引用。1件の回答に最大5件。 */
     evidence: z.array(evidenceQuoteSchema).min(1).max(5),
   }).strict()).max(12),
@@ -224,6 +224,9 @@ export function finalizeResearchSynthesis(input: unknown, brief: ResearchBrief, 
   }
   const missing = [...synthesized.missing, ...unsupported.map(text => `${text}（公式資料の記載と照合できませんでした）`.slice(0, 500)),
     ...partlySupported.map(text => `${text}（一部の記載は公式資料と照合できませんでした）`.slice(0, 500))]
-  const status = synthesized.status === 'complete' && (unsupported.length || discardedQuotes) ? 'partial' : synthesized.status
+  const answered = new Set(answers.map(answer => answer.questionId))
+  const omitted = [...questions].filter(([questionId]) => !answered.has(questionId)).map(([, question]) => question.text)
+  missing.push(...omitted.map(text => `${text}（調査結果に回答がありませんでした）`.slice(0, 500)))
+  const status = synthesized.status === 'complete' && (unsupported.length || discardedQuotes || omitted.length) ? 'partial' : synthesized.status
   return validateFindings({ status, answers, missing: missing.slice(0, 20), conflicts: synthesized.conflicts }, brief, new Set(retrieved.keys()))
 }

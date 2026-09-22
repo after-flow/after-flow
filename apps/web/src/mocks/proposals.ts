@@ -53,6 +53,7 @@ export function makeProposalAndApproval(args: {
     decisionNote: null,
     expiresAt: new Date(Date.parse(createdAt) + 30 * 86_400_000).toISOString(),
     assetDisposal: proposal.assetDisposal,
+    sourceDocumentId: args.basis.find((item) => item.type === 'DOCUMENT')?.id ?? null,
     version: 1,
     createdAt,
     updatedAt: createdAt,

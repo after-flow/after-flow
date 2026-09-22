@@ -10,6 +10,7 @@ import { HttpResponse, http, delay } from 'msw'
 import type {
   AcknowledgeInsightRequest,
   AgentRunResource,
+  AiCapabilitiesResource,
   Asset,
   Benefit,
   CaseResource,
@@ -46,6 +47,7 @@ import { sampleContent, uploadedFiles } from './content'
 import { watchCase } from './watch'
 import { stableHash } from './proposals'
 import { fail, jsonBody, notFound, ok, page, requireExpectedVersion, requireIdempotencyKey } from './http'
+import { withKyoukaikenpoBurialBenefitMissingFields } from '@/lib/model/kyoukaikenpo-burial-benefit'
 
 const BASE = '/api/v1'
 
@@ -280,6 +282,17 @@ export const handlers = [
   http.get(`${BASE}/me`, () => ok<MeResource>(me())),
   http.post(`${BASE}/me`, () => ok<MeResource>(me(), 200)),
 
+  /* ---------- AI の接続状況 ---------- */
+  // モックは接続済みの環境を再現する。未接続の画面は Backend を未接続で動かして確かめる。
+  http.get(`${BASE}/ai/capabilities`, () =>
+    ok<AiCapabilitiesResource>({
+      features: {
+        task_guidance: { available: true, reason: null },
+        ai_chat: { available: true, reason: null },
+      },
+    }),
+  ),
+
   /* ---------- 同意 ---------- */
   http.get(`${BASE}/consents`, () => ok(consentStatus())),
   http.post(`${BASE}/consents`, async ({ request }) => {
@@ -321,6 +334,12 @@ export const handlers = [
       ownerPersonId: null,
       selfPersonId: null,
       aiPlanningRestriction: null,
+      kyoukaikenpoBurialBenefit: {
+        branch: null,
+        deceasedInsuranceStatus: null,
+        applicantStatus: null,
+        missingFields: ['BRANCH', 'DECEASED_INSURANCE_STATUS', 'APPLICANT_STATUS'],
+      },
       status: 'ACTIVE',
       version: 1,
       caseVersion: 1,
@@ -370,6 +389,25 @@ export const handlers = [
     if ('dateOfBirth' in body) kase.dateOfBirth = typeof body.dateOfBirth === 'string' ? body.dateOfBirth : null
     if ('knownAt' in body) kase.knownAt = typeof body.knownAt === 'string' ? body.knownAt : null
     if ('funeralCompletedAt' in body) kase.funeralCompletedAt = typeof body.funeralCompletedAt === 'string' ? body.funeralCompletedAt : null
+    if ('kyoukaikenpoBurialBenefit' in body && body.kyoukaikenpoBurialBenefit && typeof body.kyoukaikenpoBurialBenefit === 'object') {
+      const burialBenefit = body.kyoukaikenpoBurialBenefit as Record<string, unknown>
+      const branch = typeof burialBenefit.branch === 'string' && burialBenefit.branch.trim()
+        ? burialBenefit.branch.trim()
+        : null
+      const deceasedInsuranceStatus = burialBenefit.deceasedInsuranceStatus === 'INSURED'
+        || burialBenefit.deceasedInsuranceStatus === 'DEPENDENT'
+        ? burialBenefit.deceasedInsuranceStatus
+        : null
+      const applicantStatus = burialBenefit.applicantStatus === 'LIVELIHOOD_MAINTAINER'
+        || burialBenefit.applicantStatus === 'BURIAL_EXPENSE_PAYER'
+        ? burialBenefit.applicantStatus
+        : null
+      kase.kyoukaikenpoBurialBenefit = withKyoukaikenpoBurialBenefitMissingFields({
+        branch,
+        deceasedInsuranceStatus,
+        applicantStatus,
+      })
+    }
     kase.version += 1
     kase.caseVersion += 1
     kase.basicInfoVersion += 1
@@ -568,13 +606,23 @@ export const handlers = [
     const idem = requireIdempotencyKey(request)
     if (idem) return idem
     const body = await jsonBody(request)
-    t.evidences.push({
+    // 添付できるのは、同じケースの保存済みで除外されていない書類だけ（Backend の assertDocument と同じ）
+    const documentId = typeof body.documentId === 'string' ? body.documentId : null
+    const doc = documentId ? db.documents.find((d) => d.id === documentId && d.caseId === t.caseId) : undefined
+    if (documentId && !doc) return notFound()
+    if (doc && (doc.archived || doc.storageState !== 'STORED'))
+      return fail('PRECONDITION_FAILED', 'この書類はまだ添付できません。', { reason: 'DOCUMENT_UNAVAILABLE' })
+    const evidence = {
       id: nextId('ev'),
       label: String(body.label ?? ''),
       kind: (body.kind as (typeof t.evidences)[number]['kind']) ?? 'OTHER',
       note: typeof body.note === 'string' ? body.note : null,
+      documentId,
       recordedAt: new Date().toISOString(),
-    })
+    }
+    t.evidences.push(evidence)
+    // 書類の側からも、どの記録に添付されたかをたどれるようにする
+    if (doc) doc.evidenceRefs.push({ id: evidence.id, taskId: t.id, label: evidence.label, version: 1 })
     t.version += 1
     t.updatedAt = new Date().toISOString()
     refreshTaskActions(t)
@@ -587,6 +635,7 @@ export const handlers = [
     return ok<GuidanceResource>({
       taskId,
       status: 'NOT_REQUESTED',
+      outcome: null,
       target: null,
       where: null,
       bring: [],
@@ -629,6 +678,7 @@ export const handlers = [
       waitingFor: null,
       failureReason: null,
       outcome: null,
+      guidanceOutcome: null,
       caseVersionAtAccept: caseOf(String(params.caseId))?.caseVersion ?? 1,
       startedAt: null,
       finishedAt: null,
@@ -641,6 +691,7 @@ export const handlers = [
     const researching: GuidanceResource = {
       taskId,
       status: 'RESEARCHING',
+      outcome: null,
       target: t.submitTo ?? t.title,
       where: null,
       bring: [],
@@ -652,7 +703,7 @@ export const handlers = [
       citations: [],
       missing: [],
       failureReason: null,
-      researchedBy: 'AI',
+      researchedBy: null,
       agentRunId: runId,
       version: (existing?.version ?? 0) + 1,
       updatedAt: now,
@@ -666,14 +717,22 @@ export const handlers = [
       run.updatedAt = finishedAt
       run.allowedActions = []
       run.version += 1
+      const burialBenefit = caseOf(t.caseId)?.kyoukaikenpoBurialBenefit
+      const missingContext = t.procedureId === 'kyoukaikenpo-burial-benefit'
+        && (burialBenefit?.missingFields.length ?? 0) > 0
       db.guidance[taskId] = {
         ...researching,
         status: 'COMPLETED',
-        where: t.submitTo ?? '窓口にご確認ください',
-        bring: ['本人確認書類', '印鑑'],
-        steps: ['窓口で申請書を受け取ります。', '必要書類とあわせて提出します。'],
-        note: '受付時間は自治体・機関によって異なります。事前にご確認ください。',
-        sources: [{ label: `${t.submitTo ?? '窓口'}の案内`, url: 'https://example.com/guidance', checkedAt: new Date().toISOString() }],
+        outcome: missingContext ? 'MISSING_CONTEXT' : 'COMPLETED_RESEARCH',
+        where: missingContext ? null : t.submitTo ?? '窓口にご確認ください',
+        // 持ち物は、その手続きの持ち物の一覧から作る。どの手続きにも同じ「印鑑」を返すと、
+        // 押印が任意の死亡届などにも印鑑が出てしまう
+        bring: missingContext ? [] : t.requiredDocuments.length > 0 ? t.requiredDocuments.map((r) => r.label) : ['手続きをする方の本人確認書類'],
+        // どの手続きにも当てはまる手順だけにする（死亡届のように、用紙を窓口でもらわない手続きもある）
+        steps: missingContext ? [] : ['持ち物をそろえて、窓口へ行きます。', '窓口の案内にしたがって提出します。'],
+        note: missingContext ? null : '受付時間は自治体・機関によって異なります。事前にご確認ください。',
+        sources: missingContext ? [] : [{ label: `${t.submitTo ?? '窓口'}の案内`, url: 'https://example.com/guidance', checkedAt: new Date().toISOString() }],
+        researchedBy: missingContext ? null : 'AI',
         version: researching.version + 1,
         updatedAt: new Date().toISOString(),
       }
@@ -888,6 +947,7 @@ export const handlers = [
       decisionNote: null,
       expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
       assetDisposal: p.assetDisposal,
+      sourceDocumentId: p.basis.find((item) => item.type === 'DOCUMENT')?.id ?? null,
       version: 1,
       createdAt: now,
       updatedAt: now,

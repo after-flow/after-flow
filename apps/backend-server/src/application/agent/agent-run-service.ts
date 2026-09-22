@@ -6,9 +6,11 @@ import type { TenantMember } from '../authorization/case-access.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { randomUUID } from 'node:crypto'
 import type { AgentOperation, AgentRunEntity, AgentRunStatus } from '../../domain/agent/agent-run.js'
-import { failGuidanceForRun } from './run-termination.js'
+import { failRunTargets } from './run-termination.js'
 import { canCancel, canRetry, isRunTerminal, isRunWaiting } from '../../domain/agent/agent-run.js'
 import type { CaseEntity } from '../../domain/case/case.js'
+import type { DocumentEntity } from '../../domain/document/document.js'
+import { analysisFieldsFor } from '../../domain/document/analysis-catalog.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { GuidanceEntity } from '../../domain/task/guidance.js'
 import type { TaskEntity } from '../../domain/task/task.js'
@@ -43,7 +45,7 @@ const GUIDANCE_NEW_ATTEMPT_STATUSES: ReadonlySet<AgentRunStatus> = new Set([
 function freshGuidance(taskId: string, runId: string) {
   return {
     taskId, status: 'RESEARCHING' as const, agentRunId: runId,
-    researchedBy: 'AI' as const, failureReason: null, resultId: null, attemptId: null,
+    researchedBy: null, outcome: null, failureReason: null, resultId: null, attemptId: null,
     target: null, where: null, bring: [], steps: [], formExampleUrl: null,
     formExampleLabel: null, note: null, sources: [], citations: [], missing: [],
   }
@@ -81,6 +83,7 @@ async function prepareNewAttempt(
       waitRequestId: null, outcome: input.outcome,
     },
     failureReason: null,
+    guidanceOutcome: null,
     waitingFor: null,
     finishedAt: null,
   })
@@ -118,6 +121,7 @@ export interface AgentRunView {
   waiting: boolean
   waitingFor: string | null
   failureReason: string | null
+  guidanceOutcome: NonNullable<AgentRunEntity['guidanceOutcome']> | null
   outcome: AgentRunOutcomeResource | null
   caseVersionAtAccept: number
   startedAt: string | null
@@ -175,6 +179,7 @@ export function toAgentRunView(entity: AgentRunEntity): AgentRunView {
     waiting: isRunWaiting(entity.status),
     waitingFor: entity.waitingFor,
     failureReason: entity.failureReason,
+    guidanceOutcome: entity.guidanceOutcome ?? null,
     outcome: entity.outcome ?? null,
     caseVersionAtAccept: entity.caseVersionAtAccept,
     startedAt: entity.startedAt,
@@ -299,6 +304,7 @@ export class AgentRunService {
         initiatedByUserId: user.userId,
         currentJobId: jobId,
         failureReason: null,
+        guidanceOutcome: null,
         waitingFor: null,
         startedAt: null,
         finishedAt: null,
@@ -313,6 +319,25 @@ export class AgentRunService {
         else tx.create<GuidanceEntity>(location, { id: input.targetId, ...guidance })
         tx.audit({ caseId, type: 'guidance.requested',
           target: { collection: collections.guidance.name, id: input.targetId, version: (current?.version ?? 0) + 1 },
+          detail: { runId } })
+      }
+
+      if (input.operation === 'document_analysis') {
+        if (input.targetType !== 'DOCUMENT') throw errors.validationFailed()
+        const location = { collection: collections.documents, caseId, id: input.targetId }
+        const document = await tx.require<DocumentEntity>(location)
+        if (document.archived || document.storageState !== 'STORED' || document.inspection.status !== 'PASSED') {
+          throw errors.preconditionFailed({ message: 'この書類はまだ読み取りを依頼できません。', details: { reason: 'DOCUMENT_NOT_DELIVERABLE' } })
+        }
+        if (!analysisFieldsFor(document.kind)) {
+          throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_KIND_NOT_SUPPORTED' } })
+        }
+        if (document.analysisState === 'QUEUED' || document.analysisState === 'RUNNING') {
+          throw errors.conflict({ details: { reason: 'ANALYSIS_ALREADY_IN_PROGRESS' } })
+        }
+        tx.update<DocumentEntity>(location, document.version, { analysisState: 'QUEUED', agentRunId: runId })
+        tx.audit({ caseId, type: 'document.analysis_requested',
+          target: { collection: collections.documents.name, id: input.targetId, version: document.version + 1 },
           detail: { runId } })
       }
 
@@ -417,13 +442,14 @@ export class AgentRunService {
       const cancellation = current.currentJobId ? { cancelId, jobId: current.currentJobId, executionAttempt: current.currentAttemptId } : undefined
       tx.update<AgentRunEntity>(runLocation(caseId, runId), expectedVersion, {
         ...(cancellation ? { cancellation } : {}), status: 'CANCELLED',
+        ...(current.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
         cancelRequestedBy: user.userId,
         finishedAt: new Date().toISOString(),
         // 取消後に届いた古い attempt の結果を受け付けないよう、世代を変える。
         currentAttemptId: randomUUID(),
       })
       if (cancellation) tx.outbox({ id: cancelId, type: 'agent.cancel', caseId, payload: { runId } })
-      await failGuidanceForRun(tx, caseId, current, { failureReason: 'CANCELLED', attemptId: current.currentAttemptId })
+      await failRunTargets(tx, caseId, current, { failureReason: 'CANCELLED', attemptId: current.currentAttemptId })
       await cancelWait(tx, current)
       if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
       await recordRunTransitionEvent(tx, { ...current, version: expectedVersion }, 'CANCELLED', 'CANCELLED', {
@@ -479,7 +505,7 @@ export class AgentRunService {
         initiatedByUserId: user.userId, caseVersionAtAccept: entity.caseVersion + 1, clarificationHistory: history.data,
         progressSequence: -1, fencingToken: null, activeWaitRequestId: null,
         pendingResume: { kind: 'RETRY', previousAttemptId: run.currentAttemptId, snapshotId: null, waitRequestId: null, outcome: 'QUESTIONS_ANSWERED' },
-        failureReason: null, waitingFor: null, finishedAt: null,
+        failureReason: null, guidanceOutcome: null, waitingFor: null, finishedAt: null,
       })
       await recordRunTransitionEvent(tx, run, 'RETRIED', 'QUEUED', {
         eventId: jobId, attempt: run.attempt + 1, detail: { attempt: run.attempt + 1, outcome: 'QUESTIONS_ANSWERED' },
@@ -527,6 +553,21 @@ export class AgentRunService {
         expectedVersion,
         outcome: 'USER_RETRY',
       })
+      if (current.operation === 'document_analysis' && current.targetType === 'DOCUMENT') {
+        const location = { collection: collections.documents, caseId, id: current.targetId }
+        const document = await tx.get<DocumentEntity>(location)
+        if (document && document.agentRunId === runId && document.analysisState === 'FAILED'
+          && !document.archived && document.storageState === 'STORED') {
+          tx.update<DocumentEntity>(location, document.version, { analysisState: 'QUEUED' })
+        }
+      }
+      if (current.operation === 'task_guidance' && current.targetType === 'TASK') {
+        const location = { collection: collections.guidance, caseId, id: current.targetId }
+        const guidance = await tx.get<GuidanceEntity>(location)
+        if (guidance?.agentRunId === runId) {
+          tx.update<GuidanceEntity>(location, guidance.version, freshGuidance(current.targetId, runId))
+        }
+      }
     })
 
     return this.get(user, caseId, runId)

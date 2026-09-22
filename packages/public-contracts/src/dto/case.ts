@@ -16,6 +16,20 @@ import type { CaseProfileResource } from './case-profile.js'
  */
 export type CaseAction = 'UPDATE_BASIC_INFO' | 'ADMINISTER'
 
+export type KyoukaikenpoBurialBenefitMissingField =
+  | 'BRANCH'
+  | 'DECEASED_INSURANCE_STATUS'
+  | 'APPLICANT_STATUS'
+
+/** 協会けんぽの埋葬料・埋葬費を案内するために利用者が確認した情報。 */
+export interface KyoukaikenpoBurialBenefitResource {
+  branch: string | null
+  deceasedInsuranceStatus: 'INSURED' | 'DEPENDENT' | null
+  applicantStatus: 'LIVELIHOOD_MAINTAINER' | 'BURIAL_EXPENSE_PAYER' | null
+  /** Frontendが次に入力すべき項目。Backendがnull値から決定する。 */
+  missingFields: KyoukaikenpoBurialBenefitMissingField[]
+}
+
 export interface CaseResource {
   id: string
   deceasedName: string
@@ -53,6 +67,7 @@ export interface CaseResource {
   selfPersonId: string | null
   /** Owner-managed pause of AI task proposals. null means unrestricted. */
   aiPlanningRestriction: { reason: string } | null
+  kyoukaikenpoBurialBenefit: KyoukaikenpoBurialBenefitResource
   status: CaseStatus
   /**
    * 保存層の楽観ロックの版。Context の変更（タスク・書類・メッセージ等）でも

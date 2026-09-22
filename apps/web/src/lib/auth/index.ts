@@ -46,13 +46,11 @@ export interface AuthPort {
 }
 
 /**
- * 本番ビルドでは `VITE_USE_MOCK` は既定で false（main.tsx 参照）。
+ * `VITE_USE_MOCK` の既定は false（main.tsx 参照）。
  * この判定は main.tsx の bootstrap 判定と同じロジックにそろえる。
  */
 export function mockAuthEnabled(): boolean {
-  return import.meta.env.DEV
-    ? import.meta.env.VITE_USE_MOCK !== 'false'
-    : import.meta.env.VITE_USE_MOCK === 'true'
+  return import.meta.env.VITE_USE_MOCK === 'true'
 }
 
 let portPromise: Promise<AuthPort> | null = null

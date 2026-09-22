@@ -1,4 +1,5 @@
 import type { ISODateTime } from './resources.js'
+import type { GuidanceOutcomeResource } from './chat.js'
 
 /**
  * 新しい公開契約の AI 実行。
@@ -83,6 +84,8 @@ export interface AgentRunResource {
   waiting: boolean
   waitingFor: string | null
   failureReason: string | null
+  /** task_guidanceだけに入る構造化終了理由。 */
+  guidanceOutcome: GuidanceOutcomeResource | null
   outcome: AgentRunOutcomeResource | null
   /** 受付時点のCase版。結果の鮮度判定に使う。 */
   caseVersionAtAccept: number

@@ -2,7 +2,7 @@ import type { AgentOperation, AgentRunEntity } from '../../domain/agent/agent-ru
 import { isRunTerminal } from '../../domain/agent/agent-run.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { collections } from '../../domain/shared/collections.js'
-import type { GuidanceCitation, GuidanceEntity, GuidanceSource, GuidanceStatus } from '../../domain/task/guidance.js'
+import type { GuidanceCitation, GuidanceEntity, GuidanceOutcome, GuidanceSource, GuidanceStatus } from '../../domain/task/guidance.js'
 import { errors } from '../../shared/app-error.js'
 import { AgentAccess } from '../authorization/case-access.js'
 import { failGuidanceForRun } from '../agent/run-termination.js'
@@ -40,6 +40,7 @@ export interface GuidanceResultInput extends ResultEnvelope {
   /** 調べきれなかった項目。失うと全件確認済みだと誤解される。 */
   missing?: string[]
   failureReason?: string | null
+  outcome?: GuidanceOutcome
 }
 
 export interface GuidanceInterruptionInput extends ResultEnvelope {
@@ -71,6 +72,14 @@ function runStatusFor(status: GuidanceResultInput['status']): AgentRunEntity['st
   if (status === 'PARTIAL') return 'NEEDS_ATTENTION'
   if (status === 'WAITING') return 'WAITING_DOCUMENT'
   return 'FAILED'
+}
+
+/** outcome導入前の送信元は、根拠付き結果だけを調査完了へ寄せる。推測はしない。 */
+function normalizeGuidanceOutcome(input: GuidanceResultInput): GuidanceOutcome | null {
+  if (input.outcome) return input.outcome
+  if (input.status === 'FAILED') return 'FAILED'
+  if ((input.sources?.length ?? 0) > 0 && (input.citations?.length ?? 0) > 0) return 'COMPLETED_RESEARCH'
+  return null
 }
 
 export class AgentResultIntake {
@@ -164,9 +173,11 @@ export class AgentResultIntake {
     }
     // 必ず保存と同じ Transaction で再検証する。取消・retryとの競合時にも有効。
     this.assertRun(runEntity, input, 'task_guidance')
+    const outcome = normalizeGuidanceOutcome(input)
 
     tx.update<GuidanceEntity>(guidanceLocation(caseId, taskId), current.version, {
       status: input.status,
+      outcome,
       target: input.target ?? current.target,
       where: input.where ?? null,
       bring: input.bring ?? [],
@@ -179,7 +190,7 @@ export class AgentResultIntake {
       // 調べきれなかった項目を落とさない。
       missing: input.missing ?? [],
       failureReason: input.failureReason ?? null,
-      researchedBy: 'AI',
+      researchedBy: outcome === 'COMPLETED_RESEARCH' ? 'AI' : null,
       resultId: input.resultId,
       attemptId: input.attemptId,
     })
@@ -189,6 +200,7 @@ export class AgentResultIntake {
       finishedAt: input.status === 'WAITING' ? null : new Date().toISOString(),
       waitingFor: input.status === 'WAITING' ? '書類の登録' : null,
       failureReason: input.failureReason ?? null,
+      guidanceOutcome: outcome,
     })
 
     await recordRunTransitionEvent(tx, runEntity, 'RESULT', runStatusFor(input.status), {
@@ -199,7 +211,7 @@ export class AgentResultIntake {
       caseId,
       type: 'guidance.result_received',
       target: { collection: collections.guidance.name, id: taskId, version: current.version + 1 },
-      detail: { status: input.status, sourceCount: (input.sources ?? []).length },
+      detail: { status: input.status, outcome, sourceCount: (input.sources ?? []).length },
     })
 
     return { applied: true, reason: null }
@@ -240,6 +252,7 @@ export class AgentResultIntake {
       waitingFor: null,
       failureReason: input.failureReason,
       outcome: { ...input.output, resultId: input.resultId, attemptId: input.attemptId, caseVersion: input.caseVersion },
+      guidanceOutcome: 'FAILED',
     })
     tx.audit({
       caseId,

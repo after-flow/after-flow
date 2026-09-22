@@ -93,6 +93,16 @@ describe('profile group', () => {
     assert.equal('profile' in projection.content, false)
     assert.deepEqual(projection.missingRequired.map(contextKey), ['profile.pension'])
   })
+
+  it('profile の UNKNOWN は値として送っても required の回答済みにはしない', () => {
+    const def = findProcedureDefinition('pension-stop')!
+    const projection = projectGuidanceContext(def, {
+      case: { id: 'case1', version: 1 }, profile: { pension: 'UNKNOWN' }, entities: {},
+    })
+    assert.deepEqual(projection.content.profile, { id: 'case1', version: 1, pension: 'UNKNOWN' })
+    assert.deepEqual(projection.usedKeys, [])
+    assert.deepEqual(projection.missingRequired.map(contextKey), ['profile.pension'])
+  })
 })
 
 describe('resolveDependencyTaskIds', () => {
@@ -108,12 +118,23 @@ describe('resolveDependencyTaskIds', () => {
 
 describe('kyoukaikenpo-burial-benefit', () => {
   const def = findProcedureDefinition('kyoukaikenpo-burial-benefit')!
-  it('case group を要求せず、Case の値を content にも Brief にも持ち込まない', () => {
-    assert.equal(guidanceAllowlist(def).has('case'), false)
-    const projection = projectGuidanceContext(def, { case: { id: 'case1', version: 1, municipality: '架空市', dateOfDeath: '2026-09-01' }, entities: {} })
-    assert.deepEqual(projection.content.case, { id: 'case1', version: 1 })
-    assert.equal(JSON.stringify(procedureResearchBrief(def)).includes('架空市'), false)
+  it('専用の3項目だけをCaseから投影する', () => {
+    assert.equal(guidanceAllowlist(def).has('case'), true)
+    const projection = projectGuidanceContext(def, { case: { id: 'case1', version: 1,
+      healthInsuranceBranch: '東京支部', deceasedInsuranceStatus: 'INSURED',
+      burialBenefitApplicantStatus: 'LIVELIHOOD_MAINTAINER', municipality: '架空市', deceasedName: 'PRIVATE' }, entities: {} })
+    assert.deepEqual(projection.content.case, { id: 'case1', version: 1, healthInsuranceBranch: '東京支部',
+      deceasedInsuranceStatus: 'INSURED', burialBenefitApplicantStatus: 'LIVELIHOOD_MAINTAINER' })
+    assert.deepEqual(projection.missingRequired, [])
+    assert.ok(projection.droppedKeys.includes('case.municipality') && projection.droppedKeys.includes('case.deceasedName'))
     assert.deepEqual(procedureResearchBrief(def).sourceCatalogIds, ['kyoukaikenpo-burial-benefit'])
+  })
+  it('未入力の正式状態を不足項目として返す', () => {
+    const projection = projectGuidanceContext(def, { case: { id: 'case1', version: 1,
+      healthInsuranceBranch: null, deceasedInsuranceStatus: 'DEPENDENT', burialBenefitApplicantStatus: null }, entities: {} })
+    assert.deepEqual(projection.missingRequired.map(contextKey), [
+      'case.healthInsuranceBranch', 'case.burialBenefitApplicantStatus',
+    ])
   })
 })
 
@@ -147,6 +168,17 @@ describe('estate-division', () => {
     assert.deepEqual(Object.keys(projection.content.relationships![0]!).sort(), ['fromPersonId', 'id', 'kind', 'toPersonId', 'version'])
     assert.equal(JSON.stringify(projection.content).includes('PRIVATE'), false)
   })
+
+  it('confirmation は状態だけを残し、確認者ID・日時・自由記述を落とす', () => {
+    const def = findProcedureDefinition('estate-survey')!
+    const projection = projectGuidanceContext(def, {
+      case: { id: 'case1', version: 1 }, entities: { assets: [{ id: 'a1', version: 1, kind: 'DEPOSIT',
+        confirmation: { state: 'CONFIRMED', confirmedAt: '2026-09-01T00:00:00Z', confirmedBy: { type: 'USER', id: 'private-user' }, confirmedVersion: 1, note: 'PRIVATE-NOTE' } }] },
+    })
+    assert.deepEqual(projection.content.assets?.[0]?.confirmation, { state: 'CONFIRMED' })
+    assert.equal(JSON.stringify(projection.content).includes('private-user'), false)
+    assert.equal(JSON.stringify(projection.content).includes('PRIVATE-NOTE'), false)
+  })
 })
 
 describe('bank-accounts', () => {
@@ -172,6 +204,15 @@ describe('bank-accounts', () => {
       assert.ok(question.includes(CONTEXT_FIELD_LABELS[contextKey(requirement)]!))
       assert.equal(question.includes('架空'), false)
     }
+  })
+
+  it('required field が別々の資産に分散している場合は同一資産の情報が揃った扱いにしない', () => {
+    const projection = projectGuidanceContext(def, { case: { id: 'case1', version: 1 }, entities: {
+      assets: [{ id: 'a1', version: 1, kind: 'DEPOSIT' }, { id: 'a2', version: 1, institution: '架空銀行' }],
+      persons: [{ id: 'p1', version: 1, isHeir: true }],
+      decisions: [{ id: 'd1', version: 1, personId: 'p1', method: 'SIMPLE_ACCEPTANCE', state: 'CONFIRMED' }],
+    } })
+    assert.deepEqual(projection.missingRequired.map(contextKey), ['assets.kind', 'assets.institution'])
   })
 })
 

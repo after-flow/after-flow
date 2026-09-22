@@ -10,6 +10,7 @@ import type { CaseMember } from '../../domain/authorization/case-role.js'
 import { roleAllows } from '../../domain/authorization/case-role.js'
 import type { TenantMember } from '../authorization/case-access.js'
 import type { CaseEntity } from '../../domain/case/case.js'
+import type { DocumentEntity } from '../../domain/document/document.js'
 import type {
   ApplicationStatus,
   ApprovalEntity,
@@ -103,6 +104,7 @@ export interface ApprovalView {
   decisionNote: string | null
   expiresAt: string
   assetDisposal: boolean
+  sourceDocumentId: string | null
   version: number
   createdAt: string
   updatedAt: string
@@ -114,6 +116,11 @@ function proposalLocation(caseId: string, id: string): DocLocation {
 
 function approvalLocation(caseId: string, id: string): DocLocation {
   return { collection: collections.approvals, caseId, id }
+}
+
+/** 承認の一覧で書類ごとに件数を数えられるよう、書類根拠があれば取り出す。 */
+function sourceDocumentIdOf(basis: ProposalBasis[]): string | null {
+  return basis.find((item) => item.type === 'DOCUMENT')?.id ?? null
 }
 
 export function hashPayload(payload: Record<string, unknown>): string {
@@ -191,6 +198,7 @@ function toApprovalView(entity: ApprovalEntity): ApprovalView {
     decisionNote: entity.decisionNote,
     expiresAt: entity.expiresAt,
     assetDisposal: entity.assetDisposal,
+    sourceDocumentId: entity.sourceDocumentId,
     version: entity.version,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
@@ -218,7 +226,7 @@ export class ProposalService {
 
   /** 認可済み内部実行のtransaction内だけで呼ぶ。全種類に人の承認を要求する。 */
   async submitAi(tx: Tx, caseId: string, run: AgentRunEntity, input: AiProposalInput) {
-    if (!run.currentJobId || run.operation !== 'case_planning') throw errors.forbidden()
+    if (!run.currentJobId || (run.operation !== 'case_planning' && run.operation !== 'document_analysis')) throw errors.forbidden()
     const current = await tx.require<AgentRunEntity>({ collection: collections.agentRuns, caseId, id: run.id })
     if (current.currentAttemptId !== run.currentAttemptId || current.currentJobId !== run.currentJobId
       || current.fencingToken !== input.fencingToken || current.status !== 'RUNNING') throw errors.conflict({ details: { reason: 'STALE_EXECUTION' } })
@@ -259,12 +267,17 @@ export class ProposalService {
       id: approvalId, proposalId, proposalVersion, payloadHash: content.payloadHash, status: 'PENDING',
       applicationStatus: 'NOT_APPLIED', applicationFailureReason: null, decidedByUserId: null, decidedAt: null,
       decisionNote: null, expiresAt: new Date(Date.now() + this.approvalTtlMs).toISOString(), assetDisposal: input.assetDisposal,
+      sourceDocumentId: sourceDocumentIdOf(input.basis),
     })
     tx.audit({ caseId, type: 'proposal.ai_submitted', target: { collection: collections.proposals.name, id: proposalId, version: (previous?.version ?? 0) + 1 },
       detail: { runId: run.id, proposalVersion, fencingToken: input.fencingToken, approvalId } })
     tx.outbox({ type: 'approval.requested', caseId, payload: { runId: run.id, proposalId, approvalId } })
-    const wait = await createPendingWait(tx, current, `approval-${approvalId}`, { kind: 'APPROVAL', approvalId })
-    return { proposalId, approvalId, proposalVersion, payloadHash: content.payloadHash, waitRequestId: wait.waitRequestId, applicationStatus: 'NOT_APPLIED' as const }
+    // case_planningは承認まで待って再開する。document_analysisは複数候補をまとめて提出してから
+    // runを終える設計（#196）で、個々の承認を待って中断しない。
+    const wait = run.operation === 'case_planning'
+      ? await createPendingWait(tx, current, `approval-${approvalId}`, { kind: 'APPROVAL', approvalId })
+      : null
+    return { proposalId, approvalId, proposalVersion, payloadHash: content.payloadHash, waitRequestId: wait?.waitRequestId ?? null, applicationStatus: 'NOT_APPLIED' as const }
   }
 
   /** 公開APIからの利用者提案。AI は認可済み内部APIを使う。 */
@@ -361,6 +374,7 @@ export class ProposalService {
         decisionNote: null,
         expiresAt: new Date(Date.now() + this.approvalTtlMs).toISOString(),
         assetDisposal: proposal.assetDisposal,
+        sourceDocumentId: sourceDocumentIdOf(proposal.basis),
       })
       tx.update<ProposalEntity>(proposalLocation(caseId, proposalId), expectedVersion, {
         status: 'AWAITING_APPROVAL',
@@ -782,7 +796,18 @@ export class ProposalService {
           details: { reason: 'BASIS_NOT_FOUND', basisType: item.type, basisId: item.id },
         })
       }
-      if (found.version !== item.version) {
+      // 書類は解析状態（analysisState/agentRunId）の更新でも版が進む（ContextVersionUnitOfWork）。
+      // 中身（sha256・保存状態）はそれでは変わらないため、書類だけは版の完全一致でなく
+      // 利用可否（未除外・保存済み）で判定する。除外・保存中断は根拠を失ったとして扱う。
+      if (item.type === 'DOCUMENT') {
+        const document = found as DocumentEntity
+        if (document.archived || document.storageState !== 'STORED') {
+          throw errors.conflict({
+            message: '提案の根拠となった書類が使えなくなっています。最新の内容で作り直してください。',
+            details: { reason: 'BASIS_VERSION_CHANGED', basisId: item.id },
+          })
+        }
+      } else if (found.version !== item.version) {
         throw errors.conflict({
           message: '提案の根拠が更新されています。最新の内容で作り直してください。',
           details: {

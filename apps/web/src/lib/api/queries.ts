@@ -3,6 +3,7 @@ import { api, getAll, type Page } from './client'
 import { isDocumentInProgress } from '@/lib/model/document'
 import type {
   AgentOperationResource,
+  AiCapabilitiesResource,
   Asset,
   Benefit,
   ConfirmEstateItemRequest,
@@ -38,7 +39,7 @@ import type {
   UpdateLiabilityRequest,
   UpdatePersonRequest,
 } from '@aftercare/public-contracts'
-import type { CaseOverviewResource, CaseProfileResource } from '@aftercare/public-contracts'
+import type { CaseOverviewResource, CaseProfileResource, KyoukaikenpoBurialBenefitResource } from '@aftercare/public-contracts'
 import type { CaseResource } from '@aftercare/public-contracts'
 import type { AgentRunResource } from '@aftercare/public-contracts'
 import { restartTimedOutGuidance } from './guidance-restart'
@@ -67,6 +68,7 @@ export const qk = {
   messages: (caseId: string) => ['cases', caseId, 'messages'] as const,
   insights: (caseId: string) => ['cases', caseId, 'insights'] as const,
   agentRuns: (caseId: string) => ['cases', caseId, 'agent-runs'] as const,
+  aiCapabilities: ['ai', 'capabilities'] as const,
 }
 
 type ListOpts<T> = Omit<UseQueryOptions<Page<T>>, 'queryKey' | 'queryFn'>
@@ -163,6 +165,8 @@ export function useUpdateCase(caseId: string) {
       dateOfBirth?: string | null
       profile?: CaseProfileInput | null
       funeralCompletedAt?: string | null
+      /** Backendでは3項目を丸ごと置換するため、常に全項目を送る。 */
+      kyoukaikenpoBurialBenefit?: Omit<KyoukaikenpoBurialBenefitResource, 'missingFields'>
     }) => api.patch<CaseResource>(`/cases/${caseId}`, patch),
     onSuccess: (updated) => {
       qc.setQueryData(qk.case(caseId), updated)
@@ -878,6 +882,22 @@ export function useDismissInsight(caseId: string) {
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       api.post<Insight>(`/cases/${caseId}/insights/${id}/dismiss`, { reason }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.insights(caseId) }),
+  })
+}
+
+/* ---------- AI の接続状況 ---------- */
+
+/**
+ * AI機能ごとの利用可否。判定するのは Backend で、AI Server へは問い合わせない。
+ *
+ * 取れない間（読み込み中・失敗）は「使えない」と決めつけない。接続済みの
+ * 環境で入口を消してしまうより、送ったあとの受付結果で理由を示す方が safe。
+ */
+export function useAiCapabilities() {
+  return useQuery({
+    queryKey: qk.aiCapabilities,
+    queryFn: () => api.get<AiCapabilitiesResource>('/ai/capabilities'),
+    staleTime: 5 * 60_000,
   })
 }
 

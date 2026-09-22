@@ -130,7 +130,7 @@ export interface TaskView {
    * 持ち、`ruleId` は熟慮期間ルールを継承するため種別判定には `id` を使う。critical は常に false。
    */
   targetDate: DeadlineView | null
-  evidences: { id: string; label: string; kind: EvidenceKind; note: string | null; recordedAt: string }[]
+  evidences: { id: string; label: string; kind: EvidenceKind; note: string | null; documentId: string | null; recordedAt: string }[]
   /** いま実行できる操作。 */
   allowedActions: TaskCommand[]
   /** 実行できない操作とその理由。 */
@@ -655,6 +655,8 @@ export class TaskService {
         label: evidence.label,
         kind: evidence.kind,
         note: evidence.note,
+        // 添付した書類。画面が記録から書類へたどれるように返す（受け付けるだけで返さないと、何を添付したか分からない）
+        documentId: evidence.documentId ?? null,
         recordedAt: evidence.createdAt,
       })),
       allowedActions,

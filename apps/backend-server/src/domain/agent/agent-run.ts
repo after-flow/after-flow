@@ -1,5 +1,6 @@
 import type { AgentRunOutcomeResource } from '@aftercare/public-contracts'
 import type { EntityBase } from '../shared/entity.js'
+import type { GuidanceOutcome } from '../task/guidance.js'
 
 /**
  * AI 実行の業務記録（仕様書 6.3・11.3）。
@@ -39,6 +40,8 @@ export type AgentOperation =
 export interface AgentRunEntity extends EntityBase {
   cancellation?: { cancelId: string; jobId: string; executionAttempt: string }
   outcome?: AgentRunOutcomeResource | null
+  /** task_guidanceの構造化終了理由。legacy/他操作では欠落する。 */
+  guidanceOutcome?: GuidanceOutcome | null
   clarificationHistory?: { resultId: string; questionIndex: number; question: string; answer: string; caseVersion: number; state: 'user_reported' }[]
   operation: AgentOperation
   status: AgentRunStatus

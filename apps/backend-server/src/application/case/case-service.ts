@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import type { CaseAction, CaseProfileResource, CaseResource } from '@aftercare/public-contracts'
-import type { CaseEntity } from '../../domain/case/case.js'
+import type { CaseAction, CaseProfileResource, CaseResource, KyoukaikenpoBurialBenefitResource } from '@aftercare/public-contracts'
+import type { CaseEntity, KyoukaikenpoBurialBenefitContext } from '../../domain/case/case.js'
 import { nextCaseVersion } from '../../domain/case/case.js'
 import { businessToday, findCaseDateIssues, type CaseDateIssue } from '../../domain/case/case-dates.js'
 import type { CaseProfile, ProfileInput } from '../../domain/case/case-profile.js'
@@ -44,6 +44,7 @@ export interface CreateCaseInput {
   relationshipToDeceased: string
   municipality?: string | null
   ownerPerson?: OwnerPersonInput | null
+  kyoukaikenpoBurialBenefit?: KyoukaikenpoBurialBenefitContext
 }
 
 /** 基本情報の訂正。status はここから変更できない。 */
@@ -59,6 +60,8 @@ export interface UpdateCaseInput {
   funeralCompletedAt?: string | null
   /** 丸ごと置換。省略項目は UNKNOWN に正規化される。null で未回答に戻す。キー省略は変更なし。 */
   profile?: ProfileInput | null
+  /** 協会けんぽ案内用の確認済み状態。3項目を丸ごと置換する。 */
+  kyoukaikenpoBurialBenefit?: KyoukaikenpoBurialBenefitContext
 }
 
 export interface CommandMeta {
@@ -131,6 +134,42 @@ function basicInfoVersionOf(entity: CaseEntity): number {
   return entity.basicInfoVersion ?? entity.version
 }
 
+const EMPTY_KYOUKAIKENPO_BURIAL_BENEFIT: KyoukaikenpoBurialBenefitContext = {
+  branch: null,
+  deceasedInsuranceStatus: null,
+  applicantStatus: null,
+}
+
+function normalizeKyoukaikenpoBurialBenefit(
+  value: KyoukaikenpoBurialBenefitContext | null | undefined,
+): KyoukaikenpoBurialBenefitContext {
+  return value ? {
+    branch: value.branch?.trim() || null,
+    deceasedInsuranceStatus: value.deceasedInsuranceStatus,
+    applicantStatus: value.applicantStatus,
+  } : { ...EMPTY_KYOUKAIKENPO_BURIAL_BENEFIT }
+}
+
+function burialBenefitEquals(a: KyoukaikenpoBurialBenefitContext, b: KyoukaikenpoBurialBenefitContext): boolean {
+  return a.branch === b.branch
+    && a.deceasedInsuranceStatus === b.deceasedInsuranceStatus
+    && a.applicantStatus === b.applicantStatus
+}
+
+function toKyoukaikenpoBurialBenefitResource(
+  value: KyoukaikenpoBurialBenefitContext | null | undefined,
+): KyoukaikenpoBurialBenefitResource {
+  const normalized = normalizeKyoukaikenpoBurialBenefit(value)
+  return {
+    ...normalized,
+    missingFields: [
+      ...(!normalized.branch ? ['BRANCH' as const] : []),
+      ...(normalized.deceasedInsuranceStatus === null ? ['DECEASED_INSURANCE_STATUS' as const] : []),
+      ...(normalized.applicantStatus === null ? ['APPLICANT_STATUS' as const] : []),
+    ],
+  }
+}
+
 export function toCaseResource(entity: CaseEntity, access: CaseAccess): CaseResource {
   const allowedActions: CaseAction[] = []
   if (access.can('case.write')) allowedActions.push('UPDATE_BASIC_INFO')
@@ -153,6 +192,7 @@ export function toCaseResource(entity: CaseEntity, access: CaseAccess): CaseReso
     // membership 由来。assertSelf と同じ根拠を FE に見せる。
     selfPersonId: access.member.personId,
     aiPlanningRestriction: entity.aiPlanningRestriction ?? null,
+    kyoukaikenpoBurialBenefit: toKyoukaikenpoBurialBenefitResource(entity.kyoukaikenpoBurialBenefit),
     status: entity.status,
     version: entity.version,
     caseVersion: entity.caseVersion,
@@ -206,6 +246,7 @@ export class CaseService {
           municipality: input.municipality ?? null,
           ownerPersonId,
           profile: null,
+          kyoukaikenpoBurialBenefit: normalizeKyoukaikenpoBurialBenefit(input.kyoukaikenpoBurialBenefit),
           aiPlanningRestriction: null,
           status: 'ACTIVE',
           caseVersion: 1,
@@ -484,6 +525,11 @@ function buildPatch(current: CaseEntity, input: UpdateCaseInput): Partial<CaseEn
   if ('profile' in input) {
     const normalized: CaseProfile | null = input.profile == null ? null : normalizeProfile(input.profile)
     if (!profileEquals(current.profile ?? null, normalized)) patch.profile = normalized
+  }
+  if ('kyoukaikenpoBurialBenefit' in input) {
+    const normalized = normalizeKyoukaikenpoBurialBenefit(input.kyoukaikenpoBurialBenefit)
+    const currentValue = normalizeKyoukaikenpoBurialBenefit(current.kyoukaikenpoBurialBenefit)
+    if (!burialBenefitEquals(currentValue, normalized)) patch.kyoukaikenpoBurialBenefit = normalized
   }
   return patch
 }

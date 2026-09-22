@@ -6,16 +6,13 @@ import './index.css'
 import { App } from './app/App'
 
 /**
- * モックAPIを使うかどうか。
+ * モックAPIを使うかどうか。既定は無効（Backendへ接続する）。
  *
- * 本番ビルドでは既定で無効にする。モックが本番に混入すると、期限や財産の内容が
- * すべて架空の値で表示されてしまい、利用者が誤った判断をするおそれがあるため。
- * 開発時は既定で有効、VITE_USE_MOCK=false で無効にできる。
- * デモ用に本番ビルドでモックを使う場合だけ、明示的に VITE_USE_MOCK=true を指定する。
+ * モックが本番に混入すると、期限や財産の内容がすべて架空の値で表示されてしまい、
+ * 利用者が誤った判断をするおそれがあるため、開発・本番を問わず既定は無効にする。
+ * オフラインデモ等でモックを使う場合だけ、明示的に VITE_USE_MOCK=true を指定する。
  */
-const useMock = import.meta.env.DEV
-  ? import.meta.env.VITE_USE_MOCK !== 'false'
-  : import.meta.env.VITE_USE_MOCK === 'true'
+const useMock = import.meta.env.VITE_USE_MOCK === 'true'
 
 /** 以前のモック利用時に登録された Service Worker が残っていると、実APIを覆い隠してしまう */
 async function unregisterStaleMockWorker() {

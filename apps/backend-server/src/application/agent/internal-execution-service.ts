@@ -16,6 +16,8 @@ import type { CaseMember } from '../../domain/authorization/case-role.js'
 import { roleAllows } from '../../domain/authorization/case-role.js'
 import type { CaseEntity } from '../../domain/case/case.js'
 import type { DocumentEntity } from '../../domain/document/document.js'
+import { analysisFieldsFor } from '../../domain/document/analysis-catalog.js'
+import { extractPdfPages } from '../document/pdf-text.js'
 import { collections } from '../../domain/shared/collections.js'
 import type { CollectionDescriptor } from '../../domain/shared/collections.js'
 import type { EntityBase } from '../../domain/shared/entity.js'
@@ -25,6 +27,7 @@ import type { TenantMember } from '../authorization/case-access.js'
 import type { AgentResultIntake } from '../chat/result-intake.js'
 import type { ConsentService } from '../consent/consent-service.js'
 import type { ReadRepository, SnapshotReader, Tx, UnitOfWork } from '../ports/persistence.js'
+import type { ObjectStorage } from '../ports/object-storage.js'
 import type { ProposalService } from '../proposal/proposal-service.js'
 import { acquireLease, assertLease, leaseLocation, releaseLease } from './lease-service.js'
 import { terminateQueuedRun } from './run-termination.js'
@@ -32,6 +35,7 @@ import { createPendingWait, recordWaiting, validateWaitCondition } from './wait-
 import { recordRunTransitionEvent } from './agent-run-events.js'
 import type { ProposalEntity } from '../../domain/proposal/proposal.js'
 import type { WaitRequestEntity } from '../../domain/agent/wait-request.js'
+import { logger } from '../../presentation/http/logger.js'
 
 interface RunArtifactEntity extends EntityBase {
   runId: string
@@ -77,13 +81,38 @@ type GuidanceAudit = ReturnType<typeof guidanceContextAudit> | { procedureId: nu
 export interface InternalExecutionServiceOptions {
   /** reviewStatus !== 'reviewed' な Definition の案内を拒否するか。本番では true にする。 */
   rejectDraftDefinitions: boolean
+  /** document_analysis の書類本文読み取りに使う。未設定なら document_analysis の context は拒否する。 */
+  storage?: ObjectStorage | null
 }
 
 export class InternalExecutionService {
   constructor(private readonly read: SnapshotReader, private readonly uow: UnitOfWork,
     private readonly consent: ConsentService, private readonly intake: AgentResultIntake,
     private readonly proposals?: ProposalService,
-    private readonly options: InternalExecutionServiceOptions = { rejectDraftDefinitions: false }) {}
+    private readonly options: InternalExecutionServiceOptions = { rejectDraftDefinitions: true }) {}
+
+  /**
+   * PDF はページごとのテキストを取り出す。実OCRは範囲外（#196 対象外）のため、
+   * 画像（JPEG/PNG・文字を持たないPDF）は空ページとして返す。呼び出し側の
+   * モデルは空ページのフィールドを読み取れなかったものとして扱う。
+   */
+  private async loadDocumentPages(target: DocumentEntity): Promise<{ number: number; text: string }[]> {
+    if (!this.options.storage) throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
+    const object = await this.options.storage.get(target.objectKey)
+    if (!object) throw errors.internal({ internal: { reason: 'object missing for stored document', documentId: target.id } })
+    if (object.contentType !== 'application/pdf') return [{ number: 1, text: '' }]
+    try {
+      const extracted = await extractPdfPages(object.content, AbortSignal.timeout(10_000))
+      return extracted.pages
+    } catch (error) {
+      // 実際に文字を持たないPDF（スキャンのみ）と、Worker異常・タイムアウト・上限超過を
+      // ここでは区別しない（実OCRは対象外）。後者を静かに「読み取れなかった」に丸めないよう記録は残す。
+      logger.warn('PDF text extraction failed, treating as unreadable', {
+        documentId: target.id, reason: error instanceof Error ? error.message : String(error),
+      })
+      return [{ number: 1, text: '' }]
+    }
+  }
 
   async cancellation(tenantId: string, caseId: string, runId: string, cancelId: string) {
     const run = await this.read.get<AgentRunEntity>(tenantId, runLocation(caseId, runId))
@@ -98,11 +127,10 @@ export class InternalExecutionService {
       if (run.currentJobId !== jobId || !run.initiatedByUserId) throw errors.conflict({ details: { reason: 'STALE_JOB' } })
       await this.assertAccess(tx, run)
       this.assertActive(run)
-      if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
       const executionAttempt = run.status === 'QUEUED' ? await this.rebaseIfStale(tx, caseId, run) : run.currentAttemptId
       return { tenantId, caseId, runId, jobId, executionAttempt,
         operation: run.operation, scopes: ['context', 'artifact', 'control', 'heartbeat', 'events', 'result', 'wait-requests',
-          ...(run.operation === 'case_planning' ? ['proposals' as const] : [])] }
+          ...(run.operation === 'case_planning' || run.operation === 'document_analysis' ? ['proposals' as const] : [])] }
     })
   }
 
@@ -208,8 +236,27 @@ export class InternalExecutionService {
       })
       if (actions.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED' } })
       content.actions = actions.items.map(p => ({ id: p.id, actionId: p.actionId ?? null, status: p.status, proposalVersion: p.proposalVersion, payloadHash: p.payloadHash }))
-      if (run.operation === 'document_analysis') throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' } })
-      if (run.operation === 'task_guidance') {
+      if (run.operation === 'document_analysis') {
+        if (run.targetType !== 'DOCUMENT') throw errors.forbidden()
+        const target = await reader.get<DocumentEntity>(claims.tenantId, { collection: collections.documents, caseId: claims.caseId, id: run.targetId })
+        if (!target) throw errors.notFound()
+        if (target.archived || target.storageState !== 'STORED' || target.inspection.status !== 'PASSED') {
+          throw errors.preconditionFailed({ details: { reason: 'DOCUMENT_NOT_DELIVERABLE' } })
+        }
+        const fields = analysisFieldsFor(target.kind)
+        if (!fields) throw errors.featureNotConnected({ details: { reason: 'DOCUMENT_KIND_NOT_SUPPORTED' } })
+        // AIはdispatch本文からCase IDを知らない。ProcessedDocumentのscopeに必要なので明示する。
+        content.caseId = claims.caseId
+        content.documentId = target.id
+        content.documentVersion = target.version
+        content.inspectedDocumentVersion = target.version
+        content.inspection = 'PASSED'
+        // マスキング方式は #25/#26 未決定。仮のバージョン識別子を返す（実マスキングなし）。
+        content.maskingPolicyVersion = 'none-dev-v1'
+        content.pages = await this.loadDocumentPages(target)
+        content.fields = fields.map(field => ({ id: field.id, label: field.label, required: field.required, current: null }))
+        content.documents = [{ id: target.id, version: target.version }]
+      } else if (run.operation === 'task_guidance') {
         if (run.targetType !== 'TASK') throw errors.forbidden()
         const target = await reader.get<EntityBase & { procedureId?: string | null }>(claims.tenantId, { collection: collections.tasks, caseId: claims.caseId, id: run.targetId })
         if (!target) throw errors.notFound()
@@ -226,6 +273,9 @@ export class InternalExecutionService {
           if (definition.reviewStatus !== 'reviewed' && this.options.rejectDraftDefinitions) {
             throw errors.preconditionFailed({ details: { reason: 'PROCEDURE_NOT_REVIEWED' } })
           }
+          const initiatingMember = run.initiatedByUserId
+            ? await reader.get<CaseMember>(claims.tenantId, { collection: collections.caseMembers, caseId: claims.caseId, id: run.initiatedByUserId })
+            : null
           const allow = guidanceAllowlist(definition)
           const entities: Partial<Record<EntityContextGroup, readonly Record<string, unknown>[]>> = {}
           for (const group of allow.keys()) {
@@ -235,9 +285,25 @@ export class InternalExecutionService {
             if (!collection) continue
             const page = await reader.list<EntityBase>(claims.tenantId, collection, claims.caseId, { limit: 100, ...(where ? { where } : {}) })
             if (page.nextCursor) throw errors.preconditionFailed({ details: { reason: 'CONTEXT_LIMIT_EXCEEDED', collection: collection.name } })
-            entities[group] = page.items as unknown as Record<string, unknown>[]
+            let items = page.items as unknown as Record<string, unknown>[]
+            if (group === 'persons' || group === 'relationships') items = items.filter(item => item.excludedAt === null || item.excludedAt === undefined)
+            if (group === 'persons' && definition.guidance.personScope === 'initiating-member') {
+              items = initiatingMember?.active && initiatingMember.personId
+                ? items.filter(item => item.id === initiatingMember.personId)
+                : []
+            }
+            entities[group] = items
           }
-          const projection = projectGuidanceContext(definition, { case: entity as unknown as Record<string, unknown>, profile: (entity.profile ?? null) as Record<string, unknown> | null, entities })
+          const burialBenefit = entity.kyoukaikenpoBurialBenefit
+          const projectionCase = {
+            ...(entity as unknown as Record<string, unknown>),
+            // Caseの正式な専用状態を、ProcedureDefinitionが列挙したキーだけに展開する。
+            // 他手続きではallowlistに無いため、値はContextへ出ない。
+            healthInsuranceBranch: burialBenefit?.branch ?? null,
+            deceasedInsuranceStatus: burialBenefit?.deceasedInsuranceStatus ?? null,
+            burialBenefitApplicantStatus: burialBenefit?.applicantStatus ?? null,
+          }
+          const projection = projectGuidanceContext(definition, { case: projectionCase, profile: (entity.profile ?? null) as Record<string, unknown> | null, entities })
           Object.assign(content, projection.content)
           content.procedure = { id: definition.id, version: definition.version, reviewStatus: definition.reviewStatus }
           guidanceAudit = guidanceContextAudit(definition, projection)
@@ -279,7 +345,7 @@ export class InternalExecutionService {
         content.planningHistory = planningHistory.data
         content.planningRestriction = planningRestrictionSchema.parse(entity.aiPlanningRestriction ?? null)
       }
-      if (run.operation !== 'task_guidance') {
+      if (run.operation !== 'task_guidance' && run.operation !== 'document_analysis') {
         // 原本・ファイル名・Storage keyは含めない。検査済みでも文書本文は#27接続まで配信しない。
         const documents = await reader.list<DocumentEntity>(claims.tenantId, collections.documents, claims.caseId, {
           limit: 100, where: [{ field: 'inspection.status', op: '==', value: 'PASSED' }],
@@ -368,8 +434,9 @@ export class InternalExecutionService {
     // バージョン更新を省略したlegacyデータにも安全側で対処する。
     const documents = artifact.content.documents as { id: string; version: number }[] | undefined
     for (const ref of documents ?? []) {
+      // 版は解析状態（analysisState/agentRunId）の更新でも進むため比較しない（proposal-service.tsと同じ理由）。
       const doc = await tx.get<DocumentEntity>({ collection: collections.documents, caseId: claims.caseId, id: ref.id })
-      if (!doc || doc.version !== ref.version || doc.archived || doc.storageState !== 'STORED' || doc.inspection.status !== 'PASSED') {
+      if (!doc || doc.archived || doc.storageState !== 'STORED' || doc.inspection.status !== 'PASSED') {
         throw errors.conflict({ details: { reason: 'DOCUMENT_NOT_DELIVERABLE' } })
       }
     }
@@ -439,9 +506,17 @@ export class InternalExecutionService {
         return this.intake.applyGuidanceInterruption(tx, call.claims.caseId, { ...envelope, resultId: input.resultId,
           failureReason: input.failureReason, output: input.output, caseVersion: input.caseVersion })
       }
+      if (run.operation === 'document_analysis' && run.targetType === 'DOCUMENT') {
+        // 確認（Approval）は proposal() の別呼出しで既に保存済み。ここでは解析状態だけを最後に変える。
+        const location = { collection: collections.documents, caseId: call.claims.caseId, id: run.targetId }
+        const document = await tx.get<DocumentEntity>(location)
+        if (document && document.agentRunId === run.id) {
+          tx.update<DocumentEntity>(location, document.version, { analysisState: input.status === 'SUCCEEDED' ? 'COMPLETED' : 'FAILED' })
+        }
+      }
       tx.update<AgentRunEntity>(runLocation(call.claims.caseId, run.id), run.version, { status: input.status, finishedAt: new Date().toISOString(),
         failureReason: input.kind === 'execution_interrupted' ? input.failureReason : null,
-        outcome: input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
+        outcome: 'output' in input && input.output ? { ...input.output, resultId: input.resultId, attemptId: run.currentAttemptId, caseVersion: input.caseVersion } : null })
       // 公開可能な完了履歴。narrative本文・questionsは含めない（別途GET agent-runsで確認する）。
       await recordRunTransitionEvent(tx, run, 'RESULT', input.status, {
         eventId: input.resultId,
@@ -484,10 +559,13 @@ export class InternalExecutionService {
         if (!Array.isArray(allowed) || !allowed.some(item => item.id === ref.id && item.version === ref.version)) throw errors.forbidden()
         const collection = ref.type === 'DOCUMENT' ? collections.documents : ref.type === 'TASK' ? collections.tasks : collections.messages
         const current = await tx.get<EntityBase>({ collection, caseId: call.claims.caseId, id: ref.id })
-        if (!current || current.version !== ref.version) throw errors.conflict({ details: { reason: 'BASIS_VERSION_CHANGED' } })
+        if (!current) throw errors.conflict({ details: { reason: 'BASIS_VERSION_CHANGED' } })
         if (ref.type === 'DOCUMENT') {
+          // 版は解析状態の更新でも進むため比較しない。利用可否で判定する。
           const document = current as DocumentEntity
           if (document.archived || document.storageState !== 'STORED' || document.inspection.status !== 'PASSED') throw errors.forbidden()
+        } else if (current.version !== ref.version) {
+          throw errors.conflict({ details: { reason: 'BASIS_VERSION_CHANGED' } })
         }
       }
   }

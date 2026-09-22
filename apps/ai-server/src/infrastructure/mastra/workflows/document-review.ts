@@ -5,6 +5,7 @@ import { assertDeliveredDocument, documentReviewSchema, documentScopeSchema, ext
 import type { DocumentScope, ProcessedDocument } from '../../../orchestration/documents/review.js'
 
 /** The delivery implementation must authenticate to Backend and enforce live consent; no URL/Storage credentials enter the model. */
+export const DOCUMENT_REVIEW_WORKFLOW = 'document-review-v1'
 export interface DocumentReviewDependencies {
   signal: AbortSignal
   guard(): Promise<void>
@@ -29,5 +30,5 @@ export function createDocumentReviewWorkflow(deps: DocumentReviewDependencies) {
       if (contentHash(before) !== contentHash(after)) throw new Error('Document or facts changed during extraction')
       return reviewExtraction(latest, inputData.extraction)
     } })
-  return createWorkflow({ id: 'document-review-v1', inputSchema: documentScopeSchema, outputSchema }).then(load).then(extract).then(review).commit()
+  return createWorkflow({ id: DOCUMENT_REVIEW_WORKFLOW, inputSchema: documentScopeSchema, outputSchema }).then(load).then(extract).then(review).commit()
 }

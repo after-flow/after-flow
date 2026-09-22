@@ -23,14 +23,25 @@ fail-closed 前提が崩れる点に注意する）。署名を検証しない�
 ## 2. 起動して利用者を登録する
 
 Backend は認証済みでも tenant membership（Firestore の `tenants/{AUTH_TENANT_ID}/members/{uid}`）が
-無ければ、`GET/POST /me` 以外は 403 `NOT_REGISTERED` になる。登録は次のどちらか。
+無ければ、`GET/POST /me` 以外は 403 `NOT_REGISTERED` になる。
+
+`make up` は最後に `dev-seed-demo` を自動実行し、固定のログイン情報
+`demo@example.com` / `after-flow-dev-password`（`DEV_EMAIL` / `DEV_PASSWORD` で変更可）を
+Auth Emulator に作成（emailVerified済み）した上で、そのuidを tenant `after-flow-demo`
+（`DEV_TENANT`）へ member登録する。Frontend（`VITE_USE_MOCK=false`）はこのメール・パスワードで
+そのままログインできる。Auth Emulator はコンテナ再作成で消えるため、`make up` のたびに作り直す
+（冪等）。
+
+別のメール・パスワードで用意したい場合や、tenantだけ登録し直したい場合は個別に呼べる。
 
 ```sh
+make dev-seed-demo DEV_EMAIL=another@example.com DEV_PASSWORD=another-password
 make dev-seed                          # tenant after-flow-demo に demo-user を登録（uidを直接指定する場合）
 make dev-seed DEV_USER=<uid>           # make dev-token で取得したuidを登録する場合
 ```
 
-または、取得したトークンで Swagger UI から `POST /me` を呼ぶ（Frontend の登録フローと同じ経路）。
+Swagger UI だけで使う場合や、Frontend を介さず個別のトークンを取得したい場合は、取得したトークンで
+`POST /me` を呼ぶ（Frontend の登録フローと同じ経路）。
 
 ## 3. トークンを取得して Swagger UI で Authorize する
 
@@ -76,25 +87,8 @@ make logs SERVICE=backend-worker   # delivered / retrying / pending
 make logs SERVICE=ai-server        # dispatch 受付、OrcaRouter 呼出しのメトリクス
 ```
 
-## [代替] static-jwks（固定鍵）で試す
-
-Auth Emulator を使わず、Backend だけで完結する固定鍵検証を使う手順。CI・非Docker試験と同じ経路で、
-compose既定の `AUTH_MODE=firebase-emulator` を `.env` で上書きするため、**上書き後はFrontendの実ログイン
-（`VITE_USE_MOCK=false`）が通らなくなる**（BackendがEmulator発行のトークンを受理しなくなるため）。
-
-```sh
-make dev-auth                          # 開発用ES256鍵を生成し .env にstatic-jwks設定を追記
-make up
-make dev-seed                          # tenant after-flow-demo に demo-user を登録
-make dev-token DEV_USER=demo-user DEV_TENANT=after-flow-demo   # 旧来のJWT（8時間）
-```
-
-`.dev-auth/private.jwk.json`（秘密鍵）は Backend コンテナへ渡さない。作り直す場合は `.env` の認証行を
-消して `make dev-auth` を再実行する。上の `dev-token`/`dev-verify-email` はこの代替経路には対応しない
-（`dev-auth.mjs token --key ... --user ... --tenant ...` を直接呼ぶ）。
-
 ## 制約
 
 - 開発用トークンと seed は本番の登録・招待・失効の代替ではない。
-- `.env` と `.dev-auth/` は commit しない。鍵を配布しない。
+- `.env` は commit しない。鍵を配布しない。
 - `after-flow-demo` 以外の tenant を使う場合は `.env` の `OUTBOX_TENANT_IDS` と `AUTH_TENANT_ID` の両方を変える。片方だけ変えると Worker が対象tenantのOutboxを処理しない、または認証が通らない。

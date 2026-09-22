@@ -57,7 +57,7 @@ AI専用のRuntime Firestoreを使用する場合も、Business Firestoreとはp
 - document reviewの境界と検査結果の取り扱い
 - 公式情報源catalogと安全なHTTPS取得
 - model allowlist、budget processor、fallback policy
-- fixture評価と比較command
+- fixture評価、予算上限付きOrcaRouter実モデル評価、費用照合command
 
 標準の `src/main.ts` は、開発環境で `ORCAROUTER_API_KEY` とAI専用Runtime設定がある場合、ハッカソン用のOrcaRouterモデル、公式資料Catalog、予算、永続Runtime、Workerを組み立てます。設定が無い場合はlivenessだけで起動し、実行endpointとreadinessは `AI_EXECUTION_NOT_CONNECTED` を返します。ハッカソン構成は `NODE_ENV=production` では起動できません。
 
@@ -164,6 +164,14 @@ pnpm --filter @aftercare/ai-server eval:fixture
 pnpm --filter @aftercare/ai-server eval:compare
 ```
 
+OrcaRouter実モデル評価（APIキーと費用上限が必要）:
+
+```bash
+pnpm --filter @aftercare/ai-server eval:live-guidance --max-usd 5 --repetitions 2 --cases 8
+```
+
+評価範囲と直近の実測値は [AIの評価](EVALUATION.md)、Provider attemptと費用の扱いは [Provider Policy](PROVIDER_POLICY.md) を参照してください。
+
 評価はcode testの代替ではありません。安全性、出典、専門家確認、未確認事項、token/cost budget、再現性を分けて確認します。
 
 ## 現在の未完了範囲
@@ -173,7 +181,7 @@ pnpm --filter @aftercare/ai-server eval:compare
 - Backend Outbox workerと公開画面からの実行配送
 - BackendとAI双方を含むdispatch、wait、resume、proposalのE2E検証
 - AI専用Runtime Firestoreの本番project/database、IAM、index、保持期間の設定
-- timeout、retry、DLQ、snapshot不整合、Provider障害に対する監視とRunbook
-- 品質・安全性・費用の継続評価とrelease基準の確定
+- production向けtimeout、DLQ、snapshot不整合、Provider障害の監視とRunbook
+- 品質・安全性・費用の継続評価と本番release基準の確定
 
 health endpointが成功しているだけで、これらが完了したとは判断しないでください。

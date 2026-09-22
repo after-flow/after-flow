@@ -1,7 +1,7 @@
 import type { TokenVerifier } from '../../application/ports/identity.js'
 import { FirebaseEmulatorTokenVerifier } from './firebase-emulator-verifier.js'
 import type { JwtVerifierConfig } from './jwt-verifier.js'
-import { DEFAULT_ALGORITHMS, JwtTokenVerifier, remoteKeySet, staticKeySet } from './jwt-verifier.js'
+import { DEFAULT_ALGORITHMS, JwtTokenVerifier, remoteKeySet } from './jwt-verifier.js'
 
 /**
  * 認証の設定読み込み。
@@ -15,14 +15,12 @@ import { DEFAULT_ALGORITHMS, JwtTokenVerifier, remoteKeySet, staticKeySet } from
  * `OUTBOX_TENANT_IDS` に明示列挙した tenant しか処理しないため選ばない
  * （`application/authorization/case-access.ts` の `resolveUser` が使う）。
  */
-export type AuthMode = 'jwks' | 'static-jwks' | 'firebase-emulator'
+export type AuthMode = 'jwks' | 'firebase-emulator'
 
 export interface AuthConfig extends JwtVerifierConfig {
   mode: AuthMode
   /** mode = jwks のときの鍵取得元 */
   jwksUri?: string
-  /** mode = static-jwks のときの固定鍵（試験・ローカル専用） */
-  staticJwks?: { keys: Record<string, unknown>[] }
   /** 配備単位で固定する tenant。全モード必須。 */
   tenantId: string
   /** mode = firebase-emulator のときの Emulator 接続先（検証には使わない。設定の意図を明示させる） */
@@ -37,14 +35,11 @@ function required(env: NodeJS.ProcessEnv, key: string): string {
 
 export function readAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
   const mode = (env.AUTH_MODE ?? 'jwks') as AuthMode
-  if (mode !== 'jwks' && mode !== 'static-jwks' && mode !== 'firebase-emulator') {
+  if (mode !== 'jwks' && mode !== 'firebase-emulator') {
     throw new Error(`AUTH_MODE が不正です: ${String(env.AUTH_MODE)}`)
   }
 
-  // 固定鍵・Emulator 検証は試験とローカル開発のためのもの。本番相当の環境では選べない。
-  if (mode === 'static-jwks' && env.NODE_ENV === 'production') {
-    throw new Error('AUTH_MODE=static-jwks は本番では使用できません。')
-  }
+  // Emulator 検証は試験とローカル開発のためのもの。本番相当の環境では選べない。
   if (mode === 'firebase-emulator' && env.NODE_ENV === 'production') {
     throw new Error('AUTH_MODE=firebase-emulator は本番では使用できません。')
   }
@@ -68,18 +63,13 @@ export function readAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     tenantId: required(env, 'AUTH_TENANT_ID'),
     clockToleranceSeconds: Number(env.AUTH_CLOCK_TOLERANCE_SECONDS ?? 5),
     requireEmailVerified,
-    // Firebase の ID トークンには auth_time が必ず入る。無いものを通すと7日上限をすり抜ける
-    requireAuthTime: mode !== 'static-jwks',
-  } satisfies Omit<AuthConfig, 'jwksUri' | 'staticJwks' | 'firebaseAuthEmulatorHost'>
+  } satisfies Omit<AuthConfig, 'jwksUri' | 'firebaseAuthEmulatorHost'>
 
   if (base.algorithms.some((algorithm) => !algorithm.startsWith('RS') && !algorithm.startsWith('ES'))) {
     // 対称鍵や none を許すと、公開鍵を知る者が署名を作れてしまう。
     throw new Error('AUTH_ALGORITHMS には非対称鍵の署名方式のみを指定してください。')
   }
 
-  if (mode === 'static-jwks') {
-    return { ...base, staticJwks: JSON.parse(required(env, 'AUTH_STATIC_JWKS')) }
-  }
   if (mode === 'firebase-emulator') {
     return { ...base, firebaseAuthEmulatorHost: required(env, 'FIREBASE_AUTH_EMULATOR_HOST') }
   }
@@ -88,9 +78,5 @@ export function readAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
 
 export function createTokenVerifier(config: AuthConfig): TokenVerifier {
   if (config.mode === 'firebase-emulator') return new FirebaseEmulatorTokenVerifier(config)
-  const keys =
-    config.mode === 'static-jwks'
-      ? staticKeySet(config.staticJwks ?? { keys: [] })
-      : remoteKeySet(config.jwksUri ?? '')
-  return new JwtTokenVerifier(config, keys)
+  return new JwtTokenVerifier(config, remoteKeySet(config.jwksUri ?? ''))
 }

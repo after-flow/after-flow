@@ -86,20 +86,6 @@ describe('composition: 内部readiness endpointの組み立て', () => {
     assert.equal(checksOf(body).storage?.status, 'ok')
   })
 
-  it('AUTH_MODE=static-jwks は起動できてもreadinessでは本番相当ではないとして失敗する', async () => {
-    const { body } = await readiness({
-      ...baseEnv,
-      AUTH_MODE: 'static-jwks',
-      AUTH_ISSUER: 'https://issuer.example.test/',
-      AUTH_AUDIENCE: 'aud',
-      AUTH_TENANT_ID: 'after-flow-demo',
-      AUTH_STATIC_JWKS: JSON.stringify({ keys: [] }),
-    })
-    const auth = checksOf(body).auth
-    assert.equal(auth?.status, 'fail')
-    assert.equal(auth?.reason, 'STATIC_JWKS_NOT_PRODUCTION_GRADE')
-  })
-
   it('AUTH_MODE=firebase-emulator は起動できてもreadinessでは本番相当ではないとして失敗する', async () => {
     const { body } = await readiness({
       ...baseEnv,

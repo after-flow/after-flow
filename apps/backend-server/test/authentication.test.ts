@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { before, describe, it } from 'node:test'
 import type { JWK, KeyObject } from 'jose'
-import { SignJWT, exportJWK, generateKeyPair } from 'jose'
+import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from 'jose'
 import { AccessService } from '../src/application/authorization/case-access.js'
 import type { ReadRepository } from '../src/application/ports/persistence.js'
 import { createApp } from '../src/app.js'
 import { readAuthConfig } from '../src/infrastructure/identity/config.js'
-import { JwtTokenVerifier, staticKeySet } from '../src/infrastructure/identity/jwt-verifier.js'
+import { JwtTokenVerifier } from '../src/infrastructure/identity/jwt-verifier.js'
 import { authentication } from '../src/presentation/http/authentication.js'
 import { AppError } from '../src/shared/app-error.js'
 import { fixtureRoutes } from './helpers/fixture-routes.js'
@@ -22,8 +22,6 @@ const config = {
   algorithms: ['RS256', 'ES256'],
   clockToleranceSeconds: 0,
   requireEmailVerified: true,
-  // 試験用の固定鍵トークンには auth_time が無い（static-jwks と同じ扱い）
-  requireAuthTime: false,
 }
 
 let signingKey: KeyObject
@@ -39,7 +37,7 @@ before(async () => {
 })
 
 function verifier(overrides: Partial<typeof config> = {}) {
-  return new JwtTokenVerifier({ ...config, ...overrides }, staticKeySet(jwks as never))
+  return new JwtTokenVerifier({ ...config, ...overrides }, createLocalJWKSet(jwks as never))
 }
 
 interface TokenOptions {
@@ -51,15 +49,17 @@ interface TokenOptions {
   expiresIn?: string
   key?: KeyObject
   emailVerified?: boolean | null
+  /** 既定は0（たった今ログイン）。auth_time を省いたトークンを作るには `noAuthTime: true` を指定する。 */
   authTimeSecondsAgo?: number
+  noAuthTime?: boolean
 }
 
 async function signToken(options: TokenOptions = {}): Promise<string> {
   const claims: Record<string, unknown> = {}
   if (options.tenant !== null) claims[TENANT_CLAIM] = options.tenant ?? 'tenant-a'
   if (options.emailVerified !== null) claims.email_verified = options.emailVerified ?? true
-  if (options.authTimeSecondsAgo !== undefined) {
-    claims.auth_time = Math.floor(Date.now() / 1000) - options.authTimeSecondsAgo
+  if (!options.noAuthTime) {
+    claims.auth_time = Math.floor(Date.now() / 1000) - (options.authTimeSecondsAgo ?? 0)
   }
 
   const jwt = new SignJWT(claims)
@@ -124,6 +124,9 @@ describe('トークン検証', () => {
         aud: AUDIENCE,
         exp: Math.floor(Date.now() / 1000) + 300,
         iat: Math.floor(Date.now() / 1000),
+        // auth_time を含めておく。無いと AUTH_TIME_REQUIRED でも同じ
+        // UNAUTHENTICATED になり、署名検証をスキップしても通ってしまう。
+        auth_time: Math.floor(Date.now() / 1000),
         email_verified: true,
       }),
     ).toString('base64url')
@@ -141,6 +144,9 @@ describe('トークン検証', () => {
         aud: AUDIENCE,
         exp: Math.floor(Date.now() / 1000) + 300,
         iat: Math.floor(Date.now() / 1000),
+        // auth_time を含めておく。無いと AUTH_TIME_REQUIRED でも同じ
+        // UNAUTHENTICATED になり、改竄検知をスキップしても通ってしまう。
+        auth_time: Math.floor(Date.now() / 1000),
         email_verified: true,
       }),
     ).toString('base64url')
@@ -179,15 +185,9 @@ describe('トークン検証', () => {
     assert.equal(identity.subject, 'user-1')
   })
 
-  it('auth_time が無いトークンは requireAuthTime:false（static-jwks）でだけ通す', async () => {
-    const token = await signToken()
-    const identity = await verifier().verify(token)
-    assert.equal(identity.authTime, null)
-  })
-
-  it('requireAuthTime:true（jwks / firebase-emulator）では auth_time の無いトークンを401で拒否する', async () => {
-    const token = await signToken()
-    const error = await rejection(() => verifier({ requireAuthTime: true }).verify(token))
+  it('auth_time の無いトークンを401 AUTH_TIME_REQUIREDで拒否する', async () => {
+    const token = await signToken({ noAuthTime: true })
+    const error = await rejection(() => verifier().verify(token))
     assert.equal(error.code, 'UNAUTHENTICATED')
     assert.equal(error.details?.reason, 'AUTH_TIME_REQUIRED')
   })
@@ -205,7 +205,6 @@ describe('認証の設定', () => {
     AUTH_ISSUER: ISSUER,
     AUTH_AUDIENCE: AUDIENCE,
     AUTH_TENANT_ID: 'after-flow-demo',
-    AUTH_STATIC_JWKS: '{"keys":[]}',
   }
 
   it('issuer と audience が無ければ起動を止める', () => {
@@ -230,22 +229,10 @@ describe('認証の設定', () => {
       () =>
         readAuthConfig({
           ...base,
-          AUTH_MODE: 'static-jwks',
+          AUTH_MODE: 'jwks',
           AUTH_ALGORITHMS: 'HS256',
         } as NodeJS.ProcessEnv),
       /非対称鍵/,
-    )
-  })
-
-  it('固定鍵モードを本番で選べない', () => {
-    assert.throws(
-      () =>
-        readAuthConfig({
-          ...base,
-          AUTH_MODE: 'static-jwks',
-          NODE_ENV: 'production',
-        } as NodeJS.ProcessEnv),
-      /本番では使用できません/,
     )
   })
 

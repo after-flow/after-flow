@@ -19,7 +19,7 @@ import type { LocalOutboxHandler } from './outbox-dispatcher.js'
 import { leaseLocation, releaseLease } from './lease-service.js'
 import { recordWaiting, waitLocation } from './wait-requests.js'
 import { recordRunTransitionEvent } from './agent-run-events.js'
-import { failGuidanceForRun, terminateQueuedRun } from './run-termination.js'
+import { failRunTargets, terminateQueuedRun } from './run-termination.js'
 
 const runLocation = (caseId: string, id: string) => ({ collection: collections.agentRuns, caseId, id })
 const inboxTypes = new Set(['proposal.applied', 'approval.rejected', 'document.registered'])
@@ -112,12 +112,15 @@ export class RunReconciler implements LocalOutboxHandler {
           || Date.parse(stored.updatedAt) >= Date.now() - 600_000) return
         if (!await this.authorizeOrStop(tx, current)) return
         if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
-        tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, { status: 'NEEDS_ATTENTION', failureReason: '待機Snapshotの保存を確認できません。再試行が必要です。' })
+        tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, {
+          status: 'NEEDS_ATTENTION', failureReason: '待機Snapshotの保存を確認できません。再試行が必要です。',
+          ...(current.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
+        })
         await recordRunTransitionEvent(tx, current, 'RESULT', 'NEEDS_ATTENTION', {
           eventId: fingerprintOf({ runId, attemptId: current.currentAttemptId, reason: 'snapshot_missing', waitRequestId: wait.id }),
           detail: { operation: 'RECONCILE', failureReason: 'SNAPSHOT_MISSING' },
         })
-        await failGuidanceForRun(tx, caseId, current, { failureReason: 'SNAPSHOT_MISSING', attemptId: current.currentAttemptId })
+        await failRunTargets(tx, caseId, current, { failureReason: 'SNAPSHOT_MISSING', attemptId: current.currentAttemptId })
         tx.audit({ caseId, type: 'agent_run.snapshot_missing', target: { collection: collections.agentRuns.name, id: runId, version: current.version + 1 }, detail: { waitRequestId: wait.id } })
       })
     } else if (!wait) {
@@ -128,12 +131,15 @@ export class RunReconciler implements LocalOutboxHandler {
         const lease = await tx.get<CaseLeaseEntity>(leaseLocation(caseId))
         if (lease?.holderRunId === runId && lease.fencingToken === current.fencingToken && !isLeaseExpired(lease, Date.now())) return
         if (snapshot.state === 'COMPLETED' || snapshot.state === 'WAITING' || current.attempt >= 3) {
-          tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, { status: 'NEEDS_ATTENTION', failureReason: '実行結果または待機状態の確認が必要です。' })
+          tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, {
+            status: 'NEEDS_ATTENTION', failureReason: '実行結果または待機状態の確認が必要です。',
+            ...(current.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
+          })
           await recordRunTransitionEvent(tx, current, 'RESULT', 'NEEDS_ATTENTION', {
             eventId: fingerprintOf({ runId, attemptId: current.currentAttemptId, reason: 'recovery_attention' }),
             detail: { operation: 'RECONCILE', failureReason: 'RECOVERY_ATTENTION' },
           })
-          await failGuidanceForRun(tx, caseId, current, { failureReason: 'RECOVERY_ATTENTION', attemptId: current.currentAttemptId })
+          await failRunTargets(tx, caseId, current, { failureReason: 'RECOVERY_ATTENTION', attemptId: current.currentAttemptId })
           tx.audit({ caseId, type: 'agent_run.recovery_attention', target: { collection: collections.agentRuns.name, id: runId, version: current.version + 1 }, detail: {} })
           return
         }
@@ -199,12 +205,15 @@ export class RunReconciler implements LocalOutboxHandler {
         const wait = await tx.require<WaitRequestEntity>(location)
         tx.update<WaitRequestEntity>(location, wait.version, { state: 'CANCELLED' })
       }
-      tx.update<AgentRunEntity>(runLocation(run.caseId!, run.id), run.version, { status: 'CANCELLED', failureReason: '実行権限または同意が失効しました。', finishedAt: new Date().toISOString() })
+      tx.update<AgentRunEntity>(runLocation(run.caseId!, run.id), run.version, {
+        status: 'CANCELLED', failureReason: '実行権限または同意が失効しました。', finishedAt: new Date().toISOString(),
+        ...(run.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
+      })
       await recordRunTransitionEvent(tx, run, 'CANCELLED', 'CANCELLED', {
         eventId: fingerprintOf({ runId: run.id, attemptId: run.currentAttemptId, reason: 'permission_revoked' }),
         detail: { previousStatus: run.status },
       })
-      await failGuidanceForRun(tx, run.caseId!, run, { failureReason: 'PERMISSION_REVOKED', attemptId: run.currentAttemptId })
+      await failRunTargets(tx, run.caseId!, run, { failureReason: 'PERMISSION_REVOKED', attemptId: run.currentAttemptId })
       tx.audit({ caseId: run.caseId, type: 'agent_run.permission_revoked', target: { collection: collections.agentRuns.name, id: run.id, version: run.version + 1 }, detail: {} })
       return false
     }

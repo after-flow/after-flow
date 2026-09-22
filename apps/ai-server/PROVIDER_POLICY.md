@@ -1,28 +1,36 @@
-# Provider policyとOrch接続境界
+# Provider PolicyとOrcaRouter接続境界
 
-対象: #53/#54の認可・予算・Fallback・計測。実Providerとハッカソン指定OrchRouterは未登録。
+開発用ハッカソン構成は、OrcaRouterの固定モデルをCore/Research Agentへ渡す。モデル選択、転送可能なデータ区分、予算、期限はアプリケーションのProvider Policyで制限する。OrcaRouterへ独立した業務Route選択APIがあるとは仮定しない。
 
-`createAuthorizedModels`は、認可済みpolicy IDの候補をOrchRouter Portへ送り、返された最大2候補を検証する。
-request ID・有効期限・候補範囲・重複を検査し、実登録済みSDKのprovider/model IDを照合する。
-Orchへ渡すのはoperation/role/データ区分/policy ID等のmetadataだけで、案件本文や認証情報は含めない。
-Portに既定実装や独自switchによる代用品はない。指定製品の資料・SDK・利用条件を確認して実Adapterを登録する必要がある。
+## 現在のPolicy
 
-policyは版・レビュー記録/期限・役割・データ区分・学習利用禁止・保持期間・必要能力・通貨・単価・モデル上限を持つ。
-Backend認可に基づく最新grantを実際のSDK呼出し前に取得し、提供先・期限・保持条件を再検証する。
-researchはpublic_researchに限定する。Schemaはgrantの真正性を証明しない。grant取得Portの実Backend接続は未実装。
+- `orca-core-primary` と `orca-core-fallback` の順序付き2候補。
+- `minimized_case` はCoreだけ、`public_research` はResearchだけに渡す。
+- Policyの確認日は `2026-09-21T00:00:00Z`、期限は `2027-09-21T00:00:00Z` に固定し、再起動で延長しない。
+- review referenceは [OrcaRouter data handling](https://docs.orcarouter.ai/operations/data-handling)。ハッカソン用の確認記録であり、上流Providerの本番利用条件は別にレビューする。
+- `trainingUse: false`、`retentionDays: 0` はローカルの許可条件である。OrcaRouterや上流Providerが実際に同じ条件を保証する証拠として扱わない。
+- Backend grantを各物理呼び出しの直前に再検査し、期限、データ区分、保持上限、共有予算に違反した通信を開始しない。
 
-FallbackのループはMastra標準のモデル配列を使用する。各SDK呼出しを薄いAdapterで包み、共有予算を先に予約する。
-SDK retryは0、候補は別Provider最大2件なので、同一推論での実通信は最大2attempt（要件上限3以内）。
-429/5xxのみ一時障害として扱い、認可エラー・設定不備・予算停止・同意撤回・未知エラーは後続の通信も停止する。
-一部の回答/Tool callを受信した後は別Providerへ切り替えない。SDK v2の具象モデルのみ対応し、v3/v4等は適合試験後に追加する。
+## Fallback
 
-tokenと費用はProviderの確認済み入力上限・出力上限・単価から予約する保守的な値。実消費量不明でも差額を自動返却しない。
-入力上限が実モデルの硬い上限であること、reasoning等の追加料金も含むことをレビューで確認する。単価未設定では有効化しない。
-Provider Adapterが各attemptを課金する構成ではAgentBudgetの`inferenceChargedByProviderAdapter`を指定し、Processorの二重予約を避ける。
-Tool上限・Backend制御照会は引き続き標準Processorが実行する。
+Mastraへ認可済みモデル配列を渡し、SDK retryは0にする。429、5xx、timeout、送信前または未完了のtransport障害だけを一時障害として次候補へ進める。401/402/403、Policy違反、予算停止、不正Schema、部分出力後の障害では切り替えない。
 
-計測はpolicy/版/Orch evidence ID/役割/成否/時間/token/分類だけ。本文・資格情報・生のSDKエラーを記録しない。
-モデル使用量が返らない場合はnullとし、0や推定値を実測として扱わない。永続Trace/Scorer連携は評価PRで行う。
+各候補の前に、そのPolicyの最大tokenと概算費用を予約する。候補は異なるモデル系列かつ同じ予算通貨でなければならない。決定的テストでtimeout、429、500からのfallback成功、全候補失敗、不正構造化出力ではProvider fallbackを行わないことを確認する。
 
-検証は実MastraのモデルFallbackと合成SDKで、503からの切替・各attemptの予算予約・403/撤回時の送信停止・途中Stream停止を確認する。
-FakeのOrch decisionはtest内だけに置き、実Orch利用完了の証拠にはしない。
+## Provider attemptの記録
+
+AI専用Runtime Firestoreの `provider_metrics` に、各物理呼び出しをrun単位で保存する。
+
+- run/job/execution attempt、Provider attempt ID
+- role、Policy ID/revision、要求model、fallback元Policy
+- OrcaRouter request ID、公開されたresolved/fallback model
+- success/failure、分類済み失敗理由、latency、input/output token
+- Policy単価による概算費用、OrcaRouter応答に含まれる暫定費用
+
+SchemaにはPrompt、回答本文、Case情報、原本文、API key、生のSDK errorを持たせない。request IDを使い、請求画面またはレビュー済みexportの確定費用と `reconcile:orca-cost` で照合する。概算値、gateway応答値、確定値は別fieldとして扱い、欠落を0円と見なさない。
+
+## 運用上の限界
+
+`/health` はprocessの生存、`/ready` は開発RuntimeとWorkerの接続を示すだけである。Policyの法務レビュー、上流Providerの保持条件、回答品質、確定請求額を保証しない。productionでは正式なProvider Policy、Backend consent grant、AI Runtime IAM/保持設定を別途用意する。
+
+関連: [#167](https://github.com/after-flow/after-flow/issues/167)、[#183](https://github.com/after-flow/after-flow/issues/183)

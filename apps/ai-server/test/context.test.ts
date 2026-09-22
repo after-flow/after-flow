@@ -35,7 +35,8 @@ function guidanceArtifact(procedureId: string, extra: Record<string, unknown> = 
   return envelope({
     operation: 'task_guidance',
     procedure: definition ? { id: procedureId, version, reviewStatus: definition.reviewStatus } : { id: procedureId, version, reviewStatus: 'draft' },
-    case: { id: 'case-1', version: 1, deceasedName: 'PRIVATE-NAME', dateOfDeath: '2026-01-02', knownAt: '2026-01-05', municipality: '架空市', status: 'ACTIVE' },
+    case: { id: 'case-1', version: 1, deceasedName: 'PRIVATE-NAME', dateOfDeath: '2026-01-02', knownAt: '2026-01-05', municipality: '架空市', status: 'ACTIVE',
+      healthInsuranceBranch: '東京支部', deceasedInsuranceStatus: 'INSURED', burialBenefitApplicantStatus: 'LIVELIHOOD_MAINTAINER' },
     task: { id: 'task-1', version: 1, procedureId },
     documents: [], actions: [], resume: null,
     ...extra,
@@ -76,6 +77,12 @@ test('artifact verification rejects hash tampering, stale context, operation mis
   // 故人の氏名は planning / chat の allowlist からも外れているので、送られてきたら Context 全体を拒否する。
   const named = { ...source.content, case: { ...(source.content.case as object), deceasedName: 'PRIVATE-NAME' } }
   assert.throws(() => buildCoreContext({ ...source, content: named, contentHash: contentHash(named) }, 'case_planning'), { code: 'INVALID_CONTEXT' })
+})
+
+test('task guidance rejects a Backend reviewStatus that disagrees with the local Definition', () => {
+  const source = guidanceArtifact('kyoukaikenpo-burial-benefit')
+  const content = { ...source.content, procedure: { id: 'kyoukaikenpo-burial-benefit', version: 1, reviewStatus: 'draft' } }
+  assert.throws(() => buildCoreContext({ ...source, content, contentHash: contentHash(content) }, 'task_guidance'), { code: 'PROCEDURE_MISMATCH' })
 })
 
 test('Backend state and descriptive facts keep distinct provenance within the same entity', () => {
@@ -140,13 +147,22 @@ test('optional context may be absent while required context missing blocks with 
   assert.ok(!selection.missing.some(text => text.includes('架空')))
 })
 
-test('kyoukaikenpo guidance carries no case values and uses the matching reviewed scope or the Definition brief', () => {
+test('profile UNKNOWN remains visible as unknown provenance and does not satisfy required context', () => {
+  const context = buildCoreContext(guidanceArtifact('health-insurance-loss', {
+    profile: { id: 'case-1', version: 1, healthInsurance: 'UNKNOWN' },
+  }), 'task_guidance')
+  const fact = context.modelInput.facts.find(item => item.group === 'profile' && item.field === 'healthInsurance')
+  assert.equal(fact?.state, 'unknown')
+  assert.deepEqual(context.procedure?.missingRequired.map(item => `${item.group}.${item.field}`), ['profile.healthInsurance'])
+})
+
+test('kyoukaikenpo guidance carries only the three formal case values and uses the matching reviewed scope or the Definition brief', () => {
   const source = guidanceArtifact('kyoukaikenpo-burial-benefit', {
     contracts: [{ id: 'contract-1', version: 1, name: 'PRIVATE-CONTRACT', kind: 'HEALTH_INSURANCE', provider: '全国健康保険協会', policyState: 'ACTIVE' }],
     persons: [{ id: 'person-1', version: 1, name: 'PRIVATE-PERSON', relationshipLabel: '配偶者', isHeir: true }],
   })
   const context = buildCoreContext(source, 'task_guidance')
-  assert.deepEqual(facts(context), ['contracts.kind', 'contracts.policyState', 'contracts.provider', 'persons.relationshipLabel'])
+  assert.deepEqual(facts(context), ['case.burialBenefitApplicantStatus', 'case.deceasedInsuranceStatus', 'case.healthInsuranceBranch'])
   assert.ok(!JSON.stringify(context.modelInput).includes('架空市'))
   assert.ok(!JSON.stringify(context.modelInput).includes('PRIVATE'))
   const matched = buildProcedureResearchBrief(context, { scope: { ...scope, procedureIds: ['kyoukaikenpo-burial-benefit'], municipality: null }, allowDraftDefinitions: false, configuredCatalogIds: new Set(['catalog-1']) })
@@ -186,6 +202,13 @@ test('estate-division is limited to heirs, relationships, assets, liabilities an
   assert.equal(fact('decision-1', 'method')?.state, 'confirmed')
   assert.equal(fact('asset-1', 'institution'), undefined)
   assert.ok(!JSON.stringify(context.modelInput).includes('PRIVATE'))
+  const minimized = minimizedModelInput(context, 'task_guidance')
+  const personRef = minimized.data.find(item => item.group === 'persons')?.entityRef
+  assert.equal(minimized.data.find(item => item.group === 'relationships' && item.field === 'fromPersonId')?.value, personRef)
+  assert.equal(minimized.data.find(item => item.group === 'decisions' && item.field === 'personId')?.value, personRef)
+  assert.equal(JSON.stringify(minimized).includes('"person-1"'), false)
+  assert.equal(JSON.stringify(minimized).includes('"asset-1"'), false)
+  assert.ok(minimized.data.every(item => item.entityRef.length > 0))
 })
 
 test('bank-accounts passes the institution but never the account name, and the brief carries no case values', () => {
@@ -236,12 +259,14 @@ test('research brief for chat and planning uses reviewed strings only, leaving c
   assert.ok(!serialized.includes('snapshot'))
   assert.equal(buildResearchBrief(context, { ...scope, municipality: '別の市' }).status, 'needs_input')
   assert.throws(() => buildResearchBrief(context, { ...scope, sourceCatalogIds: [] }))
-  const renamed = artifact('task_guidance')
-  if (!('task' in renamed.content)) assert.fail()
-  const renamedContent = { ...renamed.content, task: { ...renamed.content.task, title: '表示名を変更', category: '別カテゴリ', submitTo: '別表示' } }
-  assert.equal(buildResearchBrief(buildCoreContext({ ...renamed, content: renamedContent, contentHash: contentHash(renamedContent) }, 'task_guidance'), scope).status, 'ready')
-  const unknownContent = { ...renamed.content, task: { ...renamed.content.task, procedureId: 'unknown-procedure' } }
-  assert.equal(buildResearchBrief(buildCoreContext({ ...renamed, content: unknownContent, contentHash: contentHash(unknownContent) }, 'task_guidance'), scope).status, 'needs_input')
+  // task_guidance では Task の表示名・区分・提出先を照合しない。Definition と scope.procedureIds の一致だけで Brief を選ぶ。
+  const renamed = guidanceArtifact('kyoukaikenpo-burial-benefit', {
+    task: { id: 'task-1', version: 1, procedureId: 'kyoukaikenpo-burial-benefit', title: '表示名を変更', category: '別カテゴリ', submitTo: '別表示' },
+    contracts: [{ id: 'contract-1', version: 1, kind: 'HEALTH_INSURANCE', provider: '全国健康保険協会' }],
+    persons: [{ id: 'person-1', version: 1, relationshipLabel: '配偶者' }],
+  })
+  const guidanceScope = { ...scope, procedureIds: ['kyoukaikenpo-burial-benefit'], municipality: null }
+  assert.equal(buildProcedureResearchBrief(buildCoreContext(renamed, 'task_guidance'), { scope: guidanceScope, allowDraftDefinitions: false, configuredCatalogIds: new Set(['catalog-1']) }).status, 'ready')
 })
 
 test('canonical hash is independent of object key order but preserves array order', () => {

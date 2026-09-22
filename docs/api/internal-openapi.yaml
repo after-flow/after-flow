@@ -1104,6 +1104,14 @@ paths:
                         - COMPLETED
                         - PARTIAL
                         - FAILED
+                    outcome:
+                      type: string
+                      enum:
+                        - COMPLETED_RESEARCH
+                        - MISSING_CONTEXT
+                        - SOURCE_NOT_CONFIGURED
+                        - NOT_APPLICABLE
+                        - FAILED
                     target:
                       anyOf:
                         - type: string
@@ -1482,6 +1490,79 @@ paths:
                           - requiresProfessional
                           - professionalReviewNote
                         additionalProperties: false
+                  required:
+                    - caseVersion
+                    - contextSnapshotId
+                    - fencingToken
+                    - artifactVersion
+                    - contentHash
+                    - resultId
+                    - kind
+                    - status
+                  additionalProperties: false
+                - type: object
+                  properties:
+                    caseVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contextSnapshotId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    fencingToken:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    artifactVersion:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    contentHash:
+                      type: string
+                      pattern: ^[A-Za-z0-9_-]{43}$
+                    resultId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_-]+$
+                    basis:
+                      default: []
+                      maxItems: 20
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum:
+                              - DOCUMENT
+                              - TASK
+                              - MESSAGE
+                          id:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_-]+$
+                          version:
+                            type: integer
+                            exclusiveMinimum: 0
+                            maximum: 9007199254740991
+                        required:
+                          - type
+                          - id
+                          - version
+                        additionalProperties: false
+                    kind:
+                      type: string
+                      const: document_analysis
+                    status:
+                      type: string
+                      enum:
+                        - SUCCEEDED
+                        - FAILED
+                        - NEEDS_ATTENTION
                   required:
                     - caseVersion
                     - contextSnapshotId

@@ -10,7 +10,10 @@ export const SINGLE_ENTITY_GROUPS = ['case', 'profile'] as const satisfies reado
 
 /** 投影を許可しうるフィールド。氏名・自由文（name / note / summary / deceasedName / body）は含めない。 */
 export const CONTEXT_FIELDS = {
-  case: ['dateOfDeath', 'knownAt', 'municipality', 'status'],
+  case: [
+    'dateOfDeath', 'knownAt', 'municipality', 'status',
+    'healthInsuranceBranch', 'deceasedInsuranceStatus', 'burialBenefitApplicantStatus',
+  ],
   profile: ['healthInsurance', 'pension', 'occupation', 'realEstate', 'car', 'mortgage'],
   persons: ['relationshipLabel', 'role', 'isHeir', 'specialCircumstance'],
   relationships: ['kind'],
@@ -24,7 +27,7 @@ export const CONTEXT_FIELDS = {
 
 /** group を投影するとき常に同伴させる参照 ID・出自フィールド。confirmation / state を失わないための固定規則。 */
 export const STRUCTURAL_FIELDS = {
-  case: [], profile: [], persons: ['excludedAt'], relationships: ['fromPersonId', 'toPersonId', 'excludedAt'],
+  case: [], profile: [], persons: [], relationships: ['fromPersonId', 'toPersonId'],
   assets: ['confirmation'], liabilities: ['confirmation'], contracts: [], benefits: [],
   decisions: ['personId', 'state'], deadlines: ['taskId', 'confirmation'],
 } as const satisfies Record<ContextGroup, readonly string[]>
@@ -50,6 +53,8 @@ export const procedureDefinitionSchema = z.object({
   id: internalId, title: z.string().min(1).max(120), summary: z.string().max(500),
   guidance: z.object({
     requiredContext: z.array(contextRequirementSchema).max(20), optionalContext: z.array(contextRequirementSchema).max(20),
+    /** persons を誰について投影するか。申請者要件を扱う手続きは実行者本人に限定する。 */
+    personScope: z.enum(['all-active', 'initiating-member']).default('all-active'),
     researchScope: researchScopeSchema, questions: z.array(z.string().min(1).max(300)).min(1).max(12),
   }).strict(),
   version: z.number().int().positive(), reviewStatus: z.enum(['draft', 'reviewed', 'deprecated']),
@@ -67,6 +72,9 @@ const P = {
   jurisdictionMunicipality: req('case', 'municipality', '最後の住所地から管轄の家庭裁判所・税務署を特定するため'),
   knownAt: req('case', 'knownAt', '期限の起算日や緊急度を個別に判断するため'),
   dateOfDeath: req('case', 'dateOfDeath', '死亡年・制度上の基準日・申告期間を判断するため'),
+  healthInsuranceBranch: req('case', 'healthInsuranceBranch', '加入支部固有の提出先を案内するため'),
+  deceasedInsuranceStatus: req('case', 'deceasedInsuranceStatus', '被保険者死亡と被扶養者死亡で給付を区別するため'),
+  burialBenefitApplicantStatus: req('case', 'burialBenefitApplicantStatus', '埋葬料と埋葬費の申請者要件を区別するため'),
   dueDate: req('deadlines', 'dueDate', '算出済みの期限を案内に反映するため'),
   healthInsurance: req('profile', 'healthInsurance', '加入していた健康保険の種類で窓口・給付・書類を分けるため'),
   pension: req('profile', 'pension', '受給していた年金の種類で届出先・期限を分けるため'),
@@ -100,7 +108,8 @@ const JP = 'Japan'
 const scope = (authorityType: string, authorityName: string | null, sourceCatalogIds: string[] = []) => ({ authorityType, authorityName, jurisdiction: JP, sourceCatalogIds })
 const GENERIC_QUESTIONS = ['提出先はどこか', '必要書類は何か', '提出方法・受付条件は何か', '期限の根拠は何か']
 
-type RawDefinition = Omit<ProcedureDefinition, 'version' | 'reviewStatus'> & Partial<Pick<ProcedureDefinition, 'version' | 'reviewStatus'>>
+type ProcedureDefinitionInput = z.input<typeof procedureDefinitionSchema>
+type RawDefinition = Omit<ProcedureDefinitionInput, 'version' | 'reviewStatus'> & Partial<Pick<ProcedureDefinitionInput, 'version' | 'reviewStatus'>>
 const define = (raw: RawDefinition): ProcedureDefinition => procedureDefinitionSchema.parse({ version: 1, reviewStatus: 'draft', ...raw })
 
 export const PROCEDURE_DEFINITIONS: readonly ProcedureDefinition[] = [
@@ -111,7 +120,7 @@ export const PROCEDURE_DEFINITIONS: readonly ProcedureDefinition[] = [
     guidance: { requiredContext: [P.municipality], optionalContext: [], researchScope: scope('municipality', null),
       questions: ['申請窓口はどこか', '死亡届と同時申請か', '必要書類・手数料は何か', '許可証の受領方法は何か'] } }),
   define({ id: 'kyoukaikenpo-burial-benefit', title: '健康保険の埋葬料（費）を確認する', summary: '協会けんぽの埋葬料・埋葬費について、対象者・提出先・添付書類を案内する。', reviewStatus: 'reviewed',
-    guidance: { requiredContext: [P.contractKind, P.contractProvider, P.relationshipLabel], optionalContext: [P.contractPolicyState, P.benefitProgressState, P.healthInsurance],
+    guidance: { requiredContext: [P.healthInsuranceBranch, P.deceasedInsuranceStatus, P.burialBenefitApplicantStatus], optionalContext: [P.healthInsurance],
       researchScope: scope('public-insurer', '全国健康保険協会', ['kyoukaikenpo-burial-benefit']),
       questions: ['埋葬料と埋葬費のどちらか', '申請者要件は何か', '添付書類は何か', '提出方法・期限は何か'] } }),
   define({ id: 'funeral-benefit-claim', title: '葬祭費・埋葬料を請求する', summary: '加入していた健康保険から葬祭費または埋葬料を請求する方法を案内する。',
@@ -238,24 +247,40 @@ export interface GuidanceProjection {
 
 /**
  * Default deny の投影。allowlist にない group は content に含めない。allowlist にある group は
- * id, version, allowlist フィールド, STRUCTURAL_FIELDS だけを残す。値は変換しない。
+ * id, version, allowlist フィールド, STRUCTURAL_FIELDS だけを残す。
+ * 複合値はここで安全な形へ縮退し、確認者・確認メモなどを AI Context へ持ち込まない。
  * optionalContext は存在する場合だけ残る（欠落しても missingRequired にならない）。
  */
 export function projectGuidanceContext(def: ProcedureDefinition, source: GuidanceProjectionSource): GuidanceProjection {
   const allow = guidanceAllowlist(def)
   const usedKeys = new Set<string>()
   const droppedKeys = new Set<string>()
+  const projectedByGroup = new Map<ContextGroup, Record<string, unknown>[]>()
+  const safeValue = (group: ContextGroup, field: string, value: unknown): unknown => {
+    if ((group === 'assets' || group === 'liabilities') && field === 'confirmation') {
+      const parsed = z.object({ state: z.enum(['CONFIRMED', 'UNCONFIRMED']) }).passthrough().safeParse(value)
+      return parsed.success ? { state: parsed.data.state } : undefined
+    }
+    return value === null || ['string', 'number', 'boolean'].includes(typeof value) ? value : undefined
+  }
+  const isKnown = (value: unknown): boolean => value !== null && value !== undefined
+    && !(typeof value === 'string' && (value.trim() === '' || value === 'UNKNOWN'))
   const projectEntity = (group: ContextGroup, entity: Record<string, unknown>, identity: { id: unknown; version: unknown }): Record<string, unknown> => {
     const allowedFields = allow.get(group)
     const structuralFields: readonly string[] = STRUCTURAL_FIELDS[group]
     const projected: Record<string, unknown> = { id: identity.id, version: identity.version }
     for (const [field, value] of Object.entries(entity)) {
       if (field === 'id' || field === 'version') continue
+      // 除外判定は投影前に使い、時刻そのものは Context に含めない。
+      if ((group === 'persons' || group === 'relationships') && field === 'excludedAt') continue
       if (allowedFields?.has(field)) {
-        projected[field] = value
-        if (value !== null && value !== undefined) usedKeys.add(`${group}.${field}`)
+        const safe = safeValue(group, field, value)
+        if (safe === undefined) { droppedKeys.add(`${group}.${field}`); continue }
+        projected[field] = safe
+        if (isKnown(safe)) usedKeys.add(`${group}.${field}`)
       } else if (structuralFields.includes(field)) {
-        projected[field] = value
+        const safe = safeValue(group, field, value)
+        if (safe !== undefined) projected[field] = safe
       } else {
         droppedKeys.add(`${group}.${field}`)
       }
@@ -264,9 +289,10 @@ export function projectGuidanceContext(def: ProcedureDefinition, source: Guidanc
   }
   const caseIdentity = { id: source.case.id, version: source.case.version }
   const content: GuidanceProjection['content'] = { case: projectEntity('case', source.case, caseIdentity) }
+  projectedByGroup.set('case', [content.case])
   if (source.profile) {
     const profile = projectEntity('profile', source.profile, caseIdentity)
-    if (allow.has('profile')) content.profile = profile
+    if (allow.has('profile')) { content.profile = profile; projectedByGroup.set('profile', [profile]) }
   }
   for (const [group, entities] of Object.entries(source.entities) as [EntityContextGroup, readonly Record<string, unknown>[] | undefined][]) {
     if (!entities) continue
@@ -274,10 +300,30 @@ export function projectGuidanceContext(def: ProcedureDefinition, source: Guidanc
       for (const entity of entities) for (const field of Object.keys(entity)) if (field !== 'id' && field !== 'version') droppedKeys.add(`${group}.${field}`)
       continue
     }
-    const projected = entities.map(entity => projectEntity(group, entity, { id: entity.id, version: entity.version }))
-    if (allow.has(group)) content[group] = projected
+    const activeEntities = group === 'persons' || group === 'relationships'
+      ? entities.filter(entity => entity.excludedAt === null || entity.excludedAt === undefined)
+      : entities
+    const projected = activeEntities.map(entity => projectEntity(group, entity, { id: entity.id, version: entity.version }))
+    if (allow.has(group)) { content[group] = projected; projectedByGroup.set(group, projected) }
   }
-  const missingRequired = def.guidance.requiredContext.filter(requirement => !usedKeys.has(contextKey(requirement)))
+  const requiredByGroup = new Map<ContextGroup, ContextRequirement[]>()
+  for (const requirement of def.guidance.requiredContext) {
+    const requirements = requiredByGroup.get(requirement.group) ?? []
+    requirements.push(requirement)
+    requiredByGroup.set(requirement.group, requirements)
+  }
+  const missingRequired = [...requiredByGroup.entries()].flatMap(([group, requirements]) => {
+    const projected = projectedByGroup.get(group) ?? []
+    // Case/Profileは1件だけなので、不足したfieldを個別に返す。
+    // 複数件groupは別々のentityの値を継ぎ合わせず、1件で要件が揃うことを要求する。
+    if ((SINGLE_ENTITY_GROUPS as readonly ContextGroup[]).includes(group)) {
+      const entity = projected[0]
+      return requirements.filter(requirement => !entity || !isKnown(entity[requirement.field]))
+    }
+    const oneEntityHasEveryRequiredField = projected
+      .some(entity => requirements.every(requirement => isKnown(entity[requirement.field])))
+    return oneEntityHasEveryRequiredField ? [] : requirements
+  })
   return { content, usedKeys: [...usedKeys].sort(), missingRequired, droppedKeys: [...droppedKeys].sort() }
 }
 
@@ -298,6 +344,9 @@ export function procedureResearchBrief(def: ProcedureDefinition): {
 /** 'case.municipality' → '市区町村' など、CONTEXT_FIELDS の全 key を網羅する。 */
 export const CONTEXT_FIELD_LABELS: Record<string, string> = {
   'case.dateOfDeath': '死亡日', 'case.knownAt': '死亡を知った日', 'case.municipality': '市区町村', 'case.status': 'ケースの状態',
+  'case.healthInsuranceBranch': '加入していた協会けんぽ支部',
+  'case.deceasedInsuranceStatus': '亡くなった方の被保険者・被扶養者区分',
+  'case.burialBenefitApplicantStatus': '申請者の生計維持・埋葬費用負担区分',
   'profile.healthInsurance': '健康保険の種類', 'profile.pension': '年金の種類', 'profile.occupation': '職業区分',
   'profile.realEstate': '不動産の有無', 'profile.car': '自動車の有無', 'profile.mortgage': '住宅ローンの有無',
   'persons.relationshipLabel': '続柄', 'persons.role': '役割', 'persons.isHeir': '相続人区分', 'persons.specialCircumstance': '特別な事情',

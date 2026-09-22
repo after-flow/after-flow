@@ -20,6 +20,16 @@ export const updatePlanningRestrictionBodySchema = z.object({
 export const caseStatusSchema = z.enum(['ACTIVE', 'CLOSED'])
 export const caseActionSchema = z.enum(['UPDATE_BASIC_INFO', 'ADMINISTER'])
 
+const kyoukaikenpoBurialBenefitInputSchema = z.object({
+  branch: z.string().trim().min(1).max(100).nullable(),
+  deceasedInsuranceStatus: z.enum(['INSURED', 'DEPENDENT']).nullable(),
+  applicantStatus: z.enum(['LIVELIHOOD_MAINTAINER', 'BURIAL_EXPENSE_PAYER']).nullable(),
+}).strict()
+
+export const kyoukaikenpoBurialBenefitResourceSchema = kyoukaikenpoBurialBenefitInputSchema.extend({
+  missingFields: z.array(z.enum(['BRANCH', 'DECEASED_INSURANCE_STATUS', 'APPLICANT_STATUS'])),
+})
+
 /** `PROFILE_VALUES` を Zod と検証の唯一の出所にする（文字列を二重に書かない）。 */
 export const caseProfileResourceSchema = z.object({
   healthInsurance: z.enum(PROFILE_VALUES.healthInsurance),
@@ -56,6 +66,7 @@ export const caseResourceSchema = z.object({
   ownerPersonId: z.string().nullable(),
   selfPersonId: z.string().nullable(),
   aiPlanningRestriction: aiPlanningRestrictionSchema.nullable(),
+  kyoukaikenpoBurialBenefit: kyoukaikenpoBurialBenefitResourceSchema,
   status: caseStatusSchema,
   version: z.number().int(),
   caseVersion: z.number().int(),
@@ -96,6 +107,7 @@ export const createCaseBodySchema = z
      * 作成者 membership の personId に紐付ける。省略・null なら登録しない。
      */
     ownerPerson: ownerPersonInputSchema.nullish(),
+    kyoukaikenpoBurialBenefit: kyoukaikenpoBurialBenefitInputSchema.optional(),
   })
   .strict()
 
@@ -118,6 +130,8 @@ export const updateCaseBodySchema = z
     municipality: municipalitySchema.nullish(),
     /** 葬儀・火葬が済んだと記録した日時。null で「まだ」に戻す。 */
     funeralCompletedAt: isoDateTimeSchema.nullish(),
+    /** 3項目を丸ごと置換する。未確認に戻す項目はnullを送る。 */
+    kyoukaikenpoBurialBenefit: kyoukaikenpoBurialBenefitInputSchema.optional(),
   })
   // status を含めない。終了・再開は状態遷移を検証する別の操作にする。
   .strict()

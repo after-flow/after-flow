@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Agent } from '@mastra/core/agent'
+import { z } from 'zod'
 import { createAuthorizedModels, assertAuthorizedModelSet } from '../src/infrastructure/mastra/authorized-models.js'
 import type { ProviderMetric } from '../src/infrastructure/mastra/authorized-models.js'
 import { assertProviderAllowed } from '../src/orchestration/models/policy.js'
@@ -16,12 +17,17 @@ const policy = (id: string): ProviderPolicy => ({ id, revision: 'v1', sdkProvide
 const grant = (): ProviderGrant => ({ revision: 'consent-v1', providerPolicyIds: ['first', 'second'], dataClasses: ['minimized_case', 'public_research'], expiresAt: expiry(), maxRetentionDays: 0 })
 const request: RouteRequest = { requestId: 'request-one', operation: 'task_guidance', role: 'core', dataClass: 'minimized_case', policyIds: ['first', 'second'] }
 
-async function setup(statusCode: number, revoke = false) {
+async function setup(failureInput: number | Error, revoke = false, failSecond = false) {
   const first = scriptedModel([]); const second = scriptedModel([{ text: 'fixture-answer' }])
   const firstModel = { ...first.model, provider: 'first' }; const secondModel = { ...second.model, provider: 'second' }
   let attempts = 0; let revoked = false
-  const unavailable = async () => { attempts++; if (revoke) revoked = true; throw Object.assign(new Error('secret-provider-body'), { statusCode }) }
+  const unavailable = async () => { attempts++; if (revoke) revoked = true
+    throw typeof failureInput === 'number' ? Object.assign(new Error('secret-provider-body'), { statusCode: failureInput }) : failureInput }
   firstModel.doStream = unavailable; firstModel.doGenerate = unavailable
+  if (failSecond) {
+    const alsoUnavailable = async () => { throw Object.assign(new Error('second-private-body'), { statusCode: 503 }) }
+    secondModel.doStream = alsoUnavailable; secondModel.doGenerate = alsoUnavailable
+  }
   const charges: BudgetCharge[] = []; const metrics: ProviderMetric[] = []
   const result = await createAuthorizedModels({ request, policies: [policy('first'), policy('second')], signal: new AbortController().signal,
     router: { route: async input => ({ requestId: input.requestId, evidenceId: 'fixture-orch-evidence', policyIds: ['first', 'second'], expiresAt: expiry() }) },
@@ -40,7 +46,24 @@ test('native Mastra fallback charges each actual provider attempt and succeeds o
   assert.equal(result.charges.length, 2)
   assert.equal(result.metrics.length, 2)
   assert.equal(result.metrics[0]?.failure, 'TRANSIENT')
+  assert.equal(result.metrics[0]?.fallbackFromPolicyId, null)
+  assert.equal(result.metrics[1]?.fallbackFromPolicyId, 'first')
+  assert.equal(result.metrics[1]?.modelId, 'scripted')
+  assert.match(result.metrics[1]?.attemptId ?? '', /^[A-Za-z0-9-]+$/)
   assert.equal(JSON.stringify(result.metrics).includes('secret-provider-body'), false)
+})
+
+test('timeout, 429 and 5xx permit fallback, while all candidates failing is observable', async () => {
+  for (const failure of [429, 500, new DOMException('private-timeout', 'TimeoutError')]) {
+    const result = await setup(failure)
+    assert.equal(result.response?.text, 'fixture-answer')
+    assert.deepEqual(result.metrics.map(metric => metric.failure), ['TRANSIENT', null])
+  }
+  const exhausted = await setup(503, false, true)
+  assert.equal(exhausted.response, null)
+  assert.equal(exhausted.metrics.length, 2)
+  assert.deepEqual(exhausted.metrics.map(metric => metric.failure), ['TRANSIENT', 'TRANSIENT'])
+  assert.equal(JSON.stringify(exhausted.metrics).includes('private-body'), false)
 })
 
 test('permanent errors and consent withdrawal prevent fallback network I/O', async () => {
@@ -49,6 +72,22 @@ test('permanent errors and consent withdrawal prevent fallback network I/O', asy
     assert.equal(result.attempts, 1); assert.equal(result.second.calls.length, 0)
     assert.equal(result.charges.length, 1)
   }
+})
+
+test('invalid structured output is an application failure and does not trigger provider fallback', async () => {
+  const first = scriptedModel([{ text: '{"wrong":true}' }]), second = scriptedModel([{ text: '{"value":"must-not-run"}' }])
+  const firstModel = { ...first.model, provider: 'first' }, secondModel = { ...second.model, provider: 'second' }
+  const metrics: ProviderMetric[] = []
+  const result = await createAuthorizedModels({ request, policies: [policy('first'), policy('second')], signal: new AbortController().signal,
+    router: { route: async input => ({ requestId: input.requestId, evidenceId: 'fixture-output-contract', policyIds: ['first', 'second'], expiresAt: expiry() }) },
+    grant: async () => grant(), models: new Map([['first', firstModel], ['second', secondModel]]), charge: async () => {}, record: async metric => { metrics.push(metric) },
+  })
+  const agent = new Agent({ id: 'schema-policy-test', name: 'schema-policy', instructions: 'fixture', model: result.models,
+    defaultOptions: { maxSteps: 1, modelSettings: { maxRetries: 0 } } })
+  await assert.rejects(agent.generate('fixture', { structuredOutput: { schema: z.object({ value: z.string() }).strict(), errorStrategy: 'strict' } }))
+  assert.equal(first.calls.length, 1)
+  assert.equal(second.calls.length, 0)
+  assert.deepEqual(metrics.map(metric => metric.status), ['success'])
 })
 
 test('policy rejects changed recipient, expired review, excessive retention and wrong Orch selection', async () => {

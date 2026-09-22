@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { collections } from '../../domain/shared/collections.js'
-import type { GuidanceCitation, GuidanceEntity, GuidanceSource } from '../../domain/task/guidance.js'
+import type { GuidanceCitation, GuidanceEntity, GuidanceOutcome, GuidanceSource } from '../../domain/task/guidance.js'
 import type { TaskEntity } from '../../domain/task/task.js'
-import { errors } from '../../shared/app-error.js'
-import type { AgentRunService } from '../agent/agent-run-service.js'
+import { errors, isAppError } from '../../shared/app-error.js'
+import type { AgentRunService, AgentRunView } from '../agent/agent-run-service.js'
 import type { AccessService } from '../authorization/case-access.js'
 import type { CommandMeta } from '../case/case-service.js'
 import type { ConsentService } from '../consent/consent-service.js'
@@ -26,9 +26,15 @@ export interface MessageView {
   createdAt: string
 }
 
+/** 発言の受付結果。矛盾した状態を型で作れないようにする（#215）。 */
+export type MessageAcceptedView =
+  | { message: MessageView; runAccepted: true; runId: string; reason: null }
+  | { message: MessageView; runAccepted: false; runId: null; reason: 'FEATURE_NOT_CONNECTED' }
+
 export interface GuidanceView {
   taskId: string
   status: GuidanceEntity['status']
+  outcome: GuidanceOutcome | null
   target: string | null
   where: string | null
   bring: string[]
@@ -72,9 +78,11 @@ function toMessageView(entity: MessageEntity): MessageView {
 }
 
 export function toGuidanceView(entity: GuidanceEntity): GuidanceView {
+  const outcome = entity.outcome ?? null
   return {
     taskId: entity.taskId,
     status: entity.status,
+    outcome,
     target: entity.target,
     where: entity.where,
     bring: entity.bring,
@@ -86,7 +94,9 @@ export function toGuidanceView(entity: GuidanceEntity): GuidanceView {
     citations: entity.citations ?? [],
     missing: entity.missing,
     failureReason: entity.failureReason,
-    researchedBy: entity.researchedBy,
+    researchedBy: entity.researchedBy === 'MANUAL'
+      ? 'MANUAL'
+      : outcome === 'COMPLETED_RESEARCH' ? 'AI' : null,
     agentRunId: entity.agentRunId,
     version: entity.version,
     updatedAt: entity.updatedAt,
@@ -140,7 +150,7 @@ export class MessageService {
     caseId: string,
     body: string,
     meta: CommandMeta,
-  ): Promise<{ message: MessageView; runId: string | null; runAccepted: boolean; reason: string | null }> {
+  ): Promise<MessageAcceptedView> {
     const access = await this.access.authorizeCase(user, caseId, 'case.write')
     await this.consent.assertExternalAiAllowed(user)
     const generatedId = randomUUID()
@@ -166,10 +176,14 @@ export class MessageService {
     })
 
     // 受付できない場合も発言は残す。送信が失敗したように見せない。
-    let runId: string | null = null
-    let reason: string | null = null
+    // ただし「未接続」だけをRun未受付結果として202に丸める。予期しない
+    // 失敗や通常のAPIエラーまで runAccepted:false へ潰さず、そのまま投げる。
+    // try は accept() だけを囲む。accept() の後（attachReplyRun 等）で
+    // 起きた失敗まで「未受付」に丸めると、実際には作られた Run が
+    // runAccepted:false として返ってしまう。
+    let run: AgentRunView
     try {
-      const run = await this.runs.accept(
+      run = await this.runs.accept(
         user,
         caseId,
         { operation: 'chat_reply', targetType: 'MESSAGE', targetId: messageId },
@@ -177,23 +191,15 @@ export class MessageService {
           key: 'chat-run-' + messageId, fingerprint: fingerprintOf({ operation: 'chat_reply', caseId, messageId }),
         } },
       )
-      runId = run.id
-      await this.attachReplyRun(user, caseId, messageId, run.id, meta)
     } catch (cause) {
-      // 未接続は失敗ではなく、回答が始まらない理由として返す。同意は
-      // 保存前に検査済みなので、ここで CONSENT_REQUIRED になるのは
-      // 検査後・保存前に撤回された競合時だけで、その場合も Run は
-      // 作られず配送も止まる。
-      reason = (cause as { code?: string } | null)?.code ?? 'UNAVAILABLE'
+      if (!isAppError(cause) || cause.code !== 'FEATURE_NOT_CONNECTED') throw cause
+      const message = await this.requireMessage(user.tenantId, caseId, messageId)
+      return { message: toMessageView(message), runAccepted: false, runId: null, reason: 'FEATURE_NOT_CONNECTED' }
     }
 
+    await this.attachReplyRun(user, caseId, messageId, run.id, meta)
     const message = await this.requireMessage(user.tenantId, caseId, messageId)
-    return {
-      message: toMessageView(message),
-      runId,
-      runAccepted: runId !== null,
-      reason,
-    }
+    return { message: toMessageView(message), runAccepted: true, runId: run.id, reason: null }
   }
 
   private async attachReplyRun(
@@ -242,6 +248,7 @@ export class MessageService {
       return {
         taskId,
         status: 'NOT_REQUESTED',
+        outcome: null,
         target: null,
         where: null,
         bring: [],

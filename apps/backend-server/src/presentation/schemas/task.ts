@@ -109,6 +109,7 @@ export const taskResourceSchema = z.object({
       label: z.string(),
       kind: evidenceKindSchema,
       note: z.string().nullable(),
+      documentId: z.string().nullable(),
       recordedAt: isoDateTimeSchema,
     }),
   ),

@@ -54,6 +54,7 @@ export const approvalResourceSchema = z.object({
   decisionNote: z.string().nullable(),
   expiresAt: isoDateTimeSchema,
   assetDisposal: z.boolean(),
+  sourceDocumentId: z.string().nullable(),
   version: z.number().int(),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,

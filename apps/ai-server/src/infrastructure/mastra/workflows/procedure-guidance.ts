@@ -3,10 +3,10 @@ import { createStep, createWorkflow } from '@mastra/core/workflows'
 import type { ModelWithRetries } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
-import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId, guidanceContextAudit } from '@aftercare/internal-contracts'
+import { GUIDANCE_LIMITS, artifactEnvelopeSchema, internalId, guidanceContextAudit, guidanceOutcomeSchema } from '@aftercare/internal-contracts'
 import type { BackendClient } from '../../backend-client/client.js'
-import { buildCoreContext, assertContextFresh, buildProcedureResearchBrief, minimizedModelInput, reviewedResearchScopeSchema } from '../../../orchestration/context/builder.js'
-import { GuidanceOutputContractError, guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
+import { buildCoreContext, assertContextFresh, buildProcedureResearchBrief, minimizedModelInput, reviewedResearchScopeSchema, UNCONFIGURED_SOURCE_MESSAGE } from '../../../orchestration/context/builder.js'
+import { guidanceDraftSchema, guidanceResult, unresolvedApplicability } from '../../../orchestration/playbooks/guidance-output.js'
 import { sourceDocumentSchema } from '../../../orchestration/research/sources.js'
 import { boundResearchSynthesis, finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema } from '../../../orchestration/research/contracts.js'
 import { completeGuidanceAction, createGuidanceWorkingState, guidancePlanDecisionSchema, guidanceResearchPlanDecisionSchema, guidanceWorkingStateSchema } from '../../../orchestration/working-state.js'
@@ -18,7 +18,8 @@ const routeSchema = z.object({ routeId: z.literal('procedure-guidance/v1'), evid
 export const PROCEDURE_GUIDANCE_WORKFLOW = 'procedure-guidance-v3'
 const inputSchema = z.object({ resultId: internalId }).strict()
 const loadedSchema = inputSchema.extend({ artifact: artifactEnvelopeSchema, routing: routeSchema })
-const plannedSchema = loadedSchema.extend({ brief: researchBriefSchema.nullable(), workingState: guidanceWorkingStateSchema })
+const preflightOutcomeSchema = guidanceOutcomeSchema.exclude(['COMPLETED_RESEARCH', 'FAILED']).nullable()
+const plannedSchema = loadedSchema.extend({ brief: researchBriefSchema.nullable(), preflightOutcome: preflightOutcomeSchema, workingState: guidanceWorkingStateSchema })
 const researchedSchema = plannedSchema.extend({ researchRequest: researchRequestSchema.nullable(), sources: z.array(sourceDocumentSchema).max(20), research: researchEvidenceSchema })
 const generatedSchema = researchedSchema.extend({ draft: guidanceDraftSchema })
 const outputSchema = z.object({ resultId: internalId, applied: z.boolean(), reason: z.string().nullable(), workingState: guidanceWorkingStateSchema })
@@ -42,23 +43,16 @@ export interface ProcedureGuidanceDependencies {
   recordContextAudit?: (record: ReturnType<typeof guidanceContextAudit>) => void
 }
 
-/**
- * 構造化出力がスキーマに合わない場合だけ、1回だけ生成し直す。
- * OrcaRouter経由のjson_schemaはstrictを指定できず、実モデルの評価（#164）で
- * スキーマ外の要素を返す失敗が一定割合で起きたため。それ以外の失敗は再試行しない。
- */
-async function generateStructured<T>(generate: () => Promise<T>, signal: AbortSignal): Promise<T> {
-  try {
-    return await generate()
-  } catch (error) {
-    signal.throwIfAborted()
-    if (!(error instanceof Error && /Structured output validation failed/.test(error.message))) throw error
-    return generate()
-  }
+export const guidanceSkillLoadingModeSchema = z.enum(['staged', 'legacy-all'])
+export type GuidanceSkillLoadingMode = z.infer<typeof guidanceSkillLoadingModeSchema>
+
+function stageSkills(mode: GuidanceSkillLoadingMode, coreSkillIds: readonly ('case-assessment' | 'research-briefing' | 'grounded-guidance')[],
+  researchSkillIds: readonly ('official-source-research' | 'evidence-reconciliation')[]) {
+  return mode === 'staged' ? { coreSkillIds, researchSkillIds } : {}
 }
 
 /** Workflow definition for a durable host; main.ts does not start it in an unmanaged Promise. */
-export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies) {
+function buildProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies, skillLoading: GuidanceSkillLoadingMode) {
   const scope = reviewedResearchScopeSchema.parse(deps.scope)
   const configuredCatalogIds = new Set(deps.catalogs.map(catalog => catalog.id))
   async function checkControl() {
@@ -84,8 +78,11 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const selection = buildProcedureResearchBrief(context, { scope, allowDraftDefinitions: deps.allowDraftDefinitions, configuredCatalogIds })
       const modelInput = minimizedModelInput(context, 'task_guidance')
       if (selection.status === 'needs_input') {
+        const preflightOutcome = preflightOutcomeSchema.parse(!context.procedure ? 'NOT_APPLICABLE'
+          : context.procedure.missingRequired.length ? 'MISSING_CONTEXT'
+            : selection.missing.includes(UNCONFIGURED_SOURCE_MESSAGE) ? 'SOURCE_NOT_CONFIGURED' : 'MISSING_CONTEXT')
         const decision = guidancePlanDecisionSchema.parse({ plan: [{ action: 'NEEDS_INPUT', questionIds: [] }, { action: 'REPORT', questionIds: [] }], nextAction: 'NEEDS_INPUT' })
-        return { ...inputData, brief: null, workingState: createGuidanceWorkingState({ decision, brief: null, modelInput, missing: selection.missing }) }
+        return { ...inputData, brief: null, preflightOutcome, workingState: createGuidanceWorkingState({ decision, brief: null, modelInput, missing: selection.missing }) }
       }
       const tools = createResearchTools({
         briefs: [selection.brief], catalogs: deps.catalogs, provider: deps.research, signal: deps.signal,
@@ -99,27 +96,19 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [selection.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
-        coreSkillIds: ['case-assessment'], researchSkillIds: [],
+        ...stageSkills(skillLoading, ['case-assessment'], []),
       })
-      const response = await generateStructured(() => agents.coreAgent.generate(JSON.stringify({
-        goal: '対象手続きの案内を作るために、許可済みの公式調査が必要かを判断してください。内部思考や説明文は出力せず、有限のAction列だけを返してください。',
-        context: modelInput,
-        approvedBrief: selection.brief,
-        requiredPlan: {
-          plan: [
-            { action: 'REQUEST_RESEARCH', questionIds: selection.brief.questions.map(question => question.id) },
-            { action: 'GENERATE_GUIDANCE', questionIds: [] },
-            { action: 'REPORT', questionIds: [] },
-          ],
-          nextAction: 'REQUEST_RESEARCH',
-        },
-        constraint: 'approvedBriefが構築済みなので、requiredPlanを省略・追加・並べ替えず、そのまま構造化出力してください。',
-      }), {
-        maxSteps: 1, toolChoice: 'none', abortSignal: deps.signal,
-        structuredOutput: { schema: guidanceResearchPlanDecisionSchema, errorStrategy: 'strict' },
-      }), deps.signal)
-      const decision = guidancePlanDecisionSchema.parse(response.object)
-      return { ...inputData, brief: selection.brief, workingState: createGuidanceWorkingState({ decision, brief: selection.brief, modelInput,
+      // The harness already selected a reviewed ProcedureDefinition and exact brief. Asking a model
+      // to echo this fixed plan adds latency/cost without adding a decision.
+      const decision = guidanceResearchPlanDecisionSchema.parse({
+        plan: [
+          { action: 'REQUEST_RESEARCH', questionIds: selection.brief.questions.map(question => question.id) },
+          { action: 'GENERATE_GUIDANCE', questionIds: [] },
+          { action: 'REPORT', questionIds: [] },
+        ],
+        nextAction: 'REQUEST_RESEARCH',
+      })
+      return { ...inputData, brief: selection.brief, preflightOutcome: null, workingState: createGuidanceWorkingState({ decision, brief: selection.brief, modelInput,
         skills: agents.skillRefs.core.map(skill => ({ ...skill, phase: 'plan' as const })) }) }
     },
   })
@@ -143,20 +132,23 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [inputData.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds, evidenceSources: tools.sources,
-        coreSkillIds: ['research-briefing'], researchSkillIds: ['official-source-research', 'evidence-reconciliation'],
+        ...stageSkills(skillLoading, ['research-briefing'], ['official-source-research', 'evidence-reconciliation']),
       })
       const approvedResearchRequest = researchRequestSchema.parse({
         briefId: inputData.brief.briefId,
         questionIds: inputData.brief.questions.map(question => question.id),
         sourceCatalogIds: inputData.brief.sourceCatalogIds,
       })
-      await agents.coreAgent.generate(JSON.stringify({
-        action: 'REQUEST_RESEARCH',
-        instruction: '検索・資料取得・根拠抽出を検索Agentへ1回だけ委任してください。委任promptにはapprovedResearchRequestのJSONだけをそのまま渡し、説明、案件情報、個人情報を追加しません。検証済み結果を受け取ったら短く完了を返してください。',
-        approvedResearchRequest,
-      }), { maxSteps: 8, abortSignal: deps.signal })
+      // Search and retrieval are deterministic over a reviewed catalog. The harness executes
+      // those bounded tools, then the Research Agent performs the one judgment it owns:
+      // reconciling the retrieved text into quote-level evidence.
+      await agents.executeApprovedResearch(approvedResearchRequest, async () => {
+        const query = inputData.brief!.questions.map(question => question.text).join(' ').slice(0, 240)
+        const candidates = await tools.execute.search(inputData.brief!.briefId, query)
+        for (const candidate of candidates.slice(0, 2)) await tools.execute.read(inputData.brief!.briefId, candidate.id)
+      })
       const requests = agents.researchRequests()
-      if (requests.length !== 1) throw new Error('Core Agent did not produce exactly one approved research request')
+      if (requests.length !== 1) throw new Error('Harness did not record exactly one approved research request')
       const researchRequest = requests[0]!
       const sources = tools.sources(inputData.brief.briefId)
       let research = agents.researchEvidence()
@@ -175,7 +167,10 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
           abortSignal: deps.signal,
           structuredOutput: { schema: researchSynthesisSchema, errorStrategy: 'warn' },
         })
-        findings = finalizeResearchSynthesis(boundResearchSynthesis(repaired.object), inputData.brief, sources)
+        const repairedOutput = researchSynthesisSchema.safeParse(boundResearchSynthesis(repaired.object))
+        findings = repairedOutput.success
+          ? finalizeResearchSynthesis(repairedOutput.data, inputData.brief, sources)
+          : { status: 'partial' as const, answers: [], missing: ['調査結果を表示可能な形式へ整えられませんでした。'], conflicts: [] }
         research = researchEvidenceSchema.parse({ briefs: [inputData.brief], outcomes: [{ briefId: inputData.brief.briefId, findings }] })
       }
       if (!findings) throw new Error('Research Agent did not return validated findings')
@@ -184,7 +179,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
         const completed = completeGuidanceAction(inputData.workingState, 'REQUEST_RESEARCH', 'NEEDS_INPUT', research,
           [...agents.skillRefs.core, ...agents.skillRefs.research].map(skill => ({ ...skill, phase: 'research' as const })))
         const workingState = guidanceWorkingStateSchema.parse({ ...completed, unknowns: [...completed.unknowns, { id: 'official-source', question: missing }] })
-        return { ...inputData, researchRequest, sources, research, workingState }
+        return { ...inputData, preflightOutcome: 'SOURCE_NOT_CONFIGURED' as const, researchRequest, sources, research, workingState }
       }
       const workingState = completeGuidanceAction(inputData.workingState, 'REQUEST_RESEARCH', 'GENERATE_GUIDANCE', research,
         [...agents.skillRefs.core, ...agents.skillRefs.research].map(skill => ({ ...skill, phase: 'research' as const })))
@@ -210,7 +205,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       const agents = createGuidanceAgents({
         budget: deps.budget, models: deps.models, briefs: [inputData.brief], signal: deps.signal,
         researchTools: tools.tools, retrievedSourceIds: tools.retrievedSourceIds,
-        coreSkillIds: ['grounded-guidance'], researchSkillIds: [],
+        ...stageSkills(skillLoading, ['grounded-guidance'], []),
       })
       const findings = inputData.research.outcomes[0]?.findings
       if (!findings) throw new Error('Guidance generation requires a completed research action')
@@ -235,24 +230,50 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
         constraint: '調査はハーネスが完了しています。Research Agentへ再委譲せず、answersだけを根拠に案内してください。',
       }
       let draft: z.infer<typeof guidanceDraftSchema> | undefined
-      let validationIssues: { path: PropertyKey[]; code: string; message: string }[] = []
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (attempt) await checkControl()
-        const response = await agents.coreAgent.generate(JSON.stringify({
-          ...coreInput,
-          ...(attempt ? { repair: {
-            instruction: '前回の出力は契約に適合しませんでした。内容を省略せず、項目を分けて上限内のJSONを再生成してください。文字列を途中で切りません。',
-            validationIssues,
-          } } : {}),
-        }), {
-          maxSteps: 1, toolChoice: 'none',
-          structuredOutput: { schema: guidanceDraftSchema, errorStrategy: 'warn' }, abortSignal: deps.signal,
+      const response = await agents.coreAgent.generate(JSON.stringify(coreInput), {
+        maxSteps: 1, toolChoice: 'none',
+        structuredOutput: { schema: guidanceDraftSchema, errorStrategy: 'warn' }, abortSignal: deps.signal,
+      })
+      const parsed = guidanceDraftSchema.safeParse(response.object)
+      if (parsed.success) draft = parsed.data
+      if (!draft) {
+        // Do not spend another model call repairing presentation JSON. The harness
+        // still has verified quote-level evidence and can report it conservatively.
+        const claims = findings.answers.flatMap(answer => (answer.evidence ?? []).slice(0, 1).map(item => ({
+          text: item.quote, questionIds: [answer.questionId],
+        })))
+        const byQuestion = (ids: readonly string[]) => claims.filter(item => ids.includes(item.questionIds[0]!))
+        draft = guidanceDraftSchema.parse({ status: 'partial',
+          where: byQuestion(['submission'])[0] ?? null,
+          bring: byQuestion(['documents']),
+          steps: claims.filter(item => !['submission', 'documents'].includes(item.questionIds[0]!)),
+          missing: ['案内文を公式資料の引用で表示しています。案件への適用条件を確認してください。'],
         })
-        const parsed = guidanceDraftSchema.safeParse(response.object)
-        if (parsed.success) { draft = parsed.data; break }
-        validationIssues = parsed.error.issues.map(issue => ({ path: issue.path, code: issue.code, message: issue.message }))
       }
-      if (!draft) throw new GuidanceOutputContractError()
+      if (findings.status !== 'complete' && draft.status === 'complete') {
+        draft = guidanceDraftSchema.parse({ ...draft, status: 'partial',
+          missing: ['公式資料から確認できなかった項目があります。追加確認してください。'] })
+      }
+      if (findings.status !== 'complete') {
+        // Researchの未確認事項はCoreの要約から消えても、利用者に必ず残す。
+        // 表示契約の上限内へ収め、同じ文言は重複させない。
+        const missing = [...new Set([...draft.missing, ...findings.missing])]
+          .map(item => item.slice(0, GUIDANCE_LIMITS.missingItem))
+          .slice(0, GUIDANCE_LIMITS.items)
+        draft = guidanceDraftSchema.parse({ ...draft, status: 'partial', missing })
+      }
+      const covered = new Set([...(draft.where?.questionIds ?? []), ...draft.bring.flatMap(item => item.questionIds), ...draft.steps.flatMap(item => item.questionIds)])
+      const omittedClaims = findings.answers.filter(answer => !covered.has(answer.questionId)).flatMap(answer =>
+        (answer.evidence ?? []).slice(0, 1).map(item => ({ text: item.quote, questionIds: [answer.questionId] })))
+      if (omittedClaims.length) {
+        const submission = omittedClaims.find(item => item.questionIds[0] === 'submission')
+        draft = guidanceDraftSchema.parse({ ...draft,
+          where: draft.where ?? submission ?? null,
+          bring: [...draft.bring, ...omittedClaims.filter(item => item.questionIds[0] === 'documents')],
+          steps: [...draft.steps, ...omittedClaims.filter(item => item.questionIds[0] !== 'documents' &&
+            (item.questionIds[0] !== 'submission' || draft!.where !== null))],
+        })
+      }
       deps.signal.throwIfAborted()
       return { ...inputData, draft, workingState: completeGuidanceAction(inputData.workingState, 'GENERATE_GUIDANCE', 'REPORT', undefined,
         agents.skillRefs.core.map(skill => ({ ...skill, phase: 'generate' as const }))) }
@@ -274,6 +295,7 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
       // 適用条件は最新のContextで判定する。モデルの自己申告では確認済みにしない（#162）。
       const unresolved = unresolvedApplicability(scoped ? scope.applicabilityChecks ?? [] : [], latest.modelInput.facts)
       const result = guidanceResult({ draft: inputData.draft, sources: inputData.sources, research: inputData.research, proof: latest.proof, resultId: inputData.resultId, target, unresolved,
+        outcome: inputData.preflightOutcome ?? 'COMPLETED_RESEARCH',
         ...(scoped && scope.groundingRules ? { rules: scope.groundingRules } : {}) })
       await checkControl()
       const outcome = await deps.backend.result(result, { requestId: inputData.resultId, signal: deps.signal })
@@ -284,3 +306,12 @@ export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependenc
   return createWorkflow({ id: PROCEDURE_GUIDANCE_WORKFLOW, inputSchema, outputSchema }).then(load).then(plan).then(research).then(generate).then(report).commit()
 }
 
+/** Production entrypoint: stage-specific Skill loading cannot be disabled by dispatch input or configuration. */
+export function createProcedureGuidanceWorkflow(deps: ProcedureGuidanceDependencies) {
+  return buildProcedureGuidanceWorkflow(deps, 'staged')
+}
+
+/** Evaluation-only counterfactual used to quantify the legacy all-Skill prompt cost for #182. */
+export function createProcedureGuidanceWorkflowForEvaluation(deps: ProcedureGuidanceDependencies, mode: GuidanceSkillLoadingMode) {
+  return buildProcedureGuidanceWorkflow(deps, guidanceSkillLoadingModeSchema.parse(mode))
+}

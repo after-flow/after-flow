@@ -23,7 +23,7 @@ readinessはこれらの必須依存を実際に検査し、本番稼働可能�
 |---|---|---|
 | `firestore` | `Firestore#listCollections()`で疎通のみ確認（業務データは読まない） | `CHECK_FAILED` / `CHECK_TIMEOUT` |
 | `storage` | 原本Storageの`exists(存在しないkey)`で疎通のみ確認（読み書きしない） | `CHECK_FAILED` / `CHECK_TIMEOUT` |
-| `auth` | 認証設定が揃っているか。`static-jwks`・`firebase-emulator`は試験・ローカル専用のため、設定できていても本番相当とは扱わない | `STATIC_JWKS_NOT_PRODUCTION_GRADE` / `EMULATOR_NOT_PRODUCTION_GRADE` |
+| `auth` | 認証設定が揃っているか。`firebase-emulator`は試験・ローカル専用のため、設定できていても本番相当とは扱わない | `EMULATOR_NOT_PRODUCTION_GRADE` |
 | `session_revocation` | 失効・停止確認（ADR 0001 §5。Admin SDKでのrevoke確認等）が実装済みか | `SESSION_REVOCATION_NOT_ENFORCED`（認証が設定されている限り常にfail。本番公開前に対応が必要な既知の欠落） |
 | `consent_catalog` | 同意カタログが`placeholder:true`（仮文面）でないか | `PLACEHOLDER_CATALOG` |
 | `deadline_rules` | 期限ルールが`placeholder:true`（業務レビュー未了）でないか | `PLACEHOLDER_CATALOG` |
@@ -48,7 +48,7 @@ architecture.md 6.3に記載の`GET /internal/v1/health/ready`はAI Server側の
 
 開発環境（`make up`等）は既定でFirestore/原本Storageだけを設定し、認証・同意カタログ・期限ルール・AI接続は未設定のまま動く。
 これは意図的な「未接続」であり、livenessはそれを気にしない。readinessは同じ状態を`auth: NOT_CONFIGURED`のように明示的に`not_ready`として報告する。
-`NODE_ENV`に関わらず同じ基準（本番相当かどうか）で検査するため、`AUTH_MODE=static-jwks`のように**起動はできるが本番相当ではない設定**もreadinessでは`fail`になる。
+`NODE_ENV`に関わらず同じ基準（本番相当かどうか）で検査するため、`AUTH_MODE=firebase-emulator`のように**起動はできるが本番相当ではない設定**もreadinessでは`fail`になる。
 
 ## Cloud Runのrevision smoke testへの接続（設計。本セッションでは未接続）
 

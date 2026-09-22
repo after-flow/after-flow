@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   useAcknowledgeInsight,
   useAddEvidence,
   useCaseOverview,
+  useDocuments,
   useInsights,
   usePersons,
   useRunTaskCommand,
@@ -13,10 +14,11 @@ import {
   useUpdateRequiredDocuments,
   useUpdateTask,
 } from '@/lib/api/queries'
-import type { TaskRequiredDocumentResource, TaskResource } from '@aftercare/public-contracts'
+import type { DocumentResource, TaskRequiredDocumentResource, TaskResource } from '@aftercare/public-contracts'
 import { toast } from '@/kit/toast'
 import { isCarriedOver, isDisplayableInsight } from '@/lib/insights'
-import { INSIGHT_KIND_META } from '@/lib/labels'
+import { DOCUMENT_KIND_LABEL, INSIGHT_KIND_META } from '@/lib/labels'
+import { isDocumentInProgress } from '@/lib/model/document'
 import { Icon } from '@/kit/Icon'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { TASK_COMMAND_WORD, taskDependencies, visibleActions } from '@/lib/model/task'
@@ -49,6 +51,7 @@ import {
 } from '@/kit/domain'
 import { ResearchBox } from './parts/ResearchBox'
 import { CompleteTaskDialog } from './parts/CompleteTaskDialog'
+import { UploadDialog } from './parts/UploadDialog'
 import { mergeBringRows } from '@/lib/bring'
 import { taskChatDraft } from '@/lib/chatDraft'
 import { useChatDock } from '@/shell/chatDock'
@@ -167,7 +170,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
         <div className="flex items-center gap-3 rounded-lg border border-rd-border bg-rd-card px-4 py-3 @5xl:hidden">
           <CategoryIcon category={task.category} size={36} />
           <div className="min-w-0 flex-1">
-            <p className={`text-[1.2rem] font-bold leading-tight ${dueTone}`}>{done ? '完了' : dueWords(d)}</p>
+            <p className={`text-[1.2rem] font-bold leading-tight ${dueTone}`}>{done ? '完了' : dueWords(d, { long: true })}</p>
             <p className="text-[0.86rem] text-rd-text-2">
               {d.dueDate ? `${formatDate(d.dueDate, { weekday: true })}まで（${d.basisLabel}）` : d.basisLabel}
             </p>
@@ -247,6 +250,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                 task={task}
                 municipality={overview.data?.case.municipality}
                 caseBasicInfoVersion={overview.data?.case.basicInfoVersion}
+                kyoukaikenpoBurialBenefit={overview.data?.case.kyoukaikenpoBurialBenefit}
               />
 
               <p className="text-[0.82rem] leading-relaxed text-rd-text-3">
@@ -274,6 +278,15 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                       {formatDateTime(e.recordedAt)}
                       {e.note && `・${e.note}`}
                     </p>
+                    {e.documentId && (
+                      <Link
+                        to={`${base}/documents/${e.documentId}`}
+                        className="mt-1 inline-flex min-h-9 items-center gap-1 text-[0.86rem] font-bold text-rd-primary-text hover:underline"
+                      >
+                        <Icon name="document" size={15} />
+                        添付した書類を見る
+                      </Link>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -290,7 +303,7 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
                 <p className="text-[0.82rem] font-bold text-rd-text-2">期限</p>
                 {d ? (
                   <p className={`text-[1.4rem] font-bold leading-tight ${dueTone}`}>
-                    {done ? '完了' : dueWords(d)}
+                    {done ? '完了' : dueWords(d, { long: true })}
                   </p>
                 ) : prep && !done ? (
                   <p className="text-[1.2rem] font-bold leading-tight text-rd-warning-text">早めに</p>
@@ -422,53 +435,136 @@ function TaskScreenBody({ taskId }: { taskId: string }) {
   )
 }
 
+/** 書類の一覧の中で、記録に添付できるもの（Backend の条件：保存済みで、除外されていない） */
+const attachable = (d: DocumentResource) => d.storageState === 'STORED' && !d.archived
+
+/**
+ * 完了の記録。
+ * 窓口でもらう受理証明・控えは紙なので、その場で写真に撮って記録に添付できるようにする。
+ * 添付は、登録済みの書類から選ぶか、この場で追加する（追加は既存の「書類を追加」を使い、読み取りの同意・検査も同じ扱い）。
+ */
 function EvidenceDialog({ caseId, taskId, open, onClose }: { caseId: string; taskId: string; open: boolean; onClose: () => void }) {
   const add = useAddEvidence(caseId)
   const [label, setLabel] = useState('')
   const [kind, setKind] = useState<TaskResource['evidences'][number]['kind']>('RECEIPT')
   const [note, setNote] = useState('')
+  const [documentId, setDocumentId] = useState('')
+  // 書類を追加している間は、この記録のダイアログを一度隠す（ダイアログを重ねない）。書きかけの内容はそのまま残す
+  const [uploading, setUploading] = useState(false)
+  const before = useRef<Set<string>>(new Set())
+  const docs = useDocuments(caseId, {
+    enabled: open,
+    // 追加した書類の保存が終わるまで追いかける（保存が終わるまでは添付できない）
+    refetchInterval: (q) => (open && q.state.data?.items.some(isDocumentInProgress) ? 3_000 : false),
+  })
+  const items = [...(docs.data?.items ?? [])]
+    .filter((d) => !d.archived)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const picked = items.find((d) => d.id === documentId)
+  const waiting = picked != null && !attachable(picked)
+
+  const reset = () => {
+    setLabel('')
+    setKind('RECEIPT')
+    setNote('')
+    setDocumentId('')
+  }
 
   return (
-    <Confirm
-      open={open}
-      title="記録を残す"
-      description="受け付けてもらった控え・入金・解約の完了・名義変更の完了などを記録できます。"
-      confirmLabel="記録する"
-      busy={add.isPending}
-      disabled={!label.trim()}
-      onClose={onClose}
-      onConfirm={async () => {
-        await add.mutateAsync({ taskId, label: label.trim(), kind, note: note.trim() || undefined })
-        setLabel('')
-        setNote('')
-        onClose()
-      }}
-    >
-      <div className="flex flex-col gap-3.5">
-        <Field label="何の記録か" required hint="例：死亡届の受理証明を受け取った">
-          {(id) => <input id={id} className={inputClass} value={label} onChange={(e) => setLabel(e.target.value)} />}
-        </Field>
-        <Field label="種類">
-          {(id) => (
-            <select
-              id={id}
-              className={inputClass}
-              value={kind}
-              onChange={(e) => setKind(e.target.value as TaskResource['evidences'][number]['kind'])}
-            >
-              <option value="RECEIPT">受理・受付</option>
-              <option value="NOTICE">通知</option>
-              <option value="PAYMENT">入金・支払い</option>
-              <option value="REGISTRATION">登記・登録</option>
-              <option value="OTHER">その他</option>
-            </select>
-          )}
-        </Field>
-        <Field label="メモ">
-          {(id) => <input id={id} className={inputClass} value={note} onChange={(e) => setNote(e.target.value)} />}
-        </Field>
-      </div>
-    </Confirm>
+    <>
+      <Confirm
+        open={open && !uploading}
+        title="記録を残す"
+        description="受け付けてもらった控え・入金・解約の完了・名義変更の完了などを記録できます。"
+        confirmLabel="記録する"
+        busy={add.isPending}
+        disabled={!label.trim() || waiting}
+        onClose={onClose}
+        onConfirm={async () => {
+          await add.mutateAsync({
+            taskId,
+            label: label.trim(),
+            kind,
+            note: note.trim() || undefined,
+            documentId: documentId || undefined,
+          })
+          reset()
+          onClose()
+        }}
+      >
+        <div className="flex flex-col gap-3.5">
+          <Field label="何の記録か" required hint="例：死亡届の受理証明を受け取った">
+            {(id) => <input id={id} className={inputClass} value={label} onChange={(e) => setLabel(e.target.value)} />}
+          </Field>
+          <Field label="種類">
+            {(id) => (
+              <select
+                id={id}
+                className={inputClass}
+                value={kind}
+                onChange={(e) => setKind(e.target.value as TaskResource['evidences'][number]['kind'])}
+              >
+                <option value="RECEIPT">受理・受付</option>
+                <option value="NOTICE">通知</option>
+                <option value="PAYMENT">入金・支払い</option>
+                <option value="REGISTRATION">登記・登録</option>
+                <option value="OTHER">その他</option>
+              </select>
+            )}
+          </Field>
+          <Field
+            label="添付する書類"
+            hint={
+              waiting
+                ? '書類の保存が終わるまでお待ちください。終わると記録できます。'
+                : '受理証明や控えの写真を添えておくと、あとで見返せます。'
+            }
+          >
+            {(id) => (
+              <div className="flex flex-col gap-2">
+                <select id={id} className={inputClass} value={documentId} onChange={(e) => setDocumentId(e.target.value)}>
+                  <option value="">添付しない</option>
+                  {items.map((d) => (
+                    <option key={d.id} value={d.id} disabled={!attachable(d) && d.id !== documentId}>
+                      {d.fileName}（{DOCUMENT_KIND_LABEL[d.kind as keyof typeof DOCUMENT_KIND_LABEL] ?? DOCUMENT_KIND_LABEL.OTHER}）
+                      {attachable(d) ? '' : '・保存中'}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  icon="upload"
+                  className="self-start"
+                  onClick={() => {
+                    before.current = new Set(items.map((d) => d.id))
+                    setUploading(true)
+                  }}
+                >
+                  いま写真を撮って追加する
+                </Button>
+              </div>
+            )}
+          </Field>
+          <Field label="メモ">
+            {(id) => <input id={id} className={inputClass} value={note} onChange={(e) => setNote(e.target.value)} />}
+          </Field>
+        </div>
+      </Confirm>
+
+      <UploadDialog
+        caseId={caseId}
+        open={open && uploading}
+        onClose={async () => {
+          setUploading(false)
+          // 追加した書類を、そのまま添付する書類に選んでおく（保存中なら、終わるまで「記録する」を待たせる）
+          const latest = await docs.refetch()
+          const added = (latest.data?.items ?? [])
+            .filter((d) => !before.current.has(d.id) && !d.archived)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+          if (added) setDocumentId(added.id)
+        }}
+      />
+    </>
   )
 }
 

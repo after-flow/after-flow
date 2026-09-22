@@ -27,6 +27,8 @@ export interface ApprovalEntity extends EntityBase {
   expiresAt: string
   /** 財産処分に相当する提案の承認。追加の確認を要する。 */
   assetDisposal: boolean
+  /** 提案の根拠が書類なら、その書類ID（#196）。件数を書類ごとに数える表示に使う。根拠が無ければ null。 */
+  sourceDocumentId: string | null
 }
 
 export function isApprovalOpen(approval: ApprovalEntity, now: number): boolean {

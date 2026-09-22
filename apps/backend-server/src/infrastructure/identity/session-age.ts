@@ -11,19 +11,11 @@ export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 /**
  * `auth_time` からログイン維持の7日上限を検証する。
  *
- * `auth_time` が無いトークンは、`requireAuthTime` なら 401 で拒否する（Firebase の
- * ID トークンには必ず入る。無いものを通すと上限をすり抜ける）。static-jwks の
- * 試験用トークンだけ、`requireAuthTime:false` で判定の対象外にする。
- * 上限超過は 401（`details.reason: 'SESSION_EXPIRED'`）。
+ * `auth_time` が無いトークンは 401 で拒否する（Firebase の ID トークンには必ず入る。
+ * 無いものを通すと上限をすり抜ける）。上限超過も 401（`details.reason: 'SESSION_EXPIRED'`）。
  */
-export function assertWithinSessionCap(
-  authTimeSeconds: number | undefined,
-  nowSeconds: number,
-  clockToleranceSeconds: number,
-  requireAuthTime: boolean,
-): void {
+export function assertWithinSessionCap(authTimeSeconds: number | undefined, nowSeconds: number, clockToleranceSeconds: number): void {
   if (authTimeSeconds === undefined) {
-    if (!requireAuthTime) return
     throw errors.unauthenticated({
       message: 'ログイン時刻を確認できないトークンです。再度ログインしてください。',
       details: { reason: 'AUTH_TIME_REQUIRED' },

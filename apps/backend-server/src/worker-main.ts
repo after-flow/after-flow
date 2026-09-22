@@ -59,11 +59,8 @@ export async function startWorker(env: NodeJS.ProcessEnv = process.env, once = f
   const reconciler = new RunReconciler(read, uow, execution,
     scopedClient ?? { status: async () => { throw new Error('AI_NOT_CONNECTED') } },
     new FirestoreOutboxJobReader(db), agentStartTimeoutMs)
-  // 実検査・内部context接続が揃うまでは、書類解析配送を有効化しない（#27/#36）。
-  const guarded: AgentJobClient = { deliver: job => job.type === 'agent.document_analysis' || job.type.startsWith('document.')
-    ? Promise.resolve({ status: 'RETRYABLE', reason: 'DOCUMENT_DELIVERY_NOT_CONNECTED' }) : client.deliver(job) }
   const local = combineLocalHandlers(caseTaskHandler(tasks), reconciler, acknowledgeLocally(['task.completed', 'decision.confirmed']))
-  const dispatcher = new OutboxDispatcher(db, guarded, consent, visibilityMs, local, {
+  const dispatcher = new OutboxDispatcher(db, client, consent, visibilityMs, local, {
     deliveryTimeoutMs,
     onGiveUp: async (event, reason) => {
       if (!event.type.startsWith('agent.') || event.type === 'agent.cancel' || !event.caseId || typeof event.payload.runId !== 'string') return

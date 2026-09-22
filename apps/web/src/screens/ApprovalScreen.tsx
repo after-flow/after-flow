@@ -244,7 +244,8 @@ function ApprovalScreenBody({ approvalId }: { approvalId: string }) {
                     variant="primary"
                     size="lg"
                     icon="check"
-                    className="flex-1"
+                    // 文言が長い種類（「合っているので登録する」など）は、狭い画面では2行に折り返す（1行のままだと枠からはみ出す）
+                    className="h-auto! min-h-12 flex-1 py-2 whitespace-normal!"
                     disabled={submitting || (needsAck && !ack)}
                     onClick={() => void handleApprove()}
                   >

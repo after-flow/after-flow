@@ -16,7 +16,7 @@ const envSchema = z.object({
   AI_ORCA_FALLBACK_MODEL: z.string().min(1).max(200),
 })
 
-const REVIEW_REFERENCE = 'hackathon-demo-2026-09-21; OrcaRouter gateway and public provider terms must be reviewed before production'
+const REVIEW_REFERENCE = 'https://docs.orcarouter.ai/operations/data-handling reviewed for hackathon demo 2026-09-21; upstream provider terms require separate production review'
 const CATALOG_ID = 'kyoukaikenpo-burial-benefit'
 const CATALOG_VERSION = '2026-09-21'
 const POLICY_IDS = ['orca-core-primary', 'orca-core-fallback'] as const
@@ -103,11 +103,14 @@ export function readHackathonComposition(
     ],
     groundingRules: BURIAL_GROUNDING_RULES,
     // 協会けんぽの公式ページ（reviewReference）から作成した、案件への適用で確かめる事項。
-    // Backendにこれらを確認済みとして記録する項目がまだ無いため、現在は常に未確認として残る。
+    // Backendが投影した正式状態だけで確認済みを判定し、モデルの推測では消さない。
     applicabilityChecks: [
-      { id: 'enrollment', question: '亡くなった方が協会けんぽに加入していたか、加入していた支部はどこかを確認してください。' },
-      { id: 'deceased-status', question: '亡くなった方が被保険者本人か被扶養者かを確認してください（被扶養者の場合は家族埋葬料）。' },
-      { id: 'applicant', question: '申請する方が亡くなった方に生計を維持されていたか（埋葬料）、実際に埋葬を行った方か（埋葬費）を確認してください。' },
+      { id: 'enrollment', question: '亡くなった方が協会けんぽに加入していたか、加入していた支部はどこかを確認してください。',
+        confirmedBy: { group: 'case' as const, field: 'healthInsuranceBranch', present: true as const } },
+      { id: 'deceased-status', question: '亡くなった方が被保険者本人か被扶養者かを確認してください（被扶養者の場合は家族埋葬料）。',
+        confirmedBy: { group: 'case' as const, field: 'deceasedInsuranceStatus', oneOf: ['INSURED', 'DEPENDENT'] } },
+      { id: 'applicant', question: '申請する方が亡くなった方に生計を維持されていたか（埋葬料）、実際に埋葬を行った方か（埋葬費）を確認してください。',
+        confirmedBy: { group: 'case' as const, field: 'burialBenefitApplicantStatus', oneOf: ['LIVELIHOOD_MAINTAINER', 'BURIAL_EXPENSE_PAYER'] } },
     ],
   }
   return {
