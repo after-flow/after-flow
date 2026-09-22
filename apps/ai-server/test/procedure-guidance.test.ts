@@ -24,26 +24,14 @@ const brief = { briefId: scope.id, procedure: scope.procedure, institution: scop
 const researchRequest = { briefId: brief.briefId, questionIds: brief.questions.map(question => question.id), sourceCatalogIds: brief.sourceCatalogIds }
 const claim = (text: string) => ({ text, questionIds: ['documents'] })
 const draft = { status: 'complete', where: claim('架空機関の窓口'), bring: [claim('架空書類A')], steps: [claim('窓口で確認する')], missing: [] }
-const planDecision = { plan: [
-  { action: 'REQUEST_RESEARCH', questionIds: ['documents'] },
-  { action: 'GENERATE_GUIDANCE', questionIds: [] },
-  { action: 'REPORT', questionIds: [] },
-], nextAction: 'REQUEST_RESEARCH' }
 const SOURCE_TEXT = '架空書類Aを架空機関の窓口で確認する。'
 const evidence = [{ sourceId: 'source-1', sectionId: 's1', quote: '架空書類Aを架空機関の窓口で確認する' }]
 const synthesizedFindings = { status: 'complete', answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する', evidence }], missing: [], conflicts: [] }
 const findings = { ...synthesizedFindings, answers: synthesizedFindings.answers.map(answer => ({ ...answer, sourceIds: ['source-1'], applicability: '架空市の架空機関が扱う架空手続き' })) }
 
 function setup(researchFindings: unknown = synthesizedFindings, coreDrafts: readonly unknown[] = [draft]) {
-  const core = scriptedModel([
-    { text: JSON.stringify(planDecision) },
-    { tool: 'agent-researchAgent', input: { prompt: JSON.stringify(researchRequest) } },
-    { text: '検証済みの調査結果を受け取りました。' },
-    ...coreDrafts.map(value => ({ text: JSON.stringify(value) })),
-  ])
+  const core = scriptedModel(coreDrafts.map(value => ({ text: JSON.stringify(value) })))
   const research = scriptedModel([
-    { tool: 'searchOfficialSources', input: { query: '提出先 必要書類 手順' } },
-    { tool: 'readOfficialSource', input: { sourceId: candidate.id } },
     { text: JSON.stringify(researchFindings) },
   ])
   const content = { operation: 'task_guidance', procedure: { id: PROCEDURE_ID, version: 1, reviewStatus: 'reviewed' },
@@ -100,38 +88,33 @@ test('P-01 uses both real Mastra agents and tools, rechecks context, and reports
   assert.equal(reported[0].kind, 'task_guidance')
   if (reported[0].kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'COMPLETED')
+  assert.equal(reported[0].outcome, 'COMPLETED_RESEARCH')
   assert.deepEqual(reported[0].bring, ['架空書類A'])
   assert.deepEqual(reported[0].sources.map(source => source.url), [candidate.url])
-  assert.equal(core.calls.length, 4)
-  assert.equal(research.calls.length, 3)
+  assert.equal(core.calls.length, 1)
+  assert.equal(research.calls.length, 1)
   const prompt = (index: number) => JSON.stringify(core.calls[index])
-  assert.match(prompt(0), /Skill: case-assessment/)
-  assert.doesNotMatch(prompt(0), /Skill: research-briefing|Skill: grounded-guidance/)
-  assert.match(prompt(1), /Skill: research-briefing/)
-  assert.doesNotMatch(prompt(1), /Skill: case-assessment|Skill: grounded-guidance/)
-  assert.match(prompt(3), /Skill: grounded-guidance/)
-  assert.doesNotMatch(prompt(3), /Skill: case-assessment|Skill: research-briefing/)
+  assert.match(prompt(0), /Skill: grounded-guidance/)
+  assert.doesNotMatch(prompt(0), /Skill: case-assessment|Skill: research-briefing/)
   const researchPrompt = JSON.stringify(research.calls)
   assert.match(researchPrompt, /Skill: official-source-research/)
   assert.match(researchPrompt, /Skill: evidence-reconciliation/)
   assert.deepEqual(core.calls[0]!.toolChoice, { type: 'none' })
   assert.ok(!JSON.stringify(research.calls).includes('PRIVATE-NAME'))
   // 調査担当は実Toolから見出し単位の本文を受け取る（#165）。
-  assert.ok(JSON.stringify(research.calls[2]).includes('sections'))
+  assert.ok(JSON.stringify(research.calls[0]).includes('sections'))
   assert.ok(controls.includes('search') && controls.includes('read-source'))
 })
 
-test('#182 legacy comparison is evaluation-only and sends every playbook Skill at every Core stage', async () => {
+test('#182 legacy comparison is evaluation-only and sends every playbook Skill to the remaining Core generation stage', async () => {
   const { deps, core, research } = setup()
   const result = await (await createProcedureGuidanceWorkflowForEvaluation(deps, 'legacy-all').createRun())
     .start({ inputData: { resultId: 'result-1' } })
   assert.equal(result.status, 'success', JSON.stringify(result))
-  for (const index of [0, 1, 3]) {
-    const request = JSON.stringify(core.calls[index])
-    assert.match(request, /Skill: case-assessment/)
-    assert.match(request, /Skill: research-briefing/)
-    assert.match(request, /Skill: grounded-guidance/)
-  }
+  const request = JSON.stringify(core.calls[0])
+  assert.match(request, /Skill: case-assessment/)
+  assert.match(request, /Skill: research-briefing/)
+  assert.match(request, /Skill: grounded-guidance/)
   const researchRequest = JSON.stringify(research.calls)
   assert.match(researchRequest, /Skill: official-source-research/)
   assert.match(researchRequest, /Skill: evidence-reconciliation/)
@@ -154,26 +137,25 @@ test('#162 model draft and transport share task-guidance length limits', () => {
   }).success, false)
 })
 
-test('#162 invalid Core output is regenerated once without repeating research', async () => {
+test('#162 invalid Core output falls back to verified quotes without a repair inference', async () => {
   const invalid = { ...draft, bring: [claim('長'.repeat(TASK_GUIDANCE_LIMITS.bringItemChars + 1))] }
   const { deps, reported, core, research } = setup(synthesizedFindings, [invalid, draft])
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   const result = await run.start({ inputData: { resultId: 'result-1' } })
   assert.equal(result.status, 'success', JSON.stringify(result))
-  assert.equal(core.calls.length, 5)
-  assert.equal(research.calls.length, 3)
-  assert.deepEqual(reported[0]?.kind === 'task_guidance' ? reported[0].bring : [], ['架空書類A'])
-  assert.match(JSON.stringify(core.calls[4]), /repair/)
+  assert.equal(core.calls.length, 1)
+  assert.equal(research.calls.length, 1)
+  assert.match(reported[0]?.kind === 'task_guidance' ? reported[0].bring.join(' ') : '', /架空書類A/)
 })
 
-test('#162 a second invalid Core output falls back to verified quotes without truncating model text', async () => {
+test('#162 verified-quote fallback does not expose invalid over-limit model text', async () => {
   const longText = '長'.repeat(TASK_GUIDANCE_LIMITS.bringItemChars + 1)
   const invalid = { ...draft, bring: [claim(longText)] }
   const { deps, reported, core, research } = setup(synthesizedFindings, [invalid, invalid])
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
-  assert.equal(core.calls.length, 5)
-  assert.equal(research.calls.length, 3)
+  assert.equal(core.calls.length, 1)
+  assert.equal(research.calls.length, 1)
   assert.equal(reported.length, 1)
   assert.equal(reported[0]?.kind === 'task_guidance' ? reported[0].status : null, 'PARTIAL')
   assert.equal(JSON.stringify(reported).includes(longText), false)
@@ -192,6 +174,7 @@ test('#162 general research stays PARTIAL until Case applicability is confirmed'
   assert.equal(reported[0]?.kind, 'task_guidance')
   if (reported[0]?.kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'PARTIAL')
+  assert.equal(reported[0].outcome, 'COMPLETED_RESEARCH')
   assert.deepEqual(reported[0].missing, applicabilityChecks.map(item => item.question))
 })
 
@@ -199,20 +182,18 @@ test('no reviewed source returns a bounded partial result without guidance gener
   const { deps, reported, core, research } = setup()
   deps.research.search = async () => []
   const noSource = { status: 'needs_input', answers: [], missing: ['確認できる公式資料が見つかりませんでした。'], conflicts: [] }
-  const noSourceResearch = scriptedModel([
-    { tool: 'searchOfficialSources', input: { query: '提出先 必要書類 手順' } },
-    { text: JSON.stringify(noSource) },
-  ])
+  const noSourceResearch = scriptedModel([{ text: JSON.stringify(noSource) }])
   deps.models = { ...deps.models, research: noSourceResearch.model }
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   const result = await run.start({ inputData: { resultId: 'result-1' } })
   assert.equal(result.status, 'success', JSON.stringify(result))
-  assert.equal(core.calls.length, 3)
+  assert.equal(core.calls.length, 0)
   assert.equal(research.calls.length, 0)
-  assert.equal(noSourceResearch.calls.length, 2)
+  assert.equal(noSourceResearch.calls.length, 0)
   assert.equal(reported[0]?.kind, 'task_guidance')
   if (reported[0]?.kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'PARTIAL')
+  assert.equal(reported[0].outcome, 'SOURCE_NOT_CONFIGURED')
   assert.match(reported[0].missing.join(' '), /公式資料/)
 })
 
@@ -238,6 +219,7 @@ test('a reviewed scope for another procedure is ignored; without a configured ca
   assert.equal(reported[0].kind, 'task_guidance')
   if (reported[0].kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'PARTIAL')
+  assert.equal(reported[0].outcome, 'SOURCE_NOT_CONFIGURED')
   assert.deepEqual(reported[0].missing, [UNCONFIGURED_SOURCE_MESSAGE])
   assert.equal(reported[0].target, '健康保険の埋葬料（費）を確認する')
 })
@@ -254,6 +236,7 @@ test('an unmapped Task (procedure: null) asks for input without models or search
   if (reported[0].kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'PARTIAL')
   assert.deepEqual(reported[0].missing, [UNMAPPED_PROCEDURE_MESSAGE])
+  assert.equal(reported[0].outcome, 'NOT_APPLICABLE')
   assert.equal(reported[0].target, null)
 })
 
@@ -267,6 +250,7 @@ test('missing required context blocks with structured questions instead of guess
   assert.equal(reported[0].kind, 'task_guidance')
   if (reported[0].kind !== 'task_guidance') assert.fail()
   assert.equal(reported[0].status, 'PARTIAL')
+  assert.equal(reported[0].outcome, 'MISSING_CONTEXT')
   assert.equal(reported[0].missing.length, 1)
   assert.ok(reported[0].missing[0]!.includes('続柄'))
 })
@@ -310,18 +294,19 @@ test('core cannot report COMPLETED after incomplete, failed or contradictory res
     assert.equal(result.status, expected, JSON.stringify(unresolved))
     if (expected === 'success') assert.equal(reported[0]?.kind === 'task_guidance' ? reported[0].status : null, 'PARTIAL')
     else assert.equal(reported.length, 0)
-    assert.equal(research.calls.length, 3, 'source was really retrieved before the incomplete findings')
+    assert.equal(research.calls.length, 1, 'source was really retrieved before the incomplete findings')
     assert.ok(core.calls.length <= 4, 'research cannot trigger a synthesis retry loop')
   }
 })
 
-test('missing required questions block completion even when core cites a retrieved source', async () => {
+test('missing required questions produce a safe partial result even when another answer cites a retrieved source', async () => {
   const { deps, reported, core } = setup()
   deps.scope = { ...scope, questions: [...scope.questions, { id: 'eligibility', text: '適用条件は何か' }] }
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
-  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'failed')
+  assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
   assert.equal(core.calls.length, 1)
-  assert.equal(reported.length, 0)
+  assert.equal(reported[0]?.kind === 'task_guidance' && reported[0].status, 'PARTIAL')
+  assert.match(reported[0]?.kind === 'task_guidance' ? reported[0].missing.join(' ') : '', /適用条件/)
 })
 
 test('completion gate revalidates harness snapshots, including unattempted and interrupted research', () => {
@@ -388,9 +373,6 @@ test('#163 本文と一致しない引用の回答は採用せず、案内を完
   const fabricated = { ...synthesizedFindings, answers: [{ questionId: 'documents', text: '架空書類Aを郵送する',
     evidence: [{ sourceId: 'source-1', sectionId: 's1', quote: '架空書類Aを架空機関へ郵送する' }] }] }
   const core = scriptedModel([
-    { text: JSON.stringify(planDecision) },
-    { tool: 'agent-researchAgent', input: { prompt: JSON.stringify(researchRequest) } },
-    { text: '検証済みの調査結果を受け取りました。' },
     { text: JSON.stringify({ ...draft, status: 'partial', missing: ['提出方法'] }) },
   ])
   const { deps, reported } = setup(fabricated)
@@ -430,8 +412,6 @@ test('#164 Research構造化出力を1回修復し、2回目も不正なら安�
   const malformed = { status: 'complete', missing: [], conflicts: [],
     answers: [{ questionId: 'documents', text: '窓口で架空書類Aを確認する' }, { evidence }] }
   const research = scriptedModel([
-    { tool: 'searchOfficialSources', input: { query: '提出先 必要書類 手順' } },
-    { tool: 'readOfficialSource', input: { sourceId: candidate.id } },
     { text: JSON.stringify(malformed) },
     { text: JSON.stringify(synthesizedFindings) },
   ])
@@ -439,12 +419,10 @@ test('#164 Research構造化出力を1回修復し、2回目も不正なら安�
   deps.models = { ...deps.models, research: research.model }
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
-  assert.equal(research.calls.length, 4)
+  assert.equal(research.calls.length, 2)
   assert.equal(reported[0]?.kind === 'task_guidance' && reported[0].status, 'COMPLETED')
 
   const twice = scriptedModel([
-    { tool: 'searchOfficialSources', input: { query: '提出先 必要書類 手順' } },
-    { tool: 'readOfficialSource', input: { sourceId: candidate.id } },
     { text: JSON.stringify(malformed) },
     { text: JSON.stringify(malformed) },
   ])
@@ -452,7 +430,7 @@ test('#164 Research構造化出力を1回修復し、2回目も不正なら安�
   failing.deps.models = { ...failing.deps.models, research: twice.model }
   const failed = await createProcedureGuidanceWorkflow(failing.deps).createRun()
   assert.equal((await failed.start({ inputData: { resultId: 'result-1' } })).status, 'success')
-  assert.equal(twice.calls.length, 4, '再試行は1回まで')
+  assert.equal(twice.calls.length, 2, '再試行は1回まで')
   const guidance = failing.reported[0]
   if (guidance?.kind !== 'task_guidance') assert.fail()
   assert.equal(guidance.status, 'PARTIAL')
@@ -469,15 +447,13 @@ test('#183 evidence件数超過を検証済み上限へ収め、Provider成功�
     })),
   }
   const research = scriptedModel([
-    { tool: 'searchOfficialSources', input: { query: '提出先 必要書類 手順' } },
-    { tool: 'readOfficialSource', input: { sourceId: candidate.id } },
     { text: JSON.stringify(overflow) },
   ])
   const { deps, reported } = setup()
   deps.models = { ...deps.models, research: research.model }
   const run = await createProcedureGuidanceWorkflow(deps).createRun()
   assert.equal((await run.start({ inputData: { resultId: 'result-1' } })).status, 'success')
-  assert.equal(research.calls.length, 3, '検索・取得や生成を繰り返さない')
+  assert.equal(research.calls.length, 1, '検索・取得や生成を繰り返さない')
   assert.equal(reported[0]?.kind === 'task_guidance' && reported[0].status, 'COMPLETED')
   if (reported[0]?.kind !== 'task_guidance') assert.fail()
   assert.ok(reported[0].citations.length <= 15)

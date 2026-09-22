@@ -3,6 +3,7 @@ import type { AgentBudget } from '../budget-processors.js'
 import { Agent } from '@mastra/core/agent'
 import type { DelegationConfig, ToolsInput, ModelWithRetries } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
+import { RequestContext } from '@mastra/core/request-context'
 import { z } from 'zod'
 import { getPlaybook } from '../../../orchestration/playbooks/registry.js'
 import { boundResearchSynthesis, finalizeResearchSynthesis, researchBriefSchema, researchEvidenceSchema, researchRequestSchema, researchSynthesisSchema, validateFindings, validateResearchRequest } from '../../../orchestration/research/contracts.js'
@@ -212,6 +213,48 @@ ${mandatoryInstructions(researchSkills)}`
     },
   }
 
+  /**
+   * Execute a harness-approved public research brief without spending two Core model turns
+   * forwarding a request that the harness has already validated. The same tool gates,
+   * output verifier, attempt ledger and budget apply as in model-initiated delegation.
+   */
+  async function executeApprovedResearch(input: unknown, prepareSources: () => Promise<void>): Promise<void> {
+    dependencies.signal.throwIfAborted()
+    if (++attempts > 2 || active || reserving) throw new Error('Research delegation limit reached')
+    reserving = true
+    try { await dependencies.budget?.charge({ research: 1 }) } finally { reserving = false }
+    const selection = researchRequestSchema.parse(input)
+    const brief = briefs.get(selection.briefId)
+    if (!brief) throw new Error('Unknown research brief')
+    const request = validateResearchRequest(selection, brief)
+    requests.push(request)
+    const outcome: ResearchEvidence['outcomes'][number] = { briefId: brief.briefId, findings: null }
+    outcomes.push(outcome)
+    await prepareSources()
+    dependencies.signal.throwIfAborted()
+    const sources = dependencies.evidenceSources?.(brief.briefId) ?? []
+    if (!sources.length) {
+      outcome.findings = { status: 'needs_input', answers: [], missing: ['確認できる公式資料が見つかりませんでした。'], conflicts: [] }
+      return
+    }
+    const requestContext = new RequestContext<unknown>([['researchBriefId', brief.briefId]])
+    const response = await researchAgent.generate(JSON.stringify({
+      instruction: 'ハーネスが審査済みカタログを検索し、上位の公式資料を取得済みです。検索や取得を繰り返さず、全questionについて取得本文の逐語引用を付けた構造化結果だけを返してください。各answer.textは要点だけを300文字以内でまとめてください。',
+      brief,
+      sources: sources.map(({ id, title, issuer, url, fetchedAt, sections }) => ({ id, title, issuer, url, fetchedAt, sections })),
+    }), { maxSteps: 1, toolChoice: 'none', abortSignal: dependencies.signal, requestContext })
+    let raw: unknown = response.object
+    if (raw === undefined) {
+      try { raw = JSON.parse(response.text) } catch { raw = undefined }
+    }
+    const parsed = researchSynthesisSchema.safeParse(boundResearchSynthesis(raw))
+    if (!parsed.success) {
+      researchOutputNeedsRepair = true
+      return
+    }
+    outcome.findings = finalizeResearchSynthesis(parsed.data, brief, sources)
+  }
+
   const coreAgent = new Agent({
     ...(coreBudget ? { inputProcessors: [coreBudget.input], outputProcessors: [coreBudget.output] } : {}),
     id: CORE_AGENT_ID, name: 'コアエージェント',
@@ -226,7 +269,7 @@ ${mandatoryInstructions(coreSkills)}`,
     agents: { researchAgent },
     defaultOptions: { maxSteps: 8, modelSettings: { maxRetries: 0 }, abortSignal: dependencies.signal, delegation },
   })
-  return { coreAgent, researchAgent, playbook,
+  return { coreAgent, researchAgent, executeApprovedResearch, playbook,
     skillRefs: {
       core: coreDefinitions.map(({ id, version, hash }) => ({ id, version, hash, role: 'core' as const })),
       research: researchDefinitions.map(({ id, version, hash }) => ({ id, version, hash, role: 'research' as const })),

@@ -99,7 +99,7 @@ export type ResearchFindings = z.infer<typeof researchFindingsSchema>
 export const researchSynthesisSchema = z.object({
   status: z.enum(['complete', 'partial', 'needs_input', 'failed']),
   answers: z.array(z.object({
-    questionId: id, text: z.string().min(1).max(2000),
+    questionId: id, text: z.string().min(1).max(600),
     /** 本文からそのまま写した引用。1件の回答に最大5件。 */
     evidence: z.array(evidenceQuoteSchema).min(1).max(5),
   }).strict()).max(12),

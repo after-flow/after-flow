@@ -82,8 +82,19 @@ export const guidanceCitationSchema = z.object({
   quote: z.string().min(1).max(TASK_GUIDANCE_LIMITS.quoteChars),
 }).strict()
 export type GuidanceCitation = z.infer<typeof guidanceCitationSchema>
+/** Why a task-guidance run ended. Status describes usability; outcome describes execution. */
+export const guidanceOutcomeSchema = z.enum([
+  'COMPLETED_RESEARCH',
+  'MISSING_CONTEXT',
+  'SOURCE_NOT_CONFIGURED',
+  'NOT_APPLICABLE',
+  'FAILED',
+])
+export type GuidanceOutcome = z.infer<typeof guidanceOutcomeSchema>
 const guidanceSchema = resultBase.extend({
   kind: z.literal('task_guidance'), status: z.enum(['COMPLETED', 'PARTIAL', 'FAILED']),
+  // Optional only for results stored before this field existed. New AI results always set it.
+  outcome: guidanceOutcomeSchema.optional(),
   target: z.string().max(TASK_GUIDANCE_LIMITS.targetChars).nullable().optional(), where: z.string().max(TASK_GUIDANCE_LIMITS.whereChars).nullable().optional(),
   bring: z.array(z.string().max(TASK_GUIDANCE_LIMITS.bringItemChars)).max(TASK_GUIDANCE_LIMITS.bringItems).default([]),
   steps: z.array(z.string().max(TASK_GUIDANCE_LIMITS.stepChars)).max(TASK_GUIDANCE_LIMITS.stepItems).default([]),
