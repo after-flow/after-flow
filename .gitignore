@@ -32,8 +32,6 @@ dist-ssr
 !.env.example
 *.tsbuildinfo
 gha-creds-*.json
-# ローカル開発用の認証秘密鍵（make dev-auth）
-.dev-auth/
 reports/
 images/
 *.bundle
