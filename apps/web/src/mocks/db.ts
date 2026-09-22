@@ -322,6 +322,18 @@ export const db: Store = {
       category: '契約',
       source: 'AI',
     }),
+    task({
+      id: 'task_9',
+      procedureId: 'kyoukaikenpo-burial-benefit',
+      title: '健康保険の埋葬料（費）を確認する',
+      summary: '協会けんぽの埋葬料・埋葬費について、対象者・提出先・添付書類を確認します。',
+      submitTo: '全国健康保険協会',
+      status: 'COLLECTING_INFORMATION',
+      stage: 'government',
+      category: 'insurance-benefit',
+      source: 'RULE_ENGINE',
+      evidenceRequired: true,
+    }),
   ],
 
   assets: [

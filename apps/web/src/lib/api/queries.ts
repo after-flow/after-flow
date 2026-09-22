@@ -39,7 +39,7 @@ import type {
   UpdateLiabilityRequest,
   UpdatePersonRequest,
 } from '@aftercare/public-contracts'
-import type { CaseOverviewResource, CaseProfileResource } from '@aftercare/public-contracts'
+import type { CaseOverviewResource, CaseProfileResource, KyoukaikenpoBurialBenefitResource } from '@aftercare/public-contracts'
 import type { CaseResource } from '@aftercare/public-contracts'
 import type { AgentRunResource } from '@aftercare/public-contracts'
 
@@ -164,6 +164,8 @@ export function useUpdateCase(caseId: string) {
       dateOfBirth?: string | null
       profile?: CaseProfileInput | null
       funeralCompletedAt?: string | null
+      /** Backendでは3項目を丸ごと置換するため、常に全項目を送る。 */
+      kyoukaikenpoBurialBenefit?: Omit<KyoukaikenpoBurialBenefitResource, 'missingFields'>
     }) => api.patch<CaseResource>(`/cases/${caseId}`, patch),
     onSuccess: (updated) => {
       qc.setQueryData(qk.case(caseId), updated)

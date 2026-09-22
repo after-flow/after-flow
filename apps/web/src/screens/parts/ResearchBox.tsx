@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import type { TaskResource } from '@aftercare/public-contracts'
+import type { KyoukaikenpoBurialBenefitResource, TaskResource } from '@aftercare/public-contracts'
 import { RESEARCH_POLL_TIMEOUT_MS, useRequestGuidance, useTaskGuidance, useUpdateCase } from '@/lib/api/queries'
 import { Icon } from '@/kit/Icon'
 import { daysSince, formatDate, formatDateTime, msSince } from '@/lib/format'
 import { safeExternalUrl, urlHostname } from '@/lib/url'
-import { Badge, Button, Notice, inputClass } from '@/kit/kit'
+import { Badge, Button, Field, Notice, inputClass } from '@/kit/kit'
 import { AiConsentNotice, useAiConsent } from '@/kit/domain'
 import { guidanceDisplayState } from '@/lib/model/guidance'
+import { mergeKyoukaikenpoBurialBenefitInput } from '@/lib/model/kyoukaikenpo-burial-benefit'
 
 /** この日数を過ぎた調査結果は、古くなっている可能性を伝える */
 const STALE_DAYS = 90
@@ -26,12 +27,14 @@ export function ResearchBox({
   task,
   municipality,
   caseVersion,
+  kyoukaikenpoBurialBenefit,
 }: {
   caseId: string
   task: TaskResource
   municipality?: string | null
   /** 市区町村の登録に使う Case の版。取得前は未定義で、その間は登録入口を無効にする。 */
   caseVersion?: number
+  kyoukaikenpoBurialBenefit?: KyoukaikenpoBurialBenefitResource
 }) {
   const guidance = useTaskGuidance(caseId, task.id)
   const g = guidance.data
@@ -39,6 +42,10 @@ export function ResearchBox({
   const request = useRequestGuidance(caseId)
   const updateCase = useUpdateCase(caseId)
   const [draft, setDraft] = useState('')
+  const [branch, setBranch] = useState('')
+  const [deceasedInsuranceStatus, setDeceasedInsuranceStatus] = useState<'' | 'INSURED' | 'DEPENDENT'>('')
+  const [applicantStatus, setApplicantStatus] = useState<'' | 'LIVELIHOOD_MAINTAINER' | 'BURIAL_EXPENSE_PAYER'>('')
+  const [researchRestartFailed, setResearchRestartFailed] = useState(false)
   const status = g?.status ?? 'NOT_REQUESTED'
   const consent = useAiConsent()
   const again = () => {
@@ -88,6 +95,129 @@ export function ResearchBox({
         公式の案内を自動で確認できる手続きではありません。上の案内は一般的な内容です。
         <ConfirmAtDestination destination={destination} />
       </Notice>
+    )
+  }
+
+  if (
+    state === 'MISSING_CONTEXT' &&
+    task.procedureId === 'kyoukaikenpo-burial-benefit' &&
+    kyoukaikenpoBurialBenefit
+  ) {
+    const missingFields = kyoukaikenpoBurialBenefit.missingFields
+    const needsBranch = missingFields.includes('BRANCH')
+    const needsDeceasedStatus = missingFields.includes('DECEASED_INSURANCE_STATUS')
+    const needsApplicantStatus = missingFields.includes('APPLICANT_STATUS')
+    const complete = (!needsBranch || branch.trim().length > 0)
+      && (!needsDeceasedStatus || deceasedInsuranceStatus !== '')
+      && (!needsApplicantStatus || applicantStatus !== '')
+
+    const restart = async () => {
+      setResearchRestartFailed(false)
+      try {
+        await request.mutateAsync(task.id)
+      } catch {
+        setResearchRestartFailed(true)
+      }
+    }
+
+    if (missingFields.length === 0) {
+      return (
+        <div className="flex flex-col gap-2.5">
+          {researchRestartFailed && (
+            <Notice tone="warning" role="alert">
+              情報は保存済みだが再調査を開始できなかった
+            </Notice>
+          )}
+          <Button size="sm" disabled={request.isPending} onClick={() => void restart()}>
+            情報は登録済み。もう一度調べる
+          </Button>
+        </div>
+      )
+    }
+
+    return (
+      <div className="rounded-lg border border-rd-warning-line bg-rd-warning-soft p-4">
+        <p className="font-bold text-rd-warning-text">調べるために足りない情報があります</p>
+        <div className="mt-3 flex flex-col gap-3">
+          {needsBranch && (
+            <Field label="加入していた協会けんぽの支部" required>
+              {(id) => (
+                <input
+                  id={id}
+                  className={inputClass}
+                  value={branch}
+                  placeholder="例：東京支部"
+                  onChange={(event) => setBranch(event.target.value)}
+                />
+              )}
+            </Field>
+          )}
+          {needsDeceasedStatus && (
+            <Field label="亡くなった方の加入状況" required>
+              {(id) => (
+                <select
+                  id={id}
+                  className={inputClass}
+                  value={deceasedInsuranceStatus}
+                  onChange={(event) => setDeceasedInsuranceStatus(event.target.value as typeof deceasedInsuranceStatus)}
+                >
+                  <option value="">選択してください</option>
+                  <option value="INSURED">被保険者本人</option>
+                  <option value="DEPENDENT">被扶養者</option>
+                </select>
+              )}
+            </Field>
+          )}
+          {needsApplicantStatus && (
+            <Field label="申請する方の状況" required>
+              {(id) => (
+                <select
+                  id={id}
+                  className={inputClass}
+                  value={applicantStatus}
+                  onChange={(event) => setApplicantStatus(event.target.value as typeof applicantStatus)}
+                >
+                  <option value="">選択してください</option>
+                  <option value="LIVELIHOOD_MAINTAINER">亡くなった方により生計を維持されていた</option>
+                  <option value="BURIAL_EXPENSE_PAYER">埋葬にかかった費用を支払った</option>
+                </select>
+              )}
+            </Field>
+          )}
+          {researchRestartFailed && (
+            <Notice tone="warning" role="alert">
+              情報は保存済みだが再調査を開始できなかった
+            </Notice>
+          )}
+          <Button
+            variant="primary"
+            className="self-start"
+            disabled={!complete || caseVersion == null || updateCase.isPending || request.isPending}
+            onClick={async () => {
+              if (caseVersion == null) return
+              setResearchRestartFailed(false)
+              try {
+                await updateCase.mutateAsync({
+                  expectedVersion: caseVersion,
+                  kyoukaikenpoBurialBenefit: mergeKyoukaikenpoBurialBenefitInput(
+                    kyoukaikenpoBurialBenefit,
+                    { branch, deceasedInsuranceStatus, applicantStatus },
+                  ),
+                })
+              } catch {
+                return
+              }
+              try {
+                await request.mutateAsync(task.id)
+              } catch {
+                setResearchRestartFailed(true)
+              }
+            }}
+          >
+            保存してもう一度調べる
+          </Button>
+        </div>
+      </div>
     )
   }
 
