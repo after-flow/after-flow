@@ -74,15 +74,12 @@ services:
       AI_CONNECTED_OPERATIONS: ${AI_CONNECTED_OPERATIONS-}
       READINESS_ACCESS_TOKEN: ${READINESS_ACCESS_TOKEN-}
       # 利用者認証。既定は Firebase Auth Emulator（`make up` だけで動く）。
-      # `.env` に AUTH_MODE=static-jwks 等を書くとこの既定を上書きする
-      # （`docs/runbooks/local-swagger.md` の「代替」手順）。未設定の項目が
-      # 残ると保護対象APIは401で fail closed する。
+      # 未設定の項目が残ると保護対象APIは401で fail closed する。
       AUTH_MODE: ${AUTH_MODE:-firebase-emulator}
       AUTH_ISSUER: ${AUTH_ISSUER:-https://securetoken.google.com/demo-after-flow}
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-demo-after-flow}
       AUTH_TENANT_ID: ${AUTH_TENANT_ID:-after-flow-demo}
       AUTH_JWKS_URI: ${AUTH_JWKS_URI-}
-      AUTH_STATIC_JWKS: ${AUTH_STATIC_JWKS-}
       # firebase-emulator モードだけ AUTH_REQUIRE_EMAIL_VERIFIED=false を許す
       # （jwks で false は起動を拒否する）。
       AUTH_REQUIRE_EMAIL_VERIFIED: ${AUTH_REQUIRE_EMAIL_VERIFIED:-false}
@@ -91,7 +88,7 @@ services:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     volumes:
       - ./apps/backend-server/src:/workspace/apps/backend-server/src:ro
-      # 開発用の補助script（dev-auth / dev-seed）。imageの再buildなしで使う。
+      # 開発用の補助script（dev-firebase / dev-seed）。imageの再buildなしで使う。
       - ./apps/backend-server/scripts:/workspace/apps/backend-server/scripts:ro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
