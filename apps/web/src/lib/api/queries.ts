@@ -72,6 +72,15 @@ export const qk = {
 
 type ListOpts<T> = Omit<UseQueryOptions<Page<T>>, 'queryKey' | 'queryFn'>
 
+/**
+ * 一覧を最後のページまで取る。Backend は1回に50件までしか返さないため、先頭のページだけだと
+ * 51件目以降の手続きや財産が一覧・件数・期限の知らせから黙って消える。
+ * 画面は Page の形（items）で受け取っているので、その形のまま返す。
+ */
+async function allPages<T>(path: string): Promise<Page<T>> {
+  return { items: await getAll<T>(path) }
+}
+
 /** 自律調査の結果を待つ上限。これを過ぎたら追いかけるのをやめる。 */
 export const RESEARCH_POLL_TIMEOUT_MS = 5 * 60_000
 /** チャットの回答を待つ上限。 */
@@ -103,7 +112,7 @@ export function useAgreeConsents() {
 export function useCases() {
   return useQuery({
     queryKey: qk.cases,
-    queryFn: () => api.list<CaseResource>('/cases'),
+    queryFn: () => allPages<CaseResource>('/cases'),
   })
 }
 
@@ -182,7 +191,7 @@ export function useUpdateCase(caseId: string) {
 export function useDocuments(caseId: string, opts?: ListOpts<DocumentResource>) {
   return useQuery({
     queryKey: qk.documents(caseId),
-    queryFn: () => api.list<DocumentResource>(`/cases/${caseId}/documents`),
+    queryFn: () => allPages<DocumentResource>(`/cases/${caseId}/documents`),
     enabled: Boolean(caseId),
     ...opts,
   })
@@ -267,7 +276,7 @@ export function useRequestDocumentAnalysis(caseId: string) {
 export function useTasks(caseId: string) {
   return useQuery({
     queryKey: qk.tasks(caseId),
-    queryFn: () => api.list<TaskResource>(`/cases/${caseId}/tasks`),
+    queryFn: () => allPages<TaskResource>(`/cases/${caseId}/tasks`),
     enabled: Boolean(caseId),
   })
 }
@@ -363,9 +372,15 @@ export function useUpdateRequiredDocuments(caseId: string) {
       requiredDocuments: TaskRequiredDocumentResource[]
     }) =>
       api.patch<TaskResource>(`/cases/${caseId}/tasks/${taskId}`, {
-        expectedVersion,
+        /*
+          続けて押すと、2つ目は1つ目の保存が終わるまで待つ（scope）。押した時点の版のまま送ると、
+          1つ目の保存で上がった版とずれて必ず CONFLICT になり、2つ目の印が消える。
+          送る直前に、1つ目の結果で更新されたキャッシュの版を使う
+        */
+        expectedVersion: qc.getQueryData<TaskResource>(qk.task(caseId, taskId))?.version ?? expectedVersion,
         requiredDocuments: requiredDocuments.map((r) => ({ id: r.id, label: r.label, documentId: r.documentId, collected: r.collected })),
       }),
+    mutationKey: ['required-documents', caseId],
     scope: { id: `required-documents-${caseId}` },
     onMutate: async ({ taskId, requiredDocuments }) => {
       await qc.cancelQueries({ queryKey: qk.task(caseId, taskId) })
@@ -374,11 +389,18 @@ export function useUpdateRequiredDocuments(caseId: string) {
       return { before }
     },
     onError: (_e, { taskId }, ctx) => {
-      if (ctx?.before) qc.setQueryData(qk.task(caseId, taskId), ctx.before)
+      if (!ctx?.before) return
+      // 印は押す前に戻す。版は、先に済んだ保存で進んでいることがあるので、今の版を残す（戻すと次の保存が CONFLICT になる）
+      const current = qc.getQueryData<TaskResource>(qk.task(caseId, taskId))
+      qc.setQueryData(qk.task(caseId, taskId), { ...ctx.before, version: Math.max(ctx.before.version, current?.version ?? 0) })
     },
     onSuccess: (task) => {
-      qc.setQueryData(qk.task(caseId, task.id), task)
-      void qc.invalidateQueries({ queryKey: qk.tasks(caseId) })
+      // 後ろに続けて押した分が待っているときは、その印（楽観的に付けた表示）を消さないよう、版だけを進める
+      const waiting = qc.isMutating({ mutationKey: ['required-documents', caseId] }) > 1
+      const current = qc.getQueryData<TaskResource>(qk.task(caseId, task.id))
+      qc.setQueryData(qk.task(caseId, task.id), waiting && current ? { ...task, requiredDocuments: current.requiredDocuments } : task)
+      // 一覧だけを取り直す（前方一致だとこの手続きの詳細まで取り直され、待っている分の印が一瞬消える）
+      void qc.invalidateQueries({ queryKey: qk.tasks(caseId), exact: true })
     },
   })
 }
@@ -429,7 +451,7 @@ export function useAddEvidence(caseId: string) {
 export function useAssets(caseId: string) {
   return useQuery({
     queryKey: qk.assets(caseId),
-    queryFn: () => api.list<Asset>(`/cases/${caseId}/assets`),
+    queryFn: () => allPages<Asset>(`/cases/${caseId}/assets`),
     enabled: Boolean(caseId),
   })
 }
@@ -437,7 +459,7 @@ export function useAssets(caseId: string) {
 export function useLiabilities(caseId: string) {
   return useQuery({
     queryKey: qk.liabilities(caseId),
-    queryFn: () => api.list<Liability>(`/cases/${caseId}/liabilities`),
+    queryFn: () => allPages<Liability>(`/cases/${caseId}/liabilities`),
     enabled: Boolean(caseId),
   })
 }
@@ -445,7 +467,7 @@ export function useLiabilities(caseId: string) {
 export function useContracts(caseId: string) {
   return useQuery({
     queryKey: qk.contracts(caseId),
-    queryFn: () => api.list<Contract>(`/cases/${caseId}/contracts`),
+    queryFn: () => allPages<Contract>(`/cases/${caseId}/contracts`),
     enabled: Boolean(caseId),
   })
 }
@@ -453,7 +475,7 @@ export function useContracts(caseId: string) {
 export function useBenefits(caseId: string) {
   return useQuery({
     queryKey: qk.benefits(caseId),
-    queryFn: () => api.list<Benefit>(`/cases/${caseId}/benefits`),
+    queryFn: () => allPages<Benefit>(`/cases/${caseId}/benefits`),
     enabled: Boolean(caseId),
   })
 }

@@ -638,18 +638,23 @@ function BringList({ caseId, base, task, bring }: { caseId: string; base: string
       <ul className="mt-1.5 flex flex-col">
         {rows.map(({ label, doc }) => {
           const on = isReady(doc)
+          // 書類を紐付けた持ち物は、書類があることで「用意できた」になっている。押しても外せないので押せなくする
+          const linked = doc?.documentId != null
           return (
             <li key={doc?.id ?? `bring-${label}`} className="flex flex-wrap items-center gap-x-2 border-b border-rd-border-2 last:border-b-0">
               <button
                 type="button"
                 role="checkbox"
                 aria-checked={on}
+                aria-disabled={linked || undefined}
+                title={linked ? '書類を追加したので、用意できたことになっています' : undefined}
                 onClick={() => {
+                  if (linked) return
                   setJustTicked(on ? null : label)
                   if (doc) toggle(doc.id)
                   else addChecked(label)
                 }}
-                className="flex min-h-11 min-w-0 flex-1 items-center gap-2.5 py-1.5 text-left hover:bg-rd-bg"
+                className={`flex min-h-11 min-w-0 flex-1 items-center gap-2.5 py-1.5 text-left ${linked ? 'cursor-default' : 'hover:bg-rd-bg'}`}
               >
                 <Icon
                   key={on ? 'on' : 'off'}

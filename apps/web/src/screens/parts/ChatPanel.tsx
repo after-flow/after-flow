@@ -22,9 +22,13 @@ const SUGGESTIONS = [
  * compact：横の窓（幅が狭い）で使うときの詰めた表示
  */
 export function ChatPanel({ caseId, base, compact }: { caseId: string; base: string; compact?: boolean }) {
-  // 送信は 202 で受け付けられ、返答は後から履歴に現れる。受け付けられてから返答が来るまで（上限あり）だけ履歴を追いかける
-  const [awaitingSince, setAwaitingSince] = useState<number | null>(null)
-  const { data, isLoading } = useMessages(caseId, { refetchInterval: awaitingSince ? 2_000 : false })
+  /*
+    送信は 202 で受け付けられ、返答は後から履歴に現れる。受け付けられてから返答が来るまで（上限あり）だけ履歴を追いかける。
+    返答かどうかは、送った発言のサーバー時刻（createdAt）と比べる。端末の時計と比べると、時計がずれている端末で
+    前の返答を今の返答と取り違えたり、返答が来ても気づかなかったりする。上限の時間だけは端末の時計で測る
+  */
+  const [awaiting, setAwaiting] = useState<{ after: number; startedAt: number } | null>(null)
+  const { data, isLoading } = useMessages(caseId, { refetchInterval: awaiting ? 2_000 : false })
   const send = useSendMessage(caseId)
   const { input, setInput, pendingFocus, focusHandled } = useChatDock()
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -39,10 +43,10 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
   const showUnavailable = !chatConnected || replyUnavailable
 
   useEffect(() => {
-    if (!awaitingSince) return
-    const replied = messages.some((m) => m.role === 'assistant' && Date.parse(m.createdAt) >= awaitingSince)
-    if (replied || Date.now() - awaitingSince > CHAT_REPLY_POLL_TIMEOUT_MS) setAwaitingSince(null)
-  }, [messages, awaitingSince])
+    if (!awaiting) return
+    const replied = messages.some((m) => m.role === 'assistant' && Date.parse(m.createdAt) >= awaiting.after)
+    if (replied || Date.now() - awaiting.startedAt > CHAT_REPLY_POLL_TIMEOUT_MS) setAwaiting(null)
+  }, [messages, awaiting])
 
   // 会話の枠の中だけをスクロールする（scrollIntoView だと、横の窓を開いたときにページごと動いてしまう）
   useEffect(() => {
@@ -67,10 +71,21 @@ export function ChatPanel({ caseId, base, compact }: { caseId: string; base: str
     if (!body || send.isPending || !consent.allowed) return
     // 例の質問を押したときは、書きかけ（手続きの画面からの書き出しを含む）を消さない
     if (text == null) setInput('')
-    const accepted = await send.mutateAsync(body)
+    let accepted
+    try {
+      accepted = await send.mutateAsync(body)
+    } catch {
+      // 送れなかった。打った文を消したままにせず、入力欄へ戻す（その間に書き始めていたら、それは消さない）。
+      // 失敗の知らせは共通の処理（MutationCache）が出す
+      if (text == null) setInput((cur) => (cur.trim() === '' ? body : cur))
+      return
+    }
     // 受け付けられなかった発言も履歴には残る。黙って何も起きないように見せず、理由を出す。
     setReplyUnavailable(!accepted.runAccepted)
-    if (accepted.runAccepted) setAwaitingSince(Date.now() - 1_000)
+    if (accepted.runAccepted) {
+      const sentAt = Date.parse(accepted.message.createdAt)
+      setAwaiting({ after: Number.isNaN(sentAt) ? Date.now() - 1_000 : sentAt, startedAt: Date.now() })
+    }
   }
 
   return (

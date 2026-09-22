@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, type Dispatch, type SetStateAction } from 'react'
 
 /**
  * 「AIに相談」を、画面を移らずに横（スマホでは下）に開くための窓口。
@@ -12,7 +12,7 @@ export interface ChatDock {
   open: (draft?: string) => void
   close: () => void
   input: string
-  setInput: (value: string) => void
+  setInput: Dispatch<SetStateAction<string>>
   /** 書き出しを入れた直後だけ true。入力欄はこれを見てカーソルを末尾に置き、focusHandled を呼ぶ */
   pendingFocus: boolean
   focusHandled: () => void

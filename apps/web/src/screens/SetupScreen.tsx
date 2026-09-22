@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '@/lib/api/client'
+import { getAll } from '@/lib/api/client'
 import { useCaseOverview, useTasks, useUpdateCase, type CaseProfileInput } from '@/lib/api/queries'
 import type { CaseProfileResource, TaskResource } from '@aftercare/public-contracts'
 import { Button, ErrorState, Field, LinkButton, Loading, Page, PageHeader, inputClass } from '@/kit/kit'
@@ -78,7 +78,7 @@ export function SetupScreen() {
         // 何が変わったかを一言で知らせる（増えた手続き・不要になった手続き）
         try {
           if (!before) throw new Error('答える前の一覧が無いので比べられない')
-          const after = (await api.list<TaskResource>(`/cases/${caseId}/tasks`)).items
+          const after = await getAll<TaskResource>(`/cases/${caseId}/tasks`)
           toast(describeChange(before, after))
         } catch {
           toast('答えにあわせて、必要な手続きを洗い出しました')

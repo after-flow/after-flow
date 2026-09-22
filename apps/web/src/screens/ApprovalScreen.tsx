@@ -10,9 +10,9 @@ import {
   useReviseProposal,
 } from '@/lib/api/queries'
 import type { ProposalKindResource, ProposalResource } from '@aftercare/public-contracts'
-import { applyProposalEdits, proposalRows, type ProposalRow } from '@/lib/model/approval'
+import { applyProposalEdits, editError, proposalRows, type ProposalRow } from '@/lib/model/approval'
 import { Icon } from '@/kit/Icon'
-import { formatDate, formatDateTime } from '@/lib/format'
+import { formatDateTime } from '@/lib/format'
 import { approvalKindWord } from '@/kit/words'
 import {
   Badge,
@@ -46,8 +46,6 @@ const ACTIONS: Record<ProposalKindResource, { approve: string; edited: string; r
 }
 
 const DEFAULT_ACTION = { approve: '登録する', edited: '直した内容で登録する', reject: '却下する' }
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
  * 読み取った内容の確認（バクラクの「証憑を見ながら項目を確かめる」画面に倣う）。
@@ -101,6 +99,8 @@ function ApprovalScreenBody({ approvalId }: { approvalId: string }) {
   const edited = Object.keys(edits).length > 0
   const action = proposal ? ACTIONS[proposal.kind] : DEFAULT_ACTION
   const rows = proposal ? proposalRows(proposal) : []
+  // 金額が数字になっていないなど、そのままでは Backend に弾かれる直し方をしているあいだは送らない
+  const invalid = rows.some((r) => r.key in edits && editError(r, edits[r.key]) != null)
   const submitting = approve.isPending || revise.isPending || requestApproval.isPending
 
   const goNext = () => {
@@ -156,6 +156,7 @@ function ApprovalScreenBody({ approvalId }: { approvalId: string }) {
             {proposal && <Badge>{approvalKindWord(proposal.kind)}</Badge>}
             {approval.status === 'APPROVED' && <Badge tone="green" icon="check">登録しました</Badge>}
             {approval.status === 'REJECTED' && <Badge>登録しませんでした</Badge>}
+            {approval.status === 'EXPIRED' && <Badge>使われなくなりました</Badge>}
           </>
         }
         actions={
@@ -210,8 +211,20 @@ function ApprovalScreenBody({ approvalId }: { approvalId: string }) {
 
           {decided ? (
             <div className="border-t border-rd-border bg-rd-bg p-4 text-[0.94rem]">
-              {approval.status === 'APPROVED' ? '登録しました' : '登録しませんでした'}
-              {approval.decidedAt && `（${formatDateTime(approval.decidedAt)}）`}
+              {approval.status === 'EXPIRED' ? (
+                // 内容を直すと古い確認は使われなくなり、直した内容の確認が新しく作られる。「登録しなかった」と誤解させない
+                <>
+                  内容が直されたため、この確認は使われなくなりました。
+                  <Link to={`${base}/approvals`} className="ml-1 font-bold text-rd-primary-text hover:underline">
+                    残っている確認を見る
+                  </Link>
+                </>
+              ) : (
+                <>
+                  {approval.status === 'APPROVED' ? '登録しました' : '登録しませんでした'}
+                  {approval.decidedAt && `（${formatDateTime(approval.decidedAt)}）`}
+                </>
+              )}
               {approval.decisionNote && <p className="mt-1 text-rd-text-2">メモ：{approval.decisionNote}</p>}
             </div>
           ) : (
@@ -246,7 +259,7 @@ function ApprovalScreenBody({ approvalId }: { approvalId: string }) {
                     icon="check"
                     // 文言が長い種類（「合っているので登録する」など）は、狭い画面では2行に折り返す（1行のままだと枠からはみ出す）
                     className="h-auto! min-h-12 flex-1 py-2 whitespace-normal!"
-                    disabled={submitting || (needsAck && !ack)}
+                    disabled={submitting || invalid || (needsAck && !ack)}
                     onClick={() => void handleApprove()}
                   >
                     {edited ? action.edited : action.approve}
@@ -304,23 +317,44 @@ function FieldRow({
   value: string
   onChange: (v: string) => void
 }) {
-  const display = ISO_DATE.test(row.value) ? formatDate(row.value) : row.value
+  const label = `${row.label}（直せます）`
+  const error = editable ? editError(row, value) : null
+  const input = row.input
 
   return (
-    <li className="grid grid-cols-[7rem_1fr] items-start gap-3 border-b border-rd-border-2 py-2.5 last:border-b-0">
-      <div className="pt-2 text-[0.9rem] text-rd-text-2">{row.label}</div>
+    // 狭い画面では項目名を上に置き、入力欄に幅を残す（横に並べると 320px 幅で入力欄が 100px ほどになる）
+    <li className="grid grid-cols-1 items-start gap-x-3 gap-y-1 border-b border-rd-border-2 py-2.5 last:border-b-0 sm:grid-cols-[7rem_1fr]">
+      <div className="text-[0.9rem] text-rd-text-2 sm:pt-2">{row.label}</div>
       <div className="min-w-0">
-        {editable ? (
+        {!editable ? (
+          <p className="text-[0.97rem] font-bold sm:pt-2">{row.display || '（空欄になります）'}</p>
+        ) : input.type === 'boolean' ? (
+          <select className={inputClass} aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+            <option value="true">はい</option>
+            <option value="false">いいえ</option>
+          </select>
+        ) : input.type === 'select' ? (
+          <select className={inputClass} aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+            {(input.nullable || value === '') && <option value="">（なし）</option>}
+            {input.options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+            {value !== '' && !input.options.some((o) => o.value === value) && <option value={value}>{value}</option>}
+          </select>
+        ) : (
           <input
-            type={ISO_DATE.test(row.value) ? 'date' : 'text'}
+            type={input.type === 'date' ? 'date' : 'text'}
+            inputMode={input.type === 'number' ? 'numeric' : undefined}
             className={inputClass}
-            aria-label={`${row.label}（直せます）`}
+            aria-label={label}
+            aria-invalid={error ? true : undefined}
             value={value}
             onChange={(e) => onChange(e.target.value)}
           />
-        ) : (
-          <p className="pt-2 text-[0.97rem] font-bold">{display || '（空欄になります）'}</p>
         )}
+        {error && <p className="mt-1 text-[0.84rem] font-bold text-rd-danger-text">{error}</p>}
       </div>
     </li>
   )
