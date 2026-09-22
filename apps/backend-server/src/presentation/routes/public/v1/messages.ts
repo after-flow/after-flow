@@ -48,7 +48,7 @@ export const messageSpecs = {
     path: '/cases/:caseId/messages',
     summary: '発言して回答を依頼する',
     description:
-      '202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を接続未了で受け付けられない場合も発言は残し、理由を返す。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は発言を保存する前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。',
+      '202で受け付ける。回答は後から履歴の取得で確認する。回答の実行を接続未了で受け付けられない場合も発言は残し、reason:FEATURE_NOT_CONNECTEDを返す。外部AI事業者への提供同意（CROSS_BORDER_AI）が無い、または版が古い場合は発言を保存する前に403 CONSENT_REQUIRED（details.requiredConsent）で拒否する。ただし保存後・実行の受付前に同意が撤回された競合時は、発言は保存済みのまま403 CONSENT_REQUIREDになりうる（202には丸めない）。',
     tags: ['chat'],
     auth: 'user',
     request: { params: caseIdParamsSchema, body: postMessageBodySchema },

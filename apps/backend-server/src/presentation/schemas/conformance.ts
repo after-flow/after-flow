@@ -5,6 +5,7 @@ import type {
   CaseResource,
   ConsentStatusResource,
   AgentRunResource,
+  AiCapabilitiesResource,
   CaseOverviewResource,
   GuidanceResource,
   MessageAcceptedResource,
@@ -18,6 +19,7 @@ import type {
 } from '@aftercare/public-contracts'
 import type { z } from 'zod'
 import { apiErrorBodySchema, apiErrorCodeSchema, apiFailureSchema, responseMetaSchema } from './common.js'
+import { aiCapabilitiesResourceSchema } from './ai-capability.js'
 import { caseResourceSchema } from './case.js'
 import { consentStatusResourceSchema } from './consent.js'
 import { documentResourceSchema } from './document.js'
@@ -76,4 +78,7 @@ export type GuidanceResourceMatches = Assert<
 >
 export type CaseOverviewMatches = Assert<
   Equals<z.infer<typeof caseOverviewResourceSchema>, CaseOverviewResource>
+>
+export type AiCapabilitiesMatches = Assert<
+  Equals<z.infer<typeof aiCapabilitiesResourceSchema>, AiCapabilitiesResource>
 >

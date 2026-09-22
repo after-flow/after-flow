@@ -105,6 +105,7 @@ describeFirestore('チャットの受付と回答', () => {
     assert.equal(response.body.data.message.role, 'user')
     assert.equal(response.body.data.runAccepted, true)
     assert.ok(response.body.data.runId)
+    assert.equal(response.body.data.reason, null)
 
     // 受け付けただけで回答は入っていない。
     const history = await call(app, `/cases/${caseId}/messages`)
@@ -113,7 +114,7 @@ describeFirestore('チャットの受付と回答', () => {
   })
 
   it('回答が始まらない場合も発言は残し、理由を返す', async () => {
-    const { app, caseId } = await setup({ connectedOperations: [] })
+    const { app, tenantId, caseId } = await setup({ connectedOperations: [] })
     const response = await call(
       app,
       `/cases/${caseId}/messages`,
@@ -122,10 +123,17 @@ describeFirestore('チャットの受付と回答', () => {
 
     assert.equal(response.status, 202)
     assert.equal(response.body.data.runAccepted, false)
+    assert.equal(response.body.data.runId, null)
     assert.equal(response.body.data.reason, 'FEATURE_NOT_CONNECTED')
     // 送信が失敗したように見せない。
     const history = await call(app, `/cases/${caseId}/messages`)
     assert.equal(history.body.data.length, 1)
+
+    // AgentRunもagent系Outboxイベントも作られない（case.created等の無関係なイベントは既にある）。
+    const runs = await firestore().collection(`tenants/${tenantId}/cases/${caseId}/agentRuns`).get()
+    assert.equal(runs.size, 0)
+    const outbox = await firestore().collection(`tenants/${tenantId}/outbox`).get()
+    assert.equal(outbox.docs.some((doc) => (doc.get('type') as string).startsWith('agent.')), false)
   })
 
   it('外部AI同意が無ければ発言を保存せず403で拒否する', async () => {

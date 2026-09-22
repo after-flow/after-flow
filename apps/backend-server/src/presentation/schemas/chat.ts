@@ -13,12 +13,15 @@ export const messageResourceSchema = z.object({
   createdAt: isoDateTimeSchema,
 })
 
-export const messageAcceptedResourceSchema = z.object({
-  message: messageResourceSchema,
-  runId: z.string().nullable(),
-  runAccepted: z.boolean(),
-  reason: z.string().nullable(),
-})
+export const messageAcceptedResourceSchema = z.discriminatedUnion('runAccepted', [
+  z.object({ message: messageResourceSchema, runAccepted: z.literal(true), runId: z.string(), reason: z.null() }),
+  z.object({
+    message: messageResourceSchema,
+    runAccepted: z.literal(false),
+    runId: z.null(),
+    reason: z.literal('FEATURE_NOT_CONNECTED'),
+  }),
+])
 
 export const guidanceResourceSchema = z.object({
   taskId: z.string(),

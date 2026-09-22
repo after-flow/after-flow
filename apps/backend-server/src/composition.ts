@@ -6,6 +6,7 @@ import { CaseService } from './application/case/case-service.js'
 import { ConsentService } from './application/consent/consent-service.js'
 import { DocumentService } from './application/document/document-service.js'
 import { AgentRunService } from './application/agent/agent-run-service.js'
+import { AiCapabilityService } from './application/agent/ai-capability-service.js'
 import { InternalExecutionService } from './application/agent/internal-execution-service.js'
 import { OutboxDispatcher } from './application/agent/outbox-dispatcher.js'
 import type { AgentOperation } from './domain/agent/agent-run.js'
@@ -145,6 +146,9 @@ export function createServer(env: NodeJS.ProcessEnv = process.env): Hono<AppEnv>
     // どの操作も FEATURE_NOT_CONNECTED になる。UI にボタンがあるだけで
     // すべての操作を有効にしない。
     agentRunService,
+    // Capability APIも同じ enabledOperations を正本にする（#215）。
+    // AI Server へは問い合わせない。
+    aiCapabilityService: new AiCapabilityService(enabledOperations),
     // 種類ごとの反映は担当 Issue が登録する。未登録の種類は反映できない。
     proposalService,
     decisionService: new InheritanceDecisionService(access, database.read, database.uow),
