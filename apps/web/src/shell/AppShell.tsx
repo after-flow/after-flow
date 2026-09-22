@@ -328,9 +328,10 @@ export function AppShell() {
           {sidebar}
         </aside>
 
-        {/* 狭い画面：ドロワー */}
+        {/* 狭い画面：ドロワー。相談の窓（z-40）より上、ダイアログ（z-50）より下に出す。
+            同じ z-40 だと、あとに置いた相談の窓の下に潜り、メニューの下半分（ログアウトなど）が押せなくなる */}
         {drawer && (
-          <div className="fixed inset-0 z-40 lg:hidden">
+          <div className="fixed inset-0 z-[45] lg:hidden">
             <button
               type="button"
               aria-label="メニューを閉じる"

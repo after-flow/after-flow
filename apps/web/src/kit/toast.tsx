@@ -36,7 +36,8 @@ export function Toaster() {
   return (
     <div
       aria-live="assertive"
-      className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex flex-col items-center gap-2 px-4 lg:top-4 xl:top-auto xl:bottom-6"
+      // 広い画面では下に出す。手続きの画面の下に固定したボタンがあるときは、その上に出す（--bottom-bar-h は TaskScreen が入れる）
+      className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex flex-col items-center gap-2 px-4 lg:top-4 xl:top-auto xl:bottom-[calc(var(--bottom-bar-h,0px)+1.5rem)]"
     >
       {items.map((t) => (
         <div

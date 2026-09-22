@@ -724,11 +724,22 @@ function BottomBar({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const measure = () => setHeight(el.offsetHeight)
+    // 画面の下に出すお知らせ（トースト）も、この高さの分だけ上に出す。重なるとボタンが数秒押せなくなる
+    const root = document.documentElement
+    const measure = () => {
+      setHeight(el.offsetHeight)
+      root.style.setProperty('--bottom-bar-h', `${el.offsetHeight}px`)
+    }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(el)
-    return () => observer.disconnect()
+    // 相談の窓の開け閉めで本文の幅が変わると、この列は出たり消えたり（2列表示）する。消えたときに高さを 0 に戻すため、本文も見る
+    const main = el.closest('main')
+    if (main) observer.observe(main)
+    return () => {
+      observer.disconnect()
+      root.style.removeProperty('--bottom-bar-h')
+    }
   }, [])
   return (
     <>
