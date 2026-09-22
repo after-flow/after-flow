@@ -29,6 +29,8 @@ export async function failGuidanceForRun(tx: Tx, caseId: string, run: AgentRunEn
   if (current.status !== 'RESEARCHING' && current.status !== 'WAITING') return false
   tx.update<GuidanceEntity>(location, current.version, {
     status: 'FAILED',
+    outcome: 'FAILED',
+    researchedBy: null,
     failureReason: failure.failureReason,
     note: failure.note ?? current.note,
     missing: failure.missing ?? current.missing,
@@ -84,6 +86,7 @@ export async function terminateQueuedRun(tx: Tx, caseId: string, run: AgentRunEn
     status: termination.status,
     failureReason: termination.failureReason,
     finishedAt: new Date().toISOString(),
+    ...(run.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
   })
   tx.audit({
     caseId,

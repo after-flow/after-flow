@@ -23,6 +23,7 @@ export const messageAcceptedResourceSchema = z.object({
 export const guidanceResourceSchema = z.object({
   taskId: z.string(),
   status: z.enum(['NOT_REQUESTED', 'RESEARCHING', 'WAITING', 'COMPLETED', 'PARTIAL', 'FAILED']),
+  outcome: z.enum(['COMPLETED_RESEARCH', 'MISSING_CONTEXT', 'SOURCE_NOT_CONFIGURED', 'NOT_APPLICABLE', 'FAILED']).nullable(),
   target: z.string().nullable(),
   where: z.string().nullable(),
   bring: z.array(z.string()),

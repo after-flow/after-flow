@@ -35,7 +35,8 @@ function guidanceArtifact(procedureId: string, extra: Record<string, unknown> = 
   return envelope({
     operation: 'task_guidance',
     procedure: definition ? { id: procedureId, version, reviewStatus: definition.reviewStatus } : { id: procedureId, version, reviewStatus: 'draft' },
-    case: { id: 'case-1', version: 1, deceasedName: 'PRIVATE-NAME', dateOfDeath: '2026-01-02', knownAt: '2026-01-05', municipality: '架空市', status: 'ACTIVE' },
+    case: { id: 'case-1', version: 1, deceasedName: 'PRIVATE-NAME', dateOfDeath: '2026-01-02', knownAt: '2026-01-05', municipality: '架空市', status: 'ACTIVE',
+      healthInsuranceBranch: '東京支部', deceasedInsuranceStatus: 'INSURED', burialBenefitApplicantStatus: 'LIVELIHOOD_MAINTAINER' },
     task: { id: 'task-1', version: 1, procedureId },
     documents: [], actions: [], resume: null,
     ...extra,
@@ -155,13 +156,13 @@ test('profile UNKNOWN remains visible as unknown provenance and does not satisfy
   assert.deepEqual(context.procedure?.missingRequired.map(item => `${item.group}.${item.field}`), ['profile.healthInsurance'])
 })
 
-test('kyoukaikenpo guidance carries no case values and uses the matching reviewed scope or the Definition brief', () => {
+test('kyoukaikenpo guidance carries only the three formal case values and uses the matching reviewed scope or the Definition brief', () => {
   const source = guidanceArtifact('kyoukaikenpo-burial-benefit', {
     contracts: [{ id: 'contract-1', version: 1, name: 'PRIVATE-CONTRACT', kind: 'HEALTH_INSURANCE', provider: '全国健康保険協会', policyState: 'ACTIVE' }],
     persons: [{ id: 'person-1', version: 1, name: 'PRIVATE-PERSON', relationshipLabel: '配偶者', isHeir: true }],
   })
   const context = buildCoreContext(source, 'task_guidance')
-  assert.deepEqual(facts(context), ['contracts.kind', 'contracts.policyState', 'contracts.provider', 'persons.relationshipLabel'])
+  assert.deepEqual(facts(context), ['case.burialBenefitApplicantStatus', 'case.deceasedInsuranceStatus', 'case.healthInsuranceBranch'])
   assert.ok(!JSON.stringify(context.modelInput).includes('架空市'))
   assert.ok(!JSON.stringify(context.modelInput).includes('PRIVATE'))
   const matched = buildProcedureResearchBrief(context, { scope: { ...scope, procedureIds: ['kyoukaikenpo-burial-benefit'], municipality: null }, allowDraftDefinitions: false, configuredCatalogIds: new Set(['catalog-1']) })

@@ -4,6 +4,16 @@ import type { CaseProfile } from './case-profile.js'
 /** Case（案件）。仕様書 7.1 の中核 Entity。 */
 export type CaseStatus = 'ACTIVE' | 'CLOSED'
 
+/**
+ * 協会けんぽの埋葬料・埋葬費を個別案内するために、人が確認した正式状態。
+ * null は未確認を表し、続柄などから推測して補完しない。
+ */
+export interface KyoukaikenpoBurialBenefitContext {
+  branch: string | null
+  deceasedInsuranceStatus: 'INSURED' | 'DEPENDENT' | null
+  applicantStatus: 'LIVELIHOOD_MAINTAINER' | 'BURIAL_EXPENSE_PAYER' | null
+}
+
 export interface CaseEntity extends EntityBase {
   deceasedName: string
   deceasedNameKana: string | null
@@ -52,6 +62,8 @@ export interface CaseEntity extends EntityBase {
    * ため optional。読み出し側は null に正規化する。
    */
   profile?: CaseProfile | null
+  /** legacy record では欠落するため、公開DTOでは全項目nullへ正規化する。 */
+  kyoukaikenpoBurialBenefit?: KyoukaikenpoBurialBenefitContext | null
   status: CaseStatus
   /**
    * Case 全体の版。

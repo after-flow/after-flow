@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { guidanceCitationSchema } from '@aftercare/internal-contracts'
+import { guidanceCitationSchema, guidanceOutcomeSchema } from '@aftercare/internal-contracts'
 import type { AgentResultIntake } from '../../../../application/chat/result-intake.js'
 import { errors } from '../../../../shared/app-error.js'
 import type { AppEnv } from '../../../http/context.js'
@@ -32,6 +32,7 @@ const envelopeSchema = z.object({
 const guidanceResultSchema = envelopeSchema.extend({
   kind: z.literal('task_guidance'),
   status: z.enum(['COMPLETED', 'PARTIAL', 'FAILED', 'WAITING']),
+  outcome: guidanceOutcomeSchema.optional(),
   target: z.string().max(200).nullish(),
   where: z.string().max(500).nullish(),
   bring: z.array(z.string().max(200)).max(50).default([]),

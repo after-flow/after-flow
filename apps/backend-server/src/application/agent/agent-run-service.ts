@@ -46,6 +46,7 @@ export interface AgentRunView {
   waiting: boolean
   waitingFor: string | null
   failureReason: string | null
+  guidanceOutcome: NonNullable<AgentRunEntity['guidanceOutcome']> | null
   outcome: AgentRunOutcomeResource | null
   caseVersionAtAccept: number
   startedAt: string | null
@@ -103,6 +104,7 @@ export function toAgentRunView(entity: AgentRunEntity): AgentRunView {
     waiting: isRunWaiting(entity.status),
     waitingFor: entity.waitingFor,
     failureReason: entity.failureReason,
+    guidanceOutcome: entity.guidanceOutcome ?? null,
     outcome: entity.outcome ?? null,
     caseVersionAtAccept: entity.caseVersionAtAccept,
     startedAt: entity.startedAt,
@@ -189,6 +191,7 @@ export class AgentRunService {
         initiatedByUserId: user.userId,
         currentJobId: jobId,
         failureReason: null,
+        guidanceOutcome: null,
         waitingFor: null,
         startedAt: null,
         finishedAt: null,
@@ -202,7 +205,7 @@ export class AgentRunService {
         const current = await tx.get<GuidanceEntity>(location)
         const guidance = {
           taskId: input.targetId, status: 'RESEARCHING' as const, agentRunId: runId,
-          researchedBy: 'AI' as const, failureReason: null, resultId: null, attemptId: null,
+          researchedBy: null, outcome: null, failureReason: null, resultId: null, attemptId: null,
           target: null, where: null, bring: [], steps: [], formExampleUrl: null,
           formExampleLabel: null, note: null, sources: [], citations: [], missing: [],
         }
@@ -333,6 +336,7 @@ export class AgentRunService {
       const cancellation = current.currentJobId ? { cancelId, jobId: current.currentJobId, executionAttempt: current.currentAttemptId } : undefined
       tx.update<AgentRunEntity>(runLocation(caseId, runId), expectedVersion, {
         ...(cancellation ? { cancellation } : {}), status: 'CANCELLED',
+        ...(current.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
         cancelRequestedBy: user.userId,
         finishedAt: new Date().toISOString(),
         // 取消後に届いた古い attempt の結果を受け付けないよう、世代を変える。
@@ -395,7 +399,7 @@ export class AgentRunService {
         initiatedByUserId: user.userId, caseVersionAtAccept: entity.caseVersion + 1, clarificationHistory: history.data,
         progressSequence: -1, fencingToken: null, activeWaitRequestId: null,
         pendingResume: { kind: 'RETRY', previousAttemptId: run.currentAttemptId, snapshotId: null, waitRequestId: null, outcome: 'QUESTIONS_ANSWERED' },
-        failureReason: null, waitingFor: null, finishedAt: null,
+        failureReason: null, guidanceOutcome: null, waitingFor: null, finishedAt: null,
       })
       await recordRunTransitionEvent(tx, run, 'RETRIED', 'QUEUED', {
         eventId: jobId, attempt: run.attempt + 1, detail: { attempt: run.attempt + 1, outcome: 'QUESTIONS_ANSWERED' },
@@ -446,6 +450,7 @@ export class AgentRunService {
         activeWaitRequestId: null,
         pendingResume: { kind: 'RETRY', previousAttemptId: current.currentAttemptId, snapshotId: null, waitRequestId: null, outcome: 'USER_RETRY' },
         failureReason: null,
+        guidanceOutcome: null,
         waitingFor: null,
         finishedAt: null,
       })
@@ -464,6 +469,17 @@ export class AgentRunService {
         if (document && document.agentRunId === runId && document.analysisState === 'FAILED'
           && !document.archived && document.storageState === 'STORED') {
           tx.update<DocumentEntity>(location, document.version, { analysisState: 'QUEUED' })
+        }
+      }
+      if (current.operation === 'task_guidance' && current.targetType === 'TASK') {
+        const location = { collection: collections.guidance, caseId, id: current.targetId }
+        const guidance = await tx.get<GuidanceEntity>(location)
+        if (guidance?.agentRunId === runId) {
+          tx.update<GuidanceEntity>(location, guidance.version, {
+            status: 'RESEARCHING', outcome: null, researchedBy: null, failureReason: null,
+            resultId: null, attemptId: null, target: null, where: null, bring: [], steps: [],
+            formExampleUrl: null, formExampleLabel: null, note: null, sources: [], citations: [], missing: [],
+          })
         }
       }
       tx.outbox({

@@ -103,7 +103,10 @@ export class RunReconciler implements LocalOutboxHandler {
           || Date.parse(stored.updatedAt) >= Date.now() - 600_000) return
         if (!await this.authorizeOrStop(tx, current)) return
         if (current.fencingToken) await releaseLease(tx, caseId, runId, current.fencingToken)
-        tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, { status: 'NEEDS_ATTENTION', failureReason: '待機Snapshotの保存を確認できません。再試行が必要です。' })
+        tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, {
+          status: 'NEEDS_ATTENTION', failureReason: '待機Snapshotの保存を確認できません。再試行が必要です。',
+          ...(current.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
+        })
         await recordRunTransitionEvent(tx, current, 'RESULT', 'NEEDS_ATTENTION', {
           eventId: fingerprintOf({ runId, attemptId: current.currentAttemptId, reason: 'snapshot_missing', waitRequestId: wait.id }),
           detail: { operation: 'RECONCILE', failureReason: 'SNAPSHOT_MISSING' },
@@ -119,7 +122,10 @@ export class RunReconciler implements LocalOutboxHandler {
         const lease = await tx.get<CaseLeaseEntity>(leaseLocation(caseId))
         if (lease?.holderRunId === runId && lease.fencingToken === current.fencingToken && !isLeaseExpired(lease, Date.now())) return
         if (snapshot.state === 'COMPLETED' || snapshot.state === 'WAITING' || current.attempt >= 3) {
-          tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, { status: 'NEEDS_ATTENTION', failureReason: '実行結果または待機状態の確認が必要です。' })
+          tx.update<AgentRunEntity>(runLocation(caseId, runId), current.version, {
+            status: 'NEEDS_ATTENTION', failureReason: '実行結果または待機状態の確認が必要です。',
+            ...(current.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
+          })
           await recordRunTransitionEvent(tx, current, 'RESULT', 'NEEDS_ATTENTION', {
             eventId: fingerprintOf({ runId, attemptId: current.currentAttemptId, reason: 'recovery_attention' }),
             detail: { operation: 'RECONCILE', failureReason: 'RECOVERY_ATTENTION' },
@@ -144,7 +150,10 @@ export class RunReconciler implements LocalOutboxHandler {
         const wait = await tx.require<WaitRequestEntity>(location)
         tx.update<WaitRequestEntity>(location, wait.version, { state: 'CANCELLED' })
       }
-      tx.update<AgentRunEntity>(runLocation(run.caseId!, run.id), run.version, { status: 'CANCELLED', failureReason: '実行権限または同意が失効しました。', finishedAt: new Date().toISOString() })
+      tx.update<AgentRunEntity>(runLocation(run.caseId!, run.id), run.version, {
+        status: 'CANCELLED', failureReason: '実行権限または同意が失効しました。', finishedAt: new Date().toISOString(),
+        ...(run.operation === 'task_guidance' ? { guidanceOutcome: 'FAILED' as const } : {}),
+      })
       await recordRunTransitionEvent(tx, run, 'CANCELLED', 'CANCELLED', {
         eventId: fingerprintOf({ runId: run.id, attemptId: run.currentAttemptId, reason: 'permission_revoked' }),
         detail: { previousStatus: run.status },

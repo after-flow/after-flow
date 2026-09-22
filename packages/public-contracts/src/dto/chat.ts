@@ -39,6 +39,14 @@ export type GuidanceStatusResource =
   | 'PARTIAL'
   | 'FAILED'
 
+/** AI案内がどの経路で終了したか。nullは実行中またはlegacyデータ。 */
+export type GuidanceOutcomeResource =
+  | 'COMPLETED_RESEARCH'
+  | 'MISSING_CONTEXT'
+  | 'SOURCE_NOT_CONFIGURED'
+  | 'NOT_APPLICABLE'
+  | 'FAILED'
+
 export interface GuidanceSourceResource {
   label: string
   url: string
@@ -59,6 +67,7 @@ export interface GuidanceCitationResource {
 export interface GuidanceResource {
   taskId: string
   status: GuidanceStatusResource
+  outcome: GuidanceOutcomeResource | null
   target: string | null
   where: string | null
   bring: string[]

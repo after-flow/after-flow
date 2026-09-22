@@ -17,6 +17,13 @@ export type GuidanceStatus =
   | 'PARTIAL'
   | 'FAILED'
 
+export type GuidanceOutcome =
+  | 'COMPLETED_RESEARCH'
+  | 'MISSING_CONTEXT'
+  | 'SOURCE_NOT_CONFIGURED'
+  | 'NOT_APPLICABLE'
+  | 'FAILED'
+
 export interface GuidanceSource {
   label: string
   url: string
@@ -41,6 +48,8 @@ export interface GuidanceCitation {
 export interface GuidanceEntity extends EntityBase {
   taskId: string
   status: GuidanceStatus
+  /** 導入前の保存データでは欠落する。公開時はnullへ正規化する。 */
+  outcome?: GuidanceOutcome | null
   /** 何について調べたか（例: 架空市 戸籍住民課）。 */
   target: string | null
   where: string | null

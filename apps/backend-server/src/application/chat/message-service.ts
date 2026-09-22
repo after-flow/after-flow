@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { AgentRunEntity } from '../../domain/agent/agent-run.js'
 import type { MessageEntity } from '../../domain/message/message.js'
 import { collections } from '../../domain/shared/collections.js'
-import type { GuidanceCitation, GuidanceEntity, GuidanceSource } from '../../domain/task/guidance.js'
+import type { GuidanceCitation, GuidanceEntity, GuidanceOutcome, GuidanceSource } from '../../domain/task/guidance.js'
 import type { TaskEntity } from '../../domain/task/task.js'
 import { errors } from '../../shared/app-error.js'
 import type { AgentRunService } from '../agent/agent-run-service.js'
@@ -29,6 +29,7 @@ export interface MessageView {
 export interface GuidanceView {
   taskId: string
   status: GuidanceEntity['status']
+  outcome: GuidanceOutcome | null
   target: string | null
   where: string | null
   bring: string[]
@@ -72,9 +73,11 @@ function toMessageView(entity: MessageEntity): MessageView {
 }
 
 export function toGuidanceView(entity: GuidanceEntity): GuidanceView {
+  const outcome = entity.outcome ?? null
   return {
     taskId: entity.taskId,
     status: entity.status,
+    outcome,
     target: entity.target,
     where: entity.where,
     bring: entity.bring,
@@ -86,7 +89,9 @@ export function toGuidanceView(entity: GuidanceEntity): GuidanceView {
     citations: entity.citations ?? [],
     missing: entity.missing,
     failureReason: entity.failureReason,
-    researchedBy: entity.researchedBy,
+    researchedBy: entity.researchedBy === 'MANUAL'
+      ? 'MANUAL'
+      : outcome === 'COMPLETED_RESEARCH' ? 'AI' : null,
     agentRunId: entity.agentRunId,
     version: entity.version,
     updatedAt: entity.updatedAt,
@@ -242,6 +247,7 @@ export class MessageService {
       return {
         taskId,
         status: 'NOT_REQUESTED',
+        outcome: null,
         target: null,
         where: null,
         bring: [],

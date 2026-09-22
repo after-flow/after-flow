@@ -55,6 +55,7 @@ export function startAnalysis(doc: DocumentResource) {
     waiting: false,
     waitingFor: null,
     failureReason: null,
+    guidanceOutcome: null,
     outcome: null,
     caseVersionAtAccept: db.cases.find((c) => c.id === CASE_ID)?.caseVersion ?? 1,
     startedAt: null,

@@ -298,16 +298,44 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     const audits = await firestore().collection(`tenants/${h.tenantId}/cases/${h.caseId}/auditEvents`).where('type', '==', 'agent_run.context_projected').get()
     assert.equal(audits.size, 1)
     assert.deepEqual(audits.docs[0]!.get('detail'), { procedureId: null, reason: 'PROCEDURE_UNMAPPED' })
-    const result = { ...proof(context), resultId: randomUUID(), kind: 'task_guidance', status: 'PARTIAL',
+    const result = { ...proof(context), resultId: randomUUID(), kind: 'task_guidance', status: 'PARTIAL', outcome: 'COMPLETED_RESEARCH',
       steps: ['対象機関に確認してください'], missing: ['地域の詳細'], basis: [{ type: 'TASK', id: task.body.data.id, version: current.version }],
+      sources: [{ label: '公式案内', url: 'https://official.example/a', checkedAt: new Date().toISOString() }],
       citations: [{ item: 'steps', index: 0, sourceUrl: 'https://official.example/a#apply', sectionHeading: '申請方法', quote: '対象機関に確認する' }] }
     assert.equal((await h.request(exec, 'result', result)).status, 200)
     assert.equal((await h.request(exec, 'result', result)).status, 200)
     const saved = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
     assert.equal(saved.body.data.status, 'PARTIAL')
+    assert.equal(saved.body.data.outcome, 'COMPLETED_RESEARCH')
+    assert.equal(saved.body.data.researchedBy, 'AI')
     assert.deepEqual(saved.body.data.missing, ['地域の詳細'])
     // 項目ごとの根拠を保存し、公開APIで返す（#163）。
     assert.deepEqual(saved.body.data.citations, result.citations)
+    const publicRun = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)
+    assert.equal(publicRun.body.data.guidanceOutcome, 'COMPLETED_RESEARCH')
+  })
+
+  it('事前終了理由を公開GuidanceとAgentRunへ保持し、AI調査済みとは表示しない', async t => {
+    const h = await setup(t)
+    for (const [index, outcome] of (['MISSING_CONTEXT', 'SOURCE_NOT_CONFIGURED', 'FAILED'] as const).entries()) {
+      const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', {
+        title: `事前終了 ${outcome}`, category: '手動', stage: 'immediate',
+      }))
+      const exec = await h.accept('task_guidance', task.body.data.id, 'TASK')
+      const context = await h.context(exec)
+      const result = {
+        ...proof(context), resultId: `preflight-${index}`, kind: 'task_guidance',
+        status: outcome === 'FAILED' ? 'FAILED' : 'PARTIAL', outcome,
+        missing: [`不足 ${outcome}`], basis: [{ type: 'TASK', id: task.body.data.id, version: task.body.data.version }],
+      }
+      assert.equal((await h.request(exec, 'result', result)).status, 200)
+      const guidance = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
+      assert.equal(guidance.body.data.outcome, outcome)
+      assert.equal(guidance.body.data.researchedBy, null)
+      assert.deepEqual(guidance.body.data.sources, [])
+      const run = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)
+      assert.equal(run.body.data.guidanceOutcome, outcome)
+    }
   })
 
   it('別Runのpath/artifact、旧attempt、取消後の結果、本文不一致requestIdを拒否する', async t => {
@@ -376,28 +404,29 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(response.body.error.details.reason, 'PROCEDURE_NOT_REVIEWED')
   })
 
-  it('申請者要件を扱う案内では、除外済みPersonを落とし実行ユーザー本人だけを投影する', async t => {
+  it('協会けんぽ案内では正式な3項目だけを投影し、人物やCaseの他項目を渡さない', async t => {
     const h = await setup(t)
-    const self = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '実行ユーザー本人', relationship: '子', isHeir: true }))
-    assert.equal(self.status, 201, JSON.stringify(self.body))
-    const selfPersonId = self.body.data.id as string
-    await firestore().doc(`tenants/${h.tenantId}/cases/${h.caseId}/caseMembers/${h.userId}`).update({ personId: selfPersonId })
-    const activeOther = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '別の家族', relationship: '親', isHeir: true }))
-    assert.equal(activeOther.status, 201, JSON.stringify(activeOther.body))
-    const excluded = await call(h.app, `/cases/${h.caseId}/persons`, jsonRequest('POST', { name: '除外する家族', relationship: '兄弟', isHeir: true }))
-    assert.equal(excluded.status, 201, JSON.stringify(excluded.body))
-    assert.equal((await call(h.app, `/cases/${h.caseId}/persons/${excluded.body.data.id}/exclude`,
-      jsonRequest('POST', { expectedVersion: 1 }))).status, 200)
+    const current = await call(h.app, `/cases/${h.caseId}`)
+    const updated = await call(h.app, `/cases/${h.caseId}`, jsonRequest('PATCH', {
+      expectedVersion: current.body.data.version,
+      kyoukaikenpoBurialBenefit: {
+        branch: '東京支部', deceasedInsuranceStatus: 'INSURED', applicantStatus: 'LIVELIHOOD_MAINTAINER',
+      },
+    }))
+    assert.equal(updated.status, 200, JSON.stringify(updated.body))
     const task = await call(h.app, `/cases/${h.caseId}/tasks`, jsonRequest('POST', {
       title: '埋葬料を確認する', category: '手動', stage: 'immediate', procedureId: 'kyoukaikenpo-burial-benefit',
     }))
     assert.equal(task.status, 201, JSON.stringify(task.body))
+    const latestCase = await call(h.app, `/cases/${h.caseId}`)
     const exec = await h.accept('task_guidance', task.body.data.id, 'TASK')
     const context = await h.context(exec)
-    const persons = context.content.persons as Record<string, unknown>[]
-    assert.deepEqual(persons.map(person => person.id), [selfPersonId])
-    assert.equal(JSON.stringify(persons).includes(activeOther.body.data.id), false)
-    assert.equal(JSON.stringify(persons).includes(excluded.body.data.id), false)
+    assert.deepEqual(context.content.case, {
+      id: h.caseId, version: latestCase.body.data.version, healthInsuranceBranch: '東京支部',
+      deceasedInsuranceStatus: 'INSURED', burialBenefitApplicantStatus: 'LIVELIHOOD_MAINTAINER',
+    })
+    assert.equal('persons' in context.content, false)
+    assert.equal(JSON.stringify(context.content).includes('架空人物'), false)
   })
 
   it('task_guidanceの中断結果はRunと案内を同じTransactionで終端し、再送で二重反映しない', async t => {
@@ -412,6 +441,7 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     assert.equal(run.body.data.status, 'NEEDS_ATTENTION'); assert.equal(run.body.data.failureReason, 'BUDGET_EXCEEDED')
     const guidance = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
     assert.equal(guidance.body.data.status, 'FAILED'); assert.equal(guidance.body.data.failureReason, 'BUDGET_EXCEEDED')
+    assert.equal(guidance.body.data.outcome, 'FAILED'); assert.equal(guidance.body.data.researchedBy, null)
     assert.deepEqual(guidance.body.data.missing, ['窓口の確認'])
     const stored = (await readRepository().get<GuidanceEntity>(h.tenantId, { collection: collections.guidance, caseId: h.caseId, id: task.body.data.id }))!
     assert.equal(stored.resultId, 'guidance-budget'); assert.equal(stored.attemptId, exec.run.currentAttemptId)
@@ -514,8 +544,11 @@ describeFirestore('Run scoped内部API / Fake AI HTTP contract', () => {
     const exec = await h.accept('task_guidance', task.body.data.id, 'TASK')
     const current = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)
     assert.equal((await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}/cancel`, jsonRequest('POST', { expectedVersion: current.body.data.version }))).status, 200)
+    const cancelled = await call(h.app, `/cases/${h.caseId}/agent-runs/${exec.run.id}`)
+    assert.equal(cancelled.body.data.guidanceOutcome, 'FAILED')
     const guidance = await call(h.app, `/cases/${h.caseId}/tasks/${task.body.data.id}/guidance`)
-    assert.equal(guidance.body.data.status, 'FAILED'); assert.equal(guidance.body.data.failureReason, 'CANCELLED')
+    assert.equal(guidance.body.data.status, 'FAILED'); assert.equal(guidance.body.data.outcome, 'FAILED')
+    assert.equal(guidance.body.data.failureReason, 'CANCELLED'); assert.equal(guidance.body.data.researchedBy, null)
 
     const now = new Date().toISOString()
     await firestore().doc(`tenants/${h.tenantId}/outbox/notify-1`).set({ id: 'notify-1', tenantId: h.tenantId, caseId: h.caseId, type: 'task.completed',

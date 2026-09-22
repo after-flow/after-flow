@@ -118,22 +118,23 @@ describe('resolveDependencyTaskIds', () => {
 
 describe('kyoukaikenpo-burial-benefit', () => {
   const def = findProcedureDefinition('kyoukaikenpo-burial-benefit')!
-  it('申請者要件に使う Person は実行ユーザーに紐づく本人へ限定する', () => {
-    assert.equal(def.guidance.personScope, 'initiating-member')
-  })
-  it('除外済み Person は Context に投影しない', () => {
-    const projection = projectGuidanceContext(def, { case: { id: 'case1', version: 1 }, entities: { persons: [
-      { id: 'active', version: 1, relationshipLabel: '配偶者', excludedAt: null },
-      { id: 'excluded', version: 2, relationshipLabel: '子', excludedAt: '2026-09-01T00:00:00Z' },
-    ] } })
-    assert.deepEqual(projection.content.persons, [{ id: 'active', version: 1, relationshipLabel: '配偶者' }])
-  })
-  it('case group を要求せず、Case の値を content にも Brief にも持ち込まない', () => {
-    assert.equal(guidanceAllowlist(def).has('case'), false)
-    const projection = projectGuidanceContext(def, { case: { id: 'case1', version: 1, municipality: '架空市', dateOfDeath: '2026-09-01' }, entities: {} })
-    assert.deepEqual(projection.content.case, { id: 'case1', version: 1 })
-    assert.equal(JSON.stringify(procedureResearchBrief(def)).includes('架空市'), false)
+  it('専用の3項目だけをCaseから投影する', () => {
+    assert.equal(guidanceAllowlist(def).has('case'), true)
+    const projection = projectGuidanceContext(def, { case: { id: 'case1', version: 1,
+      healthInsuranceBranch: '東京支部', deceasedInsuranceStatus: 'INSURED',
+      burialBenefitApplicantStatus: 'LIVELIHOOD_MAINTAINER', municipality: '架空市', deceasedName: 'PRIVATE' }, entities: {} })
+    assert.deepEqual(projection.content.case, { id: 'case1', version: 1, healthInsuranceBranch: '東京支部',
+      deceasedInsuranceStatus: 'INSURED', burialBenefitApplicantStatus: 'LIVELIHOOD_MAINTAINER' })
+    assert.deepEqual(projection.missingRequired, [])
+    assert.ok(projection.droppedKeys.includes('case.municipality') && projection.droppedKeys.includes('case.deceasedName'))
     assert.deepEqual(procedureResearchBrief(def).sourceCatalogIds, ['kyoukaikenpo-burial-benefit'])
+  })
+  it('未入力の正式状態を不足項目として返す', () => {
+    const projection = projectGuidanceContext(def, { case: { id: 'case1', version: 1,
+      healthInsuranceBranch: null, deceasedInsuranceStatus: 'DEPENDENT', burialBenefitApplicantStatus: null }, entities: {} })
+    assert.deepEqual(projection.missingRequired.map(contextKey), [
+      'case.healthInsuranceBranch', 'case.burialBenefitApplicantStatus',
+    ])
   })
 })
 

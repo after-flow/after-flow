@@ -15,6 +15,7 @@ import { createOfficialCatalogProvider } from '../src/infrastructure/research/of
 import type { ResearchProvider } from '../src/infrastructure/mastra/tools/research.js'
 import type { BudgetCharge } from '../src/application/execution/contracts.js'
 import { liveGuidanceCases, liveGuidanceDatasetVersion } from './live-guidance-dataset.js'
+import type { LiveGuidanceCase } from './live-guidance-dataset.js'
 
 const { values } = parseArgs({ options: {
   'env-file': { type: 'string' }, repetitions: { type: 'string', default: '2' }, 'max-usd': { type: 'string' },
@@ -40,7 +41,7 @@ const composition = readHackathonComposition({
   ...(modelIds.fallback ? { AI_ORCA_FALLBACK_MODEL: modelIds.fallback } : {}),
 }, () => undefined)
 if (!composition?.orca) throw new Error('Live OrcaRouter composition is unavailable')
-const selected = liveGuidanceCases.slice(0, caseLimit)
+const selected: readonly LiveGuidanceCase[] = liveGuidanceCases.slice(0, caseLimit)
 const rawProvider = createOfficialCatalogProvider(composition.catalogs)
 const sourceCache = new Map<string, Awaited<ReturnType<ResearchProvider['read']>>>()
 const research: ResearchProvider = {
@@ -65,12 +66,15 @@ for (let repetition = 1; repetition <= repetitions; repetition++) {
     const taskId = `task-${definition.id}`, caseId = `case-${definition.id}`, runMetricsStart = metrics.length
     const supported = definition.procedureId === 'kyoukaikenpo-burial-benefit'
     const content = { operation: 'task_guidance' as const,
-      case: { id: caseId, version: 1, status: 'ACTIVE' },
+      case: { id: caseId, version: 1, status: 'ACTIVE',
+        healthInsuranceBranch: definition.omitField === 'branch' ? null : '東京支部',
+        deceasedInsuranceStatus: definition.omitField === 'deceasedInsuranceStatus' ? null : 'INSURED',
+        burialBenefitApplicantStatus: definition.omitField === 'applicantStatus' ? null
+          : definition.id === 'actual-payer' ? 'BURIAL_EXPENSE_PAYER' : 'LIVELIHOOD_MAINTAINER' },
       ...(supported ? {
         procedure: { id: definition.procedureId, version: 1, reviewStatus: 'reviewed' },
         profile: { healthInsurance: 'EMPLOYEE' },
         contracts: [{ id: `contract-${definition.id}`, version: 1, kind: 'HEALTH_INSURANCE', provider: '全国健康保険協会', policyState: 'ACTIVE', progressState: 'NOT_STARTED' }],
-        ...(!definition.omitRelationship ? { persons: [{ id: `person-${definition.id}`, version: 1, relationshipLabel: '配偶者' }] } : {}),
       } : {}),
       task: { id: taskId, version: 1, title: definition.title, status: 'NOT_STARTED', stage: 'government', category: 'insurance-benefit',
         submitTo: '全国健康保険協会', source: 'RULE', procedureId: definition.procedureId, dependencyTaskIds: [], requiredDocuments: [], evidenceRequired: true, assetDisposal: false },
