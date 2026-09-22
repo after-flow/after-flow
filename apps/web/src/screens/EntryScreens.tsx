@@ -164,11 +164,12 @@ export function CaseNewScreen() {
           <p className="-mt-2 pl-6 text-[0.86rem] text-rd-text-2">配偶者・子・親・兄弟姉妹などが相続人になります。分からなければチェックしたままで構いません。</p>
         </fieldset>
         {create.isError && <Notice tone="danger" role="alert">作成できませんでした。もう一度お試しください。</Notice>}
-        <div className="flex gap-2">
+        {/* 並べて入らないとき（大きな文字の設定など）は「はじめる」を次の行へ送る */}
+        <div className="flex flex-wrap gap-2">
           {(cases.data?.items.length ?? 0) > 0 && (
             <Button onClick={() => navigate('/cases')}>戻る</Button>
           )}
-          <Button type="submit" variant="primary" size="lg" className="flex-1" disabled={create.isPending}>
+          <Button type="submit" variant="primary" size="lg" className="flex-[1_1_auto]" disabled={create.isPending}>
             {create.isPending ? '準備しています…' : 'はじめる'}
           </Button>
         </div>

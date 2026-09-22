@@ -80,7 +80,8 @@ export function DocumentsScreen() {
               <tr>
                 <th className="px-4 py-2 font-bold">書類</th>
                 <th className="hidden w-36 px-4 py-2 font-bold @4xl:table-cell">種類</th>
-                <th className="w-[9.5rem] px-3 py-2 font-bold sm:w-44 sm:px-4">状態</th>
+                {/* スマホでは状態を書類名の下に出し、書類名に幅を残す（列に分けると書類名が3文字ほどしか見えない） */}
+                <th className="hidden w-44 px-4 py-2 font-bold sm:table-cell">状態</th>
                 <th className="hidden w-48 px-4 py-2 font-bold sm:table-cell">追加した日時</th>
               </tr>
             </thead>
@@ -95,11 +96,16 @@ export function DocumentsScreen() {
                         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md" style={{ background: k.bg, color: k.fg }}>
                           <Icon name={k.icon} size={17} />
                         </span>
-                        <span className="min-w-0 truncate font-bold hover:underline">{d.fileName}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-bold hover:underline">{d.fileName}</span>
+                          <span className="mt-1 block sm:hidden">
+                            <Badge tone={s.tone}>{s.label}</Badge>
+                          </span>
+                        </span>
                       </Link>
                     </td>
                     <td className="hidden px-4 py-2.5 text-rd-text-2 @4xl:table-cell">{kindLabel(d.kind)}</td>
-                    <td className="px-3 py-2.5 sm:px-4">
+                    <td className="hidden px-4 py-2.5 sm:table-cell">
                       <Badge tone={s.tone}>{s.label}</Badge>
                     </td>
                     <td className="hidden px-4 py-2.5 text-[0.9rem] text-rd-text-2 sm:table-cell">{formatDateTime(d.createdAt)}</td>

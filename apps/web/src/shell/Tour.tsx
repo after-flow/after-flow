@@ -278,8 +278,11 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
         aria-modal="true"
         aria-labelledby="tour-title"
         aria-describedby="tour-body"
-        className={`absolute rounded-2xl bg-rd-card p-5 shadow-2xl ${pos.sheet ? 'animate-sheet-up' : 'animate-pop-in'}`}
-        style={{ top: pos.top, left: pos.left, width: pos.width }}
+        // 説明が画面より高い（小さな画面・大きな文字）ときは、画面の高さに収めて枠の中をスクロールする。
+        // そのままだと上が画面の外に切れ、見出しが読めない。
+        // 最大の高さは画面の高さだけで決める（置き場所から決めると、高さ→置き場所→高さ…と測り直しが止まらなくなる）
+        className={`absolute overflow-y-auto overscroll-contain rounded-2xl bg-rd-card p-5 shadow-2xl ${pos.sheet ? 'animate-sheet-up' : 'animate-pop-in'}`}
+        style={{ top: Math.max(EDGE, pos.top), left: pos.left, width: pos.width, maxHeight: `calc(100dvh - ${EDGE * 2}px)` }}
       >
         <div className="flex items-center justify-between gap-3">
           <p className="text-[0.86rem] font-bold text-rd-primary-text">
@@ -308,11 +311,11 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
           </p>
         )}
 
-        <div className="mt-4 flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={close}>
+        {/* 3つ並べて入らない幅（320px の画面・大きな文字）では、進むボタンを次の行へ送る。1行に固定するとカードの外へはみ出す */}
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+          <Button variant="ghost" size="sm" className="mr-auto" onClick={close}>
             終わる
           </Button>
-          <span className="flex-1" />
           {i > 0 && (
             <Button size="md" onClick={() => setI(i - 1)}>
               戻る
@@ -357,7 +360,8 @@ export function TourPrompt({ onStart, onLater }: { onStart: () => void; onLater:
         role="dialog"
         aria-modal="true"
         aria-labelledby="tour-prompt-title"
-        className="relative w-full max-w-sm rounded-xl bg-rd-card p-6 text-center shadow-2xl"
+        // 画面より高くなる（小さな画面・大きな文字）ときは、画面の高さに収めて中をスクロールする。上が切れて見出しが読めなくならないように
+        className="relative max-h-full w-full max-w-sm overflow-y-auto overscroll-contain rounded-xl bg-rd-card p-6 text-center shadow-2xl"
       >
         <span aria-hidden className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-rd-primary-soft text-rd-primary-text">
           <Icon name="info" size={24} />

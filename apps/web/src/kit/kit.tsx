@@ -15,9 +15,11 @@ import { Icon, type IconName } from '@/kit/Icon'
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost'
 type ButtonSize = 'md' | 'sm' | 'lg'
 
-// 押したときに 1px だけ沈ませ、押せたことを手ごたえで伝える
+// 押したときに 1px だけ沈ませ、押せたことを手ごたえで伝える。
+// ふだんは1行のまま。置き場所より長いとき（ブラウザで文字を大きくしている方のスマホなど）だけ、文節の切れ目で折り返す。
+// 1行に固定すると、枠の外へはみ出して押せなくなる
 const BTN_BASE =
-  'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-bold whitespace-nowrap transition-[color,background-color,border-color,transform] duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45 disabled:active:translate-y-0'
+  'inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 rounded-md text-center font-bold [word-break:auto-phrase] transition-[color,background-color,border-color,transform] duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45 disabled:active:translate-y-0'
 
 const BTN_VARIANT: Record<ButtonVariant, string> = {
   primary: 'bg-rd-primary text-white hover:bg-rd-primary-text',
@@ -27,9 +29,9 @@ const BTN_VARIANT: Record<ButtonVariant, string> = {
 }
 
 const BTN_SIZE: Record<ButtonSize, string> = {
-  sm: 'h-9 px-3 text-[0.9rem]',
-  md: 'h-11 px-4 text-[0.97rem]',
-  lg: 'h-12 px-6 text-[1.02rem]',
+  sm: 'min-h-9 px-3 py-1 text-[0.9rem] leading-snug',
+  md: 'min-h-11 px-4 py-1.5 text-[0.97rem] leading-snug',
+  lg: 'min-h-12 px-6 py-2 text-[1.02rem] leading-snug',
 }
 
 export function buttonClass(variant: ButtonVariant = 'secondary', size: ButtonSize = 'md') {
@@ -51,7 +53,7 @@ export function Button({
 }) {
   return (
     <button type="button" className={`${buttonClass(variant, size)} ${className}`} {...rest}>
-      {icon && <Icon name={icon} size={size === 'sm' ? 15 : 17} />}
+      {icon && <Icon name={icon} size={size === 'sm' ? 15 : 17} className="shrink-0" />}
       {children}
     </button>
   )
@@ -74,7 +76,7 @@ export function LinkButton({
 }) {
   return (
     <Link to={to} className={`${buttonClass(variant, size)} ${className}`}>
-      {icon && <Icon name={icon} size={size === 'sm' ? 15 : 17} />}
+      {icon && <Icon name={icon} size={size === 'sm' ? 15 : 17} className="shrink-0" />}
       {children}
     </Link>
   )
@@ -104,9 +106,10 @@ export function Badge({
 }) {
   return (
     <span
-      className={`inline-flex h-7 shrink-0 items-center gap-1 rounded px-2 text-[0.82rem] font-bold whitespace-nowrap ${BADGE_TONE[tone]}`}
+      // ふだんは1行。置き場所（幅の決まった表の列など）より長いときだけ折り返す。1行に固定すると隣の列や枠の外にはみ出す
+      className={`inline-flex min-h-7 max-w-full shrink-0 items-center gap-1 rounded px-2 py-0.5 text-[0.82rem] leading-snug font-bold ${BADGE_TONE[tone]}`}
     >
-      {icon && <Icon name={icon} size={13} strokeWidth={2.2} />}
+      {icon && <Icon name={icon} size={13} strokeWidth={2.2} className="shrink-0" />}
       {children}
     </span>
   )
@@ -312,7 +315,7 @@ export function Notice({
           {title && <p className={`font-bold ${t.fg}`}>{title}</p>}
           {children && <div className={title ? 'mt-0.5 text-rd-text' : 'text-rd-text'}>{children}</div>}
         </div>
-        {action && <div className="shrink-0">{action}</div>}
+        {action && <div className="max-w-full shrink-0">{action}</div>}
       </div>
     </div>
   )
@@ -500,24 +503,31 @@ export function Modal({
         // スマホでは下から、広い画面では中央にふわっと出す
         className={`flex max-h-[90dvh] w-full animate-sheet-up flex-col overflow-hidden rounded-t-xl bg-rd-card sm:animate-pop-in sm:rounded-xl ${wide ? 'max-w-2xl' : 'max-w-md'}`}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-rd-border px-5 py-3.5">
-          <div>
-            <h2 className="text-[1rem] font-bold">{title}</h2>
-            {description && (
-              <div className="mt-1 text-[0.9rem] leading-relaxed text-rd-text-2">{description}</div>
-            )}
+        {/*
+          見出しと中身をまとめてスクロールし、下のボタンは常に見えるようにする。
+          中身だけをスクロールにすると、見出しが長い（手続きの名前が長い・文字を大きくしている）ときに
+          見出しに押されてボタンが枠の外へ切れ、押せなくなる
+        */}
+        <div className="min-h-0 overflow-y-auto overscroll-contain">
+          <div className="flex items-start justify-between gap-3 border-b border-rd-border px-5 py-3.5">
+            <div className="min-w-0">
+              <h2 className="text-[1rem] font-bold">{title}</h2>
+              {description && (
+                <div className="mt-1 text-[0.9rem] leading-relaxed text-rd-text-2">{description}</div>
+              )}
+            </div>
+            <button
+              type="button"
+              aria-label="閉じる"
+              onClick={onClose}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-rd-text-2 hover:bg-rd-shade"
+            >
+              <span aria-hidden className="text-lg leading-none">×</span>
+            </button>
           </div>
-          <button
-            type="button"
-            aria-label="閉じる"
-            onClick={onClose}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-rd-text-2 hover:bg-rd-shade"
-          >
-            <span aria-hidden className="text-lg leading-none">×</span>
-          </button>
+          {children && <div className="px-5 py-4">{children}</div>}
         </div>
-        {children && <div className="overflow-y-auto px-5 py-4">{children}</div>}
-        <div className="flex flex-wrap justify-end gap-2 border-t border-rd-border bg-rd-bg px-5 py-3">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-rd-border bg-rd-bg px-5 py-3">
           {footer ?? <Button onClick={onClose}>閉じる</Button>}
         </div>
       </div>

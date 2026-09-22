@@ -133,7 +133,7 @@ export function LockNotice({ caseId, compact, strip }: { caseId: string; compact
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-rd-danger-line bg-rd-danger-soft px-4 py-3"
     >
       <Icon name="warning" size={18} className="shrink-0 text-rd-danger-text" />
-      <p className="min-w-[12rem] flex-1 text-[0.94rem] leading-relaxed">
+      <p className="min-w-[min(12rem,100%)] flex-1 text-[0.94rem] leading-relaxed">
         <strong className="text-rd-danger-text">{t.title}</strong>
         {!compact && <> {t.body}</>}
         {reason === 'undecided' && deadline?.dueDate && (

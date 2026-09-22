@@ -367,14 +367,17 @@ function StageNode({
           {CIRCLED[no]} {stageName(stage)}
         </span>
         {meta && <span className="text-[0.86rem] text-rd-text-2">{meta.hint}</span>}
-        <span className={`mt-1 flex items-center gap-1 text-[0.8rem] font-bold whitespace-nowrap ${st.fg}`}>
-          <Icon name={st.icon} size={13} strokeWidth={2.4} />
-          {st.word}
+        {/* 段階の箱が狭い（並行して進める段階・大きな文字）ときは、かたまりごとに次の行へ送る。1行に固定すると箱の外にはみ出す */}
+        <span className={`mt-1 flex flex-wrap items-center justify-center gap-x-1 text-[0.8rem] font-bold ${st.fg}`}>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <Icon name={st.icon} size={13} strokeWidth={2.4} />
+            {st.word}
+          </span>
           {funeral?.doneAt && (
-            <span className="font-normal text-rd-text-2">（{formatDate(funeral.doneAt)}に記録）</span>
+            <span className="font-normal whitespace-nowrap text-rd-text-2">（{formatDate(funeral.doneAt)}に記録）</span>
           )}
           {hasTasks && (
-            <span className="font-normal text-rd-text-2">
+            <span className="font-normal whitespace-nowrap text-rd-text-2">
               （{stage.totalTasks}件中{stage.completedTasks}件）
             </span>
           )}

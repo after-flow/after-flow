@@ -88,8 +88,9 @@ export function PropertyScreen() {
       <LockNotice caseId={caseId} compact />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="財産（金額が分かる分）" value={formatYen(sum(a))} />
-        <Stat label="借金など（金額が分かる分）" value={formatYen(sum(l))} />
+        {/* 金額は桁が多いので、スマホでは横幅いっぱいに出す（半分の幅だと「24,691,356円」でも札からはみ出す） */}
+        <Stat wide label="財産（金額が分かる分）" value={formatYen(sum(a))} />
+        <Stat wide label="借金など（金額が分かる分）" value={formatYen(sum(l))} />
         <Stat label="契約" value={`${c.length}件`} sub={`どうするか未定 ${c.filter((x) => x.policy === 'UNDECIDED').length}件`} />
         <Stat label="受け取れるお金" value={`${b.length}件`} sub={b.length > 0 ? `未請求 ${b.filter((x) => x.progress === 'NOT_STARTED').length}件` : undefined} />
       </div>
@@ -124,9 +125,9 @@ export function PropertyScreen() {
   )
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Stat({ label, value, sub, wide }: { label: string; value: string; sub?: string; wide?: boolean }) {
   return (
-    <div className="rounded-lg border border-rd-border bg-rd-card px-4 py-3">
+    <div className={`min-w-0 rounded-lg border border-rd-border bg-rd-card px-4 py-3 ${wide ? 'col-span-2 sm:col-span-1' : ''}`}>
       <p className="text-[0.82rem] font-bold text-rd-text-2">{label}</p>
       <p className="mt-0.5 text-[1.2rem] font-bold leading-tight">{value}</p>
       {sub && <p className="text-[0.8rem] text-rd-text-3">{sub}</p>}
@@ -152,6 +153,7 @@ function Table({ head, children }: { head: string[]; children: ReactNode }) {
 }
 
 const tr = 'border-b border-rd-border-2 last:border-b-0 align-middle'
+// 表は横にスクロールできるので、金額やボタンは折り返さず1行で出す（ボタンは置き場所に合わせて折り返すため、セルの中では細く縦に折れてしまう）
 const td = 'px-4 py-2.5'
 
 /** 名前と「直す」ボタンを並べる */
@@ -186,8 +188,8 @@ function AssetsTable({ caseId, items, onEdit }: { caseId: string; items: Asset[]
             {x.taxAttention && <p className="mt-0.5 text-[0.82rem] text-rd-warning-text">税務上の判断が必要な場合があります。税理士にご相談ください。</p>}
           </td>
           <td className={`${td} text-rd-text-2`}>{ASSET_KIND_LABEL[x.kind]}</td>
-          <td className={`${td} font-bold`}>{formatYen(x.amount)}</td>
-          <td className={`${td} text-right`}>
+          <td className={`${td} font-bold whitespace-nowrap`}>{formatYen(x.amount)}</td>
+          <td className={`${td} text-right whitespace-nowrap`}>
             {x.confirmation === 'CONFIRMED' ? (
               <Badge tone="green" icon="check">確認済み</Badge>
             ) : (
@@ -223,8 +225,8 @@ function LiabilitiesTable({ caseId, items, onEdit }: { caseId: string; items: Li
                 </p>
               </td>
               <td className={`${td} text-rd-text-2`}>{LIABILITY_KIND_LABEL[x.kind]}</td>
-              <td className={`${td} font-bold`}>{formatYen(x.amount)}</td>
-              <td className={`${td} text-right`}>
+              <td className={`${td} font-bold whitespace-nowrap`}>{formatYen(x.amount)}</td>
+              <td className={`${td} text-right whitespace-nowrap`}>
                 {x.confirmation === 'CONFIRMED' ? (
                   <Badge tone="green" icon="check">確認済み</Badge>
                 ) : (
@@ -278,7 +280,7 @@ function ContractsTable({ caseId, items, onEdit }: { caseId: string; items: Cont
               ))}
             </select>
           </td>
-          <td className={`${td} text-right`}>
+          <td className={`${td} text-right whitespace-nowrap`}>
             <select
               className={`${inputClass} ml-auto h-9 w-28 text-[0.9rem]`}
               aria-label={`${x.name}の対応状況`}
@@ -310,11 +312,11 @@ function BenefitsTable({ caseId }: { caseId: string }) {
             <p className="text-[0.82rem] text-rd-text-2">{x.provider}</p>
           </td>
           <td className={`${td} text-rd-text-2`}>{BENEFIT_KIND_LABEL[x.kind]}</td>
-          <td className={`${td} font-bold`}>{formatYen(x.amount)}</td>
+          <td className={`${td} font-bold whitespace-nowrap`}>{formatYen(x.amount)}</td>
           <td className={td}>
             <Due deadline={x.deadline} done={x.progress === 'COMPLETED'} />
           </td>
-          <td className={`${td} text-right`}>
+          <td className={`${td} text-right whitespace-nowrap`}>
             <select
               className={`${inputClass} ml-auto h-9 w-28 text-[0.9rem]`}
               aria-label={`${x.name}の対応状況`}
