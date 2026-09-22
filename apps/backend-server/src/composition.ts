@@ -312,10 +312,9 @@ function readinessChecks(
       } catch {
         return { ok: false, reason: 'NOT_CONFIGURED' }
       }
-      // static-jwks・firebase-emulatorは試験・ローカル専用
+      // firebase-emulatorは試験・ローカル専用
       // （readAuthConfigもNODE_ENV=productionでは拒否する）。
       // readinessはNODE_ENVに関係なく、本番相当の設定でなければ ready を返さない。
-      if (config.mode === 'static-jwks') return { ok: false, reason: 'STATIC_JWKS_NOT_PRODUCTION_GRADE' }
       if (config.mode === 'firebase-emulator') return { ok: false, reason: 'EMULATOR_NOT_PRODUCTION_GRADE' }
       return { ok: true }
     }),

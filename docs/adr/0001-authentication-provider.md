@@ -79,7 +79,7 @@ after-flowでは、利用者が自分の案件を作成し、家族を招待し�
 
 - token検証はIdentity Adapterへ隔離する。ApplicationはProvider固有のissuer、署名検証、鍵取得処理へ直接依存しない。
 - 認証設定がない場合に検証を省略して通す既定値を作らない。保護APIを全拒否する既存方針を維持する。
-- `none` や対称鍵方式をFirebase ID tokenの検証方式として許可しない。固定鍵モードを維持する場合も、本番環境では利用できない制約を保つ。
+- `none` や対称鍵方式をFirebase ID tokenの検証方式として許可しない。
 - 業務データとmembershipの正本はBackendが管理するFirestoreとする。ブラウザやAIの自己申告で所属・権限を確定しない。
 
 ## 採用理由と選択肢

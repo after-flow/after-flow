@@ -1,5 +1,5 @@
 import type { JWTPayload, JWTVerifyGetKey } from 'jose'
-import { createLocalJWKSet, createRemoteJWKSet, errors as joseErrors, jwtVerify } from 'jose'
+import { createRemoteJWKSet, errors as joseErrors, jwtVerify } from 'jose'
 import type { TokenVerifier, VerifiedIdentity } from '../../application/ports/identity.js'
 import { errors } from '../../shared/app-error.js'
 import { assertWithinSessionCap } from './session-age.js'
@@ -23,8 +23,6 @@ export interface IdentityVerifierConfig {
    * 見て遮断せず、この検証が投げる FORBIDDEN に従う。
    */
   requireEmailVerified: boolean
-  /** `auth_time` の無いトークンを拒否するか。static-jwks の試験用トークン以外は true。 */
-  requireAuthTime: boolean
 }
 
 export interface JwtVerifierConfig extends IdentityVerifierConfig {
@@ -44,7 +42,7 @@ export function assertIdentityClaims(payload: JWTPayload, config: IdentityVerifi
     })
   }
   const authTimeSeconds = typeof payload.auth_time === 'number' ? payload.auth_time : undefined
-  assertWithinSessionCap(authTimeSeconds, Math.floor(Date.now() / 1000), config.clockToleranceSeconds, config.requireAuthTime)
+  assertWithinSessionCap(authTimeSeconds, Math.floor(Date.now() / 1000), config.clockToleranceSeconds)
 }
 
 export function identityFrom(payload: JWTPayload, issuer: string): VerifiedIdentity {
@@ -130,7 +128,3 @@ export function remoteKeySet(jwksUri: string): JWTVerifyGetKey {
   })
 }
 
-/** 試験用の固定 JWKS。本番の既定にしない（設定で明示的に選んだ場合だけ使う）。 */
-export function staticKeySet(jwks: { keys: Record<string, unknown>[] }): JWTVerifyGetKey {
-  return createLocalJWKSet(jwks as never)
-}
