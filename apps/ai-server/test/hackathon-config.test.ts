@@ -30,7 +30,7 @@ test('hackathon composition binds two model families, fixed official sources and
   assert.deepEqual(config.policies.map(policy => policy.modelId), ['openai/gpt-4o-mini', 'google/gemini-2.5-flash'])
   assert.equal(new Set(config.policies.map(policy => policy.sdkProvider)).size, 2)
   assert.deepEqual(config.catalogs.map(catalog => catalog.id), [
-    'kyoukaikenpo-burial-benefit', 'nenkin-death-procedures', 'inheritance-renunciation',
+    'death-notification', 'kyoukaikenpo-burial-benefit', 'nenkin-death-procedures', 'inheritance-renunciation',
     'final-income-tax-return', 'inheritance-tax-return', 'real-estate-registration',
   ])
   const sourceIds = config.catalogs.flatMap(catalog => catalog.entries.map(entry => entry.id))
@@ -55,6 +55,7 @@ test('hackathon composition binds two model families, fixed official sources and
   const provider = createOfficialCatalogProvider(config.catalogs, { now: () => Date.parse('2026-09-22T12:00:00.000Z') })
   const signal = new AbortController().signal
   const searches = [
+    ['death-notification', '法務省 死亡届'],
     ['nenkin-death-procedures', '日本年金機構 未支給年金'],
     ['inheritance-renunciation', '裁判所 相続放棄'],
     ['final-income-tax-return', '国税庁 準確定申告'],
@@ -66,6 +67,11 @@ test('hackathon composition binds two model families, fixed official sources and
     assert.ok(results.length > 0, catalogId)
     assert.ok(results.every(candidate => candidate.catalogId === catalogId))
   }
+  const naturalPensionQuery = await provider.search({
+    query: '関係する公的機関 死亡後手続きに関する相談 亡くなった父の年金を止めるには、どこへ何を提出すればよいですか？',
+    catalogIds: ['nenkin-death-procedures'], signal,
+  })
+  assert.equal(naturalPensionQuery[0]?.id, 'pension-recipient-death')
   for (const [procedureId, catalogId] of Object.entries(procedureCatalogs)) {
     const definition = findProcedureDefinition(procedureId)
     assert.ok(definition)
@@ -84,7 +90,11 @@ test('hackathon composition binds two model families, fixed official sources and
   const benefitChatScope = await config.researchScope({ content: { operation: 'chat_reply', message: { body: '協会けんぽの埋葬料を教えて' } } } as never)
   assert.deepEqual(benefitChatScope.sourceCatalogIds, ['kyoukaikenpo-burial-benefit'])
   const chatScope = await config.researchScope({ content: { operation: 'chat_reply', message: { body: '相続放棄の期限を教えて' } } } as never)
-  assert.deepEqual(chatScope.sourceCatalogIds, config.catalogs.map(catalog => catalog.id))
+  assert.deepEqual(chatScope.sourceCatalogIds, ['inheritance-renunciation'])
+  const deathScope = await config.researchScope({ content: { operation: 'chat_reply', message: { body: '死亡届の提出先を教えて' } } } as never)
+  assert.deepEqual(deathScope.sourceCatalogIds, ['death-notification'])
+  const priorityScope = await config.researchScope({ content: { operation: 'chat_reply', message: { body: '亡くなって2週間です。何を優先すべきですか？' } } } as never)
+  assert.deepEqual(priorityScope.sourceCatalogIds, config.catalogs.map(catalog => catalog.id))
   assert.throws(() => assertResearchScopeCatalogs({ ...scope, sourceCatalogVersions: { [scope.sourceCatalogIds[0]!]: 'stale' } }, config.catalogs), /version mismatch/)
   const grant = await config.grant({} as never)
   assert.deepEqual(grant.providerPolicyIds, ['orca-core-primary', 'orca-core-fallback'])

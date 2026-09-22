@@ -4,6 +4,7 @@ import type { AiServiceComposition } from './composition.js'
 import type { ProviderMetric } from '../mastra/authorized-models.js'
 import type { GroundingRules } from '../../orchestration/playbooks/guidance-grounding.js'
 import { HACKATHON_CATALOG_VERSION, HACKATHON_OFFICIAL_CATALOGS } from './hackathon-official-sources.js'
+import { classifyChatIntent, type ChatIntent } from '../../orchestration/chat/intent.js'
 
 const modeSchema = z.enum(['auto', 'disabled', 'hackathon'])
 const envSchema = z.object({
@@ -114,12 +115,40 @@ export function readHackathonComposition(
         confirmedBy: { group: 'case' as const, field: 'burialBenefitApplicantStatus', oneOf: ['LIVELIHOOD_MAINTAINER', 'BURIAL_EXPENSE_PAYER'] } },
     ],
   }
-  const chatScope = {
-    id: 'official-aftercare-chat', version: 'hackathon-v1', reviewedAt: approvedAt,
-    procedure: '死亡後手続きに関する相談', institution: '関係する公的機関', jurisdiction: '日本', municipality: null,
-    procedureIds: ['ai-chat'], sourceCatalogIds: CHAT_CATALOG_IDS,
-    sourceCatalogVersions: Object.fromEntries(CHAT_CATALOG_IDS.map(id => [id, HACKATHON_CATALOG_VERSION])),
-    questions: [{ id: 'answer', text: '取得した公式資料から、相談に関係する制度、期限、必要書類、提出先を確認してください。' }],
+  const intentCatalogs: Record<Exclude<ChatIntent, 'out_of_scope' | 'delegated_action' | 'burial_benefit' | 'priority_overview' | 'aftercare_general'>, readonly string[]> = {
+    death_notification: ['death-notification'],
+    pension: ['nenkin-death-procedures'],
+    inheritance_renunciation: ['inheritance-renunciation'],
+    final_income_tax: ['final-income-tax-return'],
+    inheritance_tax: ['inheritance-tax-return'],
+    real_estate_registration: ['real-estate-registration'],
+  }
+  const intentQuestions: Partial<Record<ChatIntent, string>> = {
+    death_notification: '死亡届の期限、提出先、届出人、必要書類を確認してください。',
+    pension: '年金受給者の死亡届の要否、未支給年金、提出先、必要書類、期限を確認してください。',
+    inheritance_renunciation: '相続放棄の期限、管轄家庭裁判所、必要書類、期間伸長を確認してください。',
+    final_income_tax: '準確定申告の対象者、期限、提出先、必要書類を確認してください。',
+    inheritance_tax: '相続税申告の要否、期限、提出先、必要書類を確認してください。',
+    real_estate_registration: '相続登記の期限、申請先、必要書類、申請する人を確認してください。',
+  }
+  const chatScope = (intent: ChatIntent) => {
+    const sourceCatalogIds = intent === 'priority_overview' || intent === 'aftercare_general'
+      ? CHAT_CATALOG_IDS
+      : intent === 'burial_benefit'
+        ? [CATALOG_ID]
+        : intent === 'out_of_scope' || intent === 'delegated_action'
+          ? ['death-notification']
+          : [...intentCatalogs[intent]]
+    const priority = intent === 'priority_overview'
+    return {
+      id: `official-aftercare-chat-${intent}`, version: 'hackathon-v1', reviewedAt: approvedAt,
+      procedure: priority ? '死亡後に優先する手続き' : '死亡後手続きに関する相談', institution: '関係する公的機関', jurisdiction: '日本', municipality: null,
+      procedureIds: ['ai-chat'], sourceCatalogIds,
+      sourceCatalogVersions: Object.fromEntries(sourceCatalogIds.map(id => [id, HACKATHON_CATALOG_VERSION])),
+      questions: [{ id: 'answer', text: priority
+        ? '取得した公式資料と案件の期限・進捗から、今すぐ行う手続きを期限の近い順に確認してください。'
+        : intentQuestions[intent] ?? '取得した公式資料から、相談に直接関係する制度、期限、必要書類、提出先を確認してください。' }],
+    }
   }
   return {
     serviceToken: input.AI_SERVICE_TOKEN,
@@ -154,9 +183,11 @@ export function readHackathonComposition(
       if (context.content.operation !== 'chat_reply') return scope
       const message = context.content.message
       const body = message && typeof message === 'object' && 'body' in message && typeof message.body === 'string' ? message.body : ''
-      // Keep the reviewed, detailed benefit questions when the consultation is
-      // about Kyoukaikenpo. Other supported topics use the wider catalog scope.
-      return /協会けんぽ|全国健康保険協会|埋葬料|埋葬費|家族埋葬料/u.test(body) ? scope : chatScope
+      const intent = classifyChatIntent(body)
+      // Keep the reviewed, detailed benefit questions for the task-guidance
+      // compatible Kyoukaikenpo path. Other chat topics use a narrowly selected
+      // official catalog, while the workflow handles scope/action replies before research.
+      return intent === 'burial_benefit' ? scope : chatScope(intent)
     },
     maxSourceAgeMs: 15 * 60_000,
     sourceTimeoutMs: 8_000,

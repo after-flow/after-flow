@@ -17,8 +17,9 @@ const runtime = new DurableExecutionRuntime({ store, snapshots: new FirestoreWor
   client: dispatch => new BackendClient({ baseUrl: process.env.AI_TEST_BACKEND_ORIGIN!, serviceToken: process.env.AI_TEST_BACKEND_TOKEN!,
     allowInsecureHttp: true, insecureHttpAllowedHosts: ['127.0.0.1'] }, dispatch),
   handlers: { chat_reply: createChatHandler({ storage, prepare: async session => ({
-    // 公式資料が見つからない相談ではモデルを呼ばない。呼ばれたら台本切れで失敗させる。
-    models: { core: scriptedModel([]).model, research: scriptedModel([]).model },
+    // 公式資料が見つからない相談でも、出典なしの一般案内を返す。
+    models: { core: scriptedModel([{ text: JSON.stringify({ paragraphs: [{ text: '架空手続きの一般的な案内です。', sourceIds: [] }], questions: [], professionalNotice: false }) }]).model,
+      research: scriptedModel([]).model },
     budget: { charge: session.guard, inference: { core: { tokens: 10000, costMicros: 10000, maxOutputTokens: 1000 }, research: { tokens: 10000, costMicros: 10000, maxOutputTokens: 1000 } } },
     authorizeRoute: async () => ({ routeId: 'chat-reply/v1', evidenceId: 'synthetic-orch-only' }),
     scope: { id: 'brief', version: '1', reviewedAt: '2026-09-01T00:00:00Z', procedure: '架空手続き', institution: '架空機関', jurisdiction: '架空地域', municipality: null,

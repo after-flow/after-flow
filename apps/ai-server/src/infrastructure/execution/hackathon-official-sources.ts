@@ -17,6 +17,16 @@ const catalog = (input: Omit<OfficialCatalog, 'version' | 'reviewedAt' | 'expire
  */
 export const HACKATHON_OFFICIAL_CATALOGS = Object.freeze([
   catalog({
+    id: 'death-notification',
+    reviewReference: 'https://www.moj.go.jp/ONLINE/FAMILYREGISTER/5-4.html',
+    allowedHosts: ['www.moj.go.jp'],
+    entries: [
+      { id: 'death-notification-procedure', catalogId: 'death-notification', title: '死亡届', issuer: '法務省',
+        url: 'https://www.moj.go.jp/ONLINE/FAMILYREGISTER/5-4.html',
+        keywords: ['死亡届', '死亡診断書', '死体検案書', '7日以内', '提出先', '市役所', '区役所', '町村役場', '死亡後の手続き', '優先', '2週間'] },
+    ],
+  }),
+  catalog({
     id: 'kyoukaikenpo-burial-benefit',
     reviewReference: 'https://www.kyoukaikenpo.or.jp/application_form/benefit/012/',
     allowedHosts: ['www.kyoukaikenpo.or.jp'],
@@ -35,7 +45,7 @@ export const HACKATHON_OFFICIAL_CATALOGS = Object.freeze([
     allowedHosts: ['www.nenkin.go.jp'],
     entries: [
       { id: 'pension-recipient-death', catalogId: 'nenkin-death-procedures', title: '年金を受けている方が亡くなったとき', issuer: '日本年金機構',
-        url: 'https://www.nenkin.go.jp/service/jukyu/tetsuduki/kyotsu/jukyu/20140731-01.html', keywords: ['年金の受給停止', '年金受給権者死亡届', '未支給年金', '必要書類', '提出先', '期限', 'マイナンバー'] },
+        url: 'https://www.nenkin.go.jp/service/jukyu/tetsuduki/kyotsu/jukyu/20140731-01.html', keywords: ['年金', '年金を止める', '年金の受給停止', '年金受給権者死亡届', '未支給年金', '必要書類', '提出先', '期限', 'マイナンバー', '死亡後の手続き', '優先', '2週間'] },
       { id: 'survivor-pension-overview', catalogId: 'nenkin-death-procedures', title: '遺族年金', issuer: '日本年金機構',
         url: 'https://www.nenkin.go.jp/service/jukyu/seido/izokunenkin/jukyu-yoken/20150401-03.html', keywords: ['遺族年金', '遺族基礎年金', '遺族厚生年金', '受給要件', '対象者'] },
       { id: 'survivor-employees-pension-claim', catalogId: 'nenkin-death-procedures', title: '遺族厚生年金を受けられるとき', issuer: '日本年金機構',
@@ -52,7 +62,7 @@ export const HACKATHON_OFFICIAL_CATALOGS = Object.freeze([
     allowedHosts: ['www.courts.go.jp'],
     entries: [
       { id: 'inheritance-renunciation-procedure', catalogId: 'inheritance-renunciation', title: '相続の放棄の申述', issuer: '裁判所',
-        url: 'https://www.courts.go.jp/saiban/syurui/syurui_kazi/kazi_06_13/index.html', keywords: ['相続放棄', '限定承認', '申述先', '家庭裁判所', '3か月', '必要書類', '申述書', '期間の伸長'] },
+        url: 'https://www.courts.go.jp/saiban/syurui/syurui_kazi/kazi_06_13/index.html', keywords: ['相続放棄', '限定承認', '申述先', '家庭裁判所', '3か月', '必要書類', '申述書', '期間の伸長', '死亡後の手続き', '優先'] },
     ],
   }),
   catalog({
