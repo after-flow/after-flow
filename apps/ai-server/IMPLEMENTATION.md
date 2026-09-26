@@ -9,7 +9,7 @@
 | 永続Runtime | AI専用FirestoreのMastra Snapshot、プロセス終了/再開、暗号化受付、Worker所有権、共有予算、終了制御 | [Runtime](RUNTIME.md)、[保存ADR](docs/adr/0001-runtime-storage.md) |
 | 2 Agent / Skill | Core + Research、6つのMastra標準Skill、限定brief ID委任、親会話を検索へ流さない、再委任なし | [要件](REQUIREMENTS.md) |
 | HTTP / Context | scope付きBackend Client、認証Ingress、最新Context・版/hash、完全な訂正/却下/承認履歴 | [HTTP](INTERNAL_HTTP.md)、[Context](CONTEXT.md) |
-| Provider / 検索 | 提供先Policyとgrant検証、Orch Port、SDKごとの共有予算、2 Provider fallback、計測、review済みCatalogとSSRF対策付き公式HTML取得 | [Policy](PROVIDER_POLICY.md)、[検索](RESEARCH_PROVIDER.md) |
+| Provider / 検索 | 提供先Policyとgrant検証、OrcaRouter Adapter、SDKごとの共有予算、model fallback、計測、review済みCatalogとSSRF対策付き公式HTML取得 | [Policy](PROVIDER_POLICY.md)、[検索](RESEARCH_PROVIDER.md) |
 | P-01 / Chat | 公式資料の調査、根拠付き案内/確認質問、鮮度検証、Backend結果受付、Worker Handler | [案内](PROCEDURE_GUIDANCE.md)、[Chat](CHAT.md) |
 | Proposal / P-03 | 計画差分、手動Task/訂正履歴の尊重、依存/必要書類のBackend検証、承認待ち・別attempt再開・正式版/hash照合 | [Proposal](PROPOSALS.md)、[計画](PLANNING.md) |
 | P-02 | 加工版のscope/検査版/hash/根拠位置、候補・訂正矛盾・不足、配信の再検証Workflow | [書類](DOCUMENT_REVIEW.md) |
@@ -27,13 +27,13 @@ P-03は1 Runで1件の正式提案を処理する。承認で案件が変わる�
 
 | 残る依存 | 必要な作業/情報 |
 |---|---|
-| 必須OrchRouter | ハッカソン指定製品のURL/公式資料、SDK・認証・返答契約、実利用証跡。質問は未回答 |
+| OrcaRouterの本番条件 | 開発用実推論は接続済み。本番の送信データ、保持条件、上流Provider、費用照合、IAMを確定する |
 | 実Provider・grant | 採用LLM/OCR/検索、提供条件・価格・保持条件、実資格情報、Backendの提供先grant API、予算値 |
 | 対応業務 | P-01/P-03/P-04の対象機関・手続きの公式資料レビュー、Source Catalog/Templateの確定 |
 | P-02の接続 | Backendの検査済み加工版配信と同意制御、実PDF/画像OCR、抽出Fieldから正式Proposalへのレビュー済み対応 |
 | P-04の接続 | Backend生成Artifact保存/承認契約、書類待ち・生成物承認待ちの実データ接続 |
 | Insightの追加起動経路 | 計画Context→結果→公開一覧は接続済み。定期検査イベント専用Runのスケジューラは未接続 |
-| 運用/実評価 | 専用クラウドIAM・秘密鍵・保持/削除条件、実モデル/実Orchの品質・費用・性能、実資料での人による評価校正 |
+| 運用/実評価 | 専用クラウドIAM・秘密鍵・保持/削除条件、実モデル/OrcaRouterの品質・費用・性能、実資料での人による評価校正 |
 
 これらの未確定契約や資格情報を推測で埋めない。接続用Portと実処理はあるが、未提供Backend APIを架空のパスへ送信しない。Workflowへの入力は信頼済みcomposition rootが認証付き内部HTTPから取得し、モデルの自己申告を認可証拠にしない。
 
@@ -41,11 +41,11 @@ P-03は1 Runで1件の正式提案を処理する。承認で案件が変わる�
 
 通常検証は`pnpm typecheck` / `pnpm lint` / `pnpm test` / `pnpm openapi:check` / `pnpm build`。永続化・承認再開は`pnpm test:firestore`、固定評価は`pnpm eval:ai`と`pnpm eval:ai holdout`。
 
-独立したBackend/AIプロセスで実HTTPによるChat受付→Worker→結果保存→重複配送を検証した。Mastra本体で2 Agent、Proposal/計画のsuspend/fork/resume、Firestore Snapshotのプロセス強制終了/復旧を検証した。モデル応答・Router・業務資料は合成fixtureであり、実LLMの品質試験とは区別する。
+独立したBackend/AIプロセスで実HTTPによるChat受付→Worker→結果保存→重複配送を検証した。Mastra本体で2 Agent、Proposal/計画のsuspend/fork/resume、Firestore Snapshotのプロセス強制終了/復旧を検証した。合成fixtureの試験と、OrcaRouter経由の実モデル品質評価は分けて記録する。
 
 PRは機能ごとのstack。起点はmain `9385b67`、順序と各PRは[継続計画](DELIVERY_PLAN.md)。個別PRには親ブランチへマージ済みのものがある。mainへの反映は別の統合PRでまとめて検証する。元の作業ディレクトリにあった未commit変更は触らず、隔離worktreeで作業した。
 
-Devinは着手許可を意味するラベルではない。共有PRの契約・依存が揃った周辺実装から担当可能。今回実装済みのIssueを重複着手しないよう、PRの範囲と残る実接続条件を先に確認する。Provider/Orch/業務判断の未確定部分は、任意の製品やFakeを選ばせて埋めない。
+Devinは着手許可を意味するラベルではない。共有PRの契約・依存が揃った周辺実装から担当可能。実装済みのIssueを重複着手しないよう、PRの範囲と残る実接続条件を先に確認する。Providerや業務判断の未確定部分は、任意の製品やFakeを選ばせて埋めない。
 
 ### 公式資料PDFの読み取り
 

@@ -28,9 +28,9 @@
 
 ## Portと有効化条件
 
-`ProcedureGuidanceDependencies`へBackend Client、モデル、レビュー済みScope/Catalog、ResearchProvider、共有予算・認可フック、Orch結果ゲートを注入する。
-`authorizeRoute`は実Orchの選択結果を検証し、利用証跡IDを返す責務。productionの成功固定Adapterは用意しない。
-合成テストの`fixture-routing-receipt`を実Orch利用の証跡として扱わない。
+`ProcedureGuidanceDependencies`へBackend Client、モデル、レビュー済みScope/Catalog、ResearchProvider、共有予算・認可フック、Application routeの証跡を注入する。
+`authorizeRoute`はBackendが許可したoperationに対応する固定routeを検証し、Model Policyの証跡IDを返す。OrcaRouterはこの後の推論Gatewayとして利用し、業務routeを選ばせない。productionの成功固定Adapterは用意しない。
+合成テストの`fixture-routing-receipt`をOrcaRouter利用の証跡として扱わない。
 
 `ResearchProvider`は取得処理を隔離するPort。開発Composeは協会けんぽのレビュー済みCatalog内検索と安全なHTML/PDF取得を接続する。任意Web検索は提供しない。
 検索結果の取得前にDNS・redirect先・サイズ・形式を検証し、内部ネットワークへ接続させないことが実Adapterの必須条件。

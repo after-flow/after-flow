@@ -214,4 +214,4 @@ ID tokenを `Authorization: Bearer` で送る。ローカルは Firebase Auth Em
 - 提案の承認／適用は [Entity別payload](proposal-payloads.md) に従う。
   専門家引継ぎはTaskの `escalation` に理由・資料の版・`contacted:false` を返し、連絡済みと表示させない。
 
-これらはBackend契約であり、MSW画面は変更していない。実フロント接続／実AI接続は未検証。
+この対応表の主要画面は既定でBackend Public APIへ接続し、MSWは明示的なオフラインデモに限定している。ローカルComposeでは設定済みoperationをFrontend → Backend → Outbox Worker → AI Serverの順で実行できる。全画面・全失敗経路を網羅する自動ブラウザーE2Eと、本番相当環境でのAI接続検証は引き続き必要である。

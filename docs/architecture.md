@@ -1,20 +1,20 @@
 # 死亡後手続きAIエージェント：TypeScriptアーキテクチャ仕様
 
-> OrcaRouter接続の更新（2026-09-21）: 実製品は推論ゲートウェイ。本文の旧Orch業務Route APIの仮定に代わり、明示モデルへの実推論を接続する。詳細・検証範囲は [OrcaRouter接続](../apps/ai-server/ORCAROUTER.md) を参照。業務経路は引き続きWorkflow/Playbookで制限する。
+> 実装状況の更新（2026-09-26）: OrcaRouterは業務経路を選ぶ製品ではなく、モデル推論ゲートウェイとしてAI Serverへ接続している。業務経路はApplication/Workflow/Playbookが制限する。詳細・検証範囲は [OrcaRouter接続](../apps/ai-server/ORCAROUTER.md) を参照。
 
-文書バージョン: 1.1  
-作成日: 2026-09-20 / Asia/Tokyo  
-対象: Codexによる新規実装・既存Go/Echo設計からの置き換え  
-状態: アーキテクチャの提案仕様。実装・接続検証は未実施。Orch Router製品の同定は未確定。
+文書バージョン: 1.2
+作成日: 2026-09-20 / Asia/Tokyo
+更新日: 2026-09-26 / Asia/Tokyo
+状態: サービス境界と責務の設計上の正本。現在の実装状況と運用手順は [ドキュメント案内](README.md) から確認する。
 
 ## 0. Codex向けの最重要事項
 
-本書は参照会話「YC参考の業務AI案」の設計を、現在の依頼に合わせて再構成したもの。過去のGo/Echo構成、業務別Agent構成、旧エンドポイント一覧と矛盾する場合は本書の設計を採用する。実装対象リポジトリの現状は未調査であり、既存実装や移行済みデータの存在を仮定しない。
+本書はafter-flowの目標アーキテクチャと、実装が維持すべき境界を定義する。過去のGo/Echo構成、業務別Agent構成、旧エンドポイント一覧と矛盾する場合は本書を優先する。各機能の接続状況はサービスREADMEとRunbookを参照し、本書にある将来要件を実装済みとは扱わない。
 
 - バックエンドサーバーとAIサーバーを独立したTypeScript + Honoサービスとして実装する。Go/Echoは新規構成に含めない。
 - MastraはAIサーバーの内部実行基盤。Frontendはバックエンドサーバーの公開APIだけを呼ぶ。
 - Firestoreを業務状態のSource of Truthとする。業務状態を確定する権限はTypeScript Application/Domain層に置く。
-- Orch Routerは必須。実製品のSDK/APIは専用Adapterに隔離する。単なる自作switchを実製品の導入完了と扱わない。
+- OrcaRouterは必須の推論ゲートウェイ。SDK/APIは専用Adapterに隔離し、業務Workflowの選択はアプリケーション側の許可表で決定する。
 - Workflow-first / Agent-inside。判断が必要な箇所で同じPrimary Case Agentを利用する。
 - AIの変更案はProposal。検証・認可・必要な承認・競合確認を通ったものだけをCommand Handlerが確定する。
 - Single Writerは「Case単位のAI意思決定経路と、正式状態の確定経路の一本化」。AgentへのFirestore直接書き込み権限付与を意味しない。
@@ -22,7 +22,7 @@
 - Context、Playbook、Workflow、Model、Ruleのバージョンと根拠を記録する。
 - 相続方法など本人が決めるDecisionをAIが確定しない。MVPは書類整理・手続き計画・申請準備まで。
 
-本書の「必須」は実装要件、「推奨」は既定案、「将来」はMVP対象外を表す。コード例は自アプリの契約例であり、MastraやOrch Routerの実SDK構文を保証するものではない。
+本書の「必須」は実装要件、「推奨」は既定案、「将来」はMVP対象外を表す。コード例は自アプリの契約例であり、MastraやOrcaRouterの実SDK構文を保証するものではない。
 
 ## 1. 目的とプロダクト範囲
 
@@ -42,7 +42,7 @@ TypeScript化の目的は、HTTP・業務ロジック・Agent間の型と開発�
 | Playbook | 業務の切替は業務別Agent追加ではなく、バージョン付き手順・制約・完了条件の切替 |
 | Verification Loop | Plan → Execute → Verify → Re-plan。Tool成功だけで業務完了にしない |
 | Read-only intelligence | OCR、検索、抽出、レビューは助言・候補を返す。正式状態や承認を変更しない |
-| Model Router/Fallback | 能力・データ取扱条件でモデルを選び、障害時に互換候補へ切替 |
+| Model Policy/Fallback | 能力・データ取扱条件で許可モデルを選び、障害時に互換候補へ切替 |
 | Durable execution | 再起動、重複配送、ユーザー操作との競合を前提とする |
 | Backend authority | 認可、業務ルール、期限算定、承認、監査、永続化はバックエンドの責務 |
 
@@ -54,7 +54,7 @@ Cognitionの一次資料から採るのは、Contextと意思決定の一貫性�
 
 ### 3.1 採用する構成
 
-モノレポ内にWeb、バックエンドサーバー、AIサーバーを置く。バックエンドとAIは別プロセス・別デプロイ単位とし、どちらもHonoをHTTPフレームワークとして利用する。バックエンドは公開API、業務ルール、正式状態を所有する。AIサーバーは内部API、Orch Router、Mastra、Context Engine、Model Routerを所有する。
+モノレポ内にWeb、バックエンドサーバー、AIサーバーを置く。バックエンドとAIは別プロセス・別デプロイ単位とし、どちらもHonoをHTTPフレームワークとして利用する。バックエンドは公開API、業務ルール、正式状態を所有する。AIサーバーは内部API、Workflow/Playbook、Mastra、Context Engine、Model Policy、OrcaRouter Adapterを所有する。
 
 ```text
 Frontend (apps/web)
@@ -73,14 +73,14 @@ Firestore: 業務状態 / Proposal / Approval / AgentRun / Audit / Outbox
 AI Server (apps/ai-server, Hono; internal only)
     │ Run検証・実行所有権取得
     ▼
-Orch Router [必須Adapter]
-    │ 許可済みRouteの選択
+Application Route Registry
+    │ operationに対応する許可済みWorkflowを決定
     ▼
 Mastra Workflow
     ├── Context Engine ── internal HTTP ──→ Backend Query API
     ├── Primary Case Agent
     ├── Read-only intelligence
-    ├── Model Router → Provider Adapter → LLM
+    ├── Model Policy → OrcaRouter Adapter → LLM
     ├── Tools ───────── internal HTTP ──→ Backend Proposal API
     └── Verify / suspend / resume
                                       │
@@ -91,13 +91,13 @@ Firestore runtime専用領域: Mastra Snapshot（専用Storage Adapter）
 Scheduler: Outbox再配送・期限確認・待機Run照合
 ```
 
-FrontendからAIサーバー、Firestore、Cloud Storage、Mastra、LLM、Orch Routerへ直接業務通信しない。MVPのアップロード/ダウンロードもバックエンド公開APIで仲介する。認証基盤とのログイン通信は業務データAPIと別の認証チャネルとして扱う。
+FrontendからAIサーバー、Firestore、Cloud Storage、Mastra、LLM、OrcaRouterへ直接業務通信しない。MVPのアップロード/ダウンロードもバックエンド公開APIで仲介する。認証基盤とのログイン通信は業務データAPIと別の認証チャネルとして扱う。
 
 ### 3.2 デプロイ案
 
 - Node.jsのサポート中LTSを採用し、Hono/Mastraの採用版に対応するバージョンを固定する。
 - `apps/backend-server`: 公開APIとAI向け内部APIを持つHonoサーバー。Cloud Runを既定のデプロイ候補とする。
-- `apps/ai-server`: IAM認証された内部Honoサーバー。Orch Router、Mastra、Model Routerを実行し、Cloud Tasks等の配送基盤またはバックエンドから呼ぶ。
+- `apps/ai-server`: IAM認証された内部Honoサーバー。Workflow/Playbook、Mastra、Model Policy、OrcaRouter Adapterを実行し、Cloud Tasks等の配送基盤またはバックエンドから呼ぶ。
 - Firestore + Cloud Storage + Secret Managerを利用。Queue/SchedulerはInfrastructureのAdapter経由。
 - 両サービスは別のService Account、環境変数、デプロイ設定、スケール設定を持つ。AIサーバーには個人のBearer Tokenを配送しない。
 - 業務用FirestoreとCloud Storageへの読み書き権限はバックエンドに限定する。AIサーバーにはMastra runtime領域だけの資格情報を与える。
@@ -251,14 +251,14 @@ aftercare/
 | Backend Infrastructure | 業務Firestore、原本Storage、Queue、AI Server Client | AI判断、Mastra Snapshot |
 | AI Hono Presentation | Service認証、dispatch/resume/cancelの入力検証、実行受付 | User認証、公開画面DTO、業務DB操作 |
 | AI Application/Orchestration | 実行経路、Context、Playbook、能力要求、検証方針 | 業務状態の確定、業務Firestore Repository |
-| AI Infrastructure | Mastra、Orch接続、モデル接続、Backend Client、runtime Snapshot | 業務状態の直接読書き |
+| AI Infrastructure | Mastra、OrcaRouter接続、Backend Client、runtime Snapshot | 業務状態の直接読書き |
 | Composition root | 各サービス内でPortへ実装を注入しHonoを起動 | サービスを跨ぐ関数注入、業務ルール |
 | Public Contracts | Frontend ↔ BackendのSchema/DTO | Entity、秘密情報、内部API型 |
 | Internal Contracts | Backend ↔ AIのSchema/DTOとエラー分類 | Domain Entity、SDK型、資格情報 |
 
-各サービス内の依存方向は`Presentation → Application → Domain/Orchestration`、`Infrastructure → ApplicationのPort`。サービス間は内部HTTP契約だけで接続する。BackendからAIのMastra/Orch実装をimportせず、AIからBackendのApplication/Domain/Firestore実装をimportしない。
+各サービス内の依存方向は`Presentation → Application → Domain/Orchestration`、`Infrastructure → ApplicationのPort`。サービス間は内部HTTP契約だけで接続する。BackendからAIのMastra/OrcaRouter実装をimportせず、AIからBackendのApplication/Domain/Firestore実装をimportしない。
 
-`web → public-contracts`だけを許可し、webからbackend-server、ai-server、internal-contractsへのimportをCIで拒否する。`backend-server ↔ ai-server`の直接importも拒否し、両方が`internal-contracts`に依存する。Mastra SDKは`ai-server/infrastructure/mastra`、Provider SDKは`ai-server/infrastructure/models`、Orch SDKは`ai-server/infrastructure/orch`に閉じ込める。
+`web → public-contracts`だけを許可し、webからbackend-server、ai-server、internal-contractsへのimportをCIで拒否する。`backend-server ↔ ai-server`の直接importも拒否し、両方が`internal-contracts`に依存する。Mastra SDKは`ai-server/infrastructure/mastra`、推論ゲートウェイ固有処理は`ai-server/infrastructure/orcarouter`に閉じ込める。
 
 型を共有できるモノレポでも、サービス間の呼出しは必ず内部HTTP Clientを通す。これにより、別デプロイ時とローカル時の認証・タイムアウト・再試行・契約検証を同じ経路で確認する。
 
@@ -573,67 +573,51 @@ AIへ`updateFirestore / completeTaskDirectly / approve / executeArbitraryHttp / 
 
 Reviewerは必要なProposal、根拠、Ruleだけを受け取って独立に検証する。Primaryの長大な会話や結論に無条件に追従させない。Reviewerの結果は助言であり承認や正式変更ではない。
 
-## 13. Orch Router【必須】
+## 13. OrcaRouterと業務経路【必須】
 
-### 13.1 責務
+### 13.1 責務の分離
 
-Orch Routerは「どの業務実行経路を使うか」を選択する。Mastraは選択された経路を実行し、Model Routerは必要なLLMを選ぶ。この三つを分離する。
+OrcaRouterは、許可されたモデルへ推論要求を送るゲートウェイとして使用する。どの業務Workflowを実行するかは、Backendが発行した`operation`とAI Server内のApplication Route Registryで決定する。モデルに業務経路、権限、Playbookを自由選択させない。
 
-参照会話と今回の依頼には、必須製品の公式URL、SDK名、版がない。名称から特定の論文・OSS・製品と断定しない。本書ではOrchestration Routerとしての論理契約を定義し、指定製品への対応をAdapterの実装課題とする。
+| 判断 | 所有者 |
+|---|---|
+| 実行してよいoperation | Backendの受付Policyと`AI_CONNECTED_OPERATIONS` |
+| operationに対応するWorkflow / Playbook | AI Applicationのレビュー済みRoute Registry |
+| Core / Researchで使えるモデルとFallback順 | Model Policy |
+| 推論要求の送信 | OrcaRouter Adapter |
+| AI提案を正式状態へ反映するか | Backend Command Handler |
 
-```ts
-interface OrchRouterPort {
-  route(input: RouteRequest): Promise<RouteDecision>;
-}
-type RouteRequest = {
-  operation: string;
-  resourceKinds: string[];
-  allowedRouteIds: string[];
-  hasSuspendedRun: boolean;
-  policyVersion: string;
-};
-type RouteDecision = {
-  routeId: string;
-  playbookId?: string;
-  reasonCode: string;
-  routerVersion: string;
-  externalDecisionId?: string;
-};
-```
+OrcaRouter固有のURL、認証、request ID、利用量、費用はInfrastructure Adapterに隔離する。Workflow、Agent、PlaybookからOrcaRouter SDKを直接呼ばない。外部ゲートウェイへ個人情報や原本を無条件に送らず、Backendが許可したContextだけをモデル入力へ変換する。
 
-入力は最小限の業務分類・リソース種別とする。外部Routerへ個人情報や原本を送ることを既定にしない。SDKが別の入力を要求する場合は送信データを明記したADRを作る。
+### 13.2 Application Route Registry
 
-### 13.2 Route Registry
-
-| operation | 許可するrouteId | 実行先 |
+| operation | Workflow / route | 実行先 |
 |---|---|---|
-| document.analyze | document-ingestion-v1 | Mastra Workflow |
-| case.plan | case-planning-v1 | Mastra Workflow内のCase Agent |
-| task.prepare | task-preparation-v1 | Playbook指定Workflow |
-| case.ask | case-guidance-v1 | read-onlyモードのCase Agent |
-| task.monitor | task-monitoring-v1 | 決定的検査中心のWorkflow |
-| case.escalate | professional-escalation-v1 | 引継ぎ資料Workflow |
+| `document_analysis` | `document-review-v1` | 検査済み加工版を扱うMastra Workflow |
+| `case_planning` | `planning-execution-v1` / `case-planning/v1` | Primary Case Agentを使う計画Workflow |
+| `task_guidance` | `procedure-guidance-v3` / `procedure-guidance/v1` | 調査と案内のWorkflow |
+| `chat_reply` | `chat-reply-v1` / `chat-reply/v1` | 読み取り専用の相談Workflow |
 
-通常のCRUDはAI起動ではないのでRouterを通さない。新しいAI Runは必ずOrch Adapterを通る。未知Route、許可外Tool、操作と矛盾するRoute、未知PlaybookはRouter返答後に拒否する。
+通常のCRUDはAI起動ではないためRoute Registryを通さない。未知のoperation、route、Playbook、Toolは実行前に拒否する。routeId、Playbook版、Model Policy、Provider attemptは追跡可能にする。再試行やresumeでは保存済みrouteを維持し、別Workflowへ変更する場合は新しいRunとして受け付ける。
 
-Route結果はAI ServerからBackend内部APIへ報告し、BackendがAgentRunへ保存する。処理途中の再試行では無断で変更しない。resumeもOrch Adapterを入口にするが、保存済みRouteだけを候補として渡す。別Workflowへの変更が必要なら新Runとして再計画する。
+### 13.3 接続・障害・証跡
 
-### 13.3 障害と実製品確認
+- 接続先はレビュー済みのOrcaRouter endpointに固定し、任意URLやredirectを許可しない。
+- gateway障害は上限付きで再試行し、Model Policyで許可された場合だけ互換モデルへFallbackする。開発用mockへ黙って切り替えない。
+- API keyがない場合もlivenessは応答できるが、実行受付とreadinessはfail closedする。
+- OrcaRouter request ID、実際のmodel、token usage、latency、概算費用をAI Runtime専用telemetryへ記録する。Prompt、回答本文、Case情報、資格情報はprovider metricsへ保存しない。
+- gatewayの利用証跡は、業務Workflowの妥当性やモデル品質の証明とは分けて評価する。
+- ローカル用Policy、保持日数、training利用可否の設定値を、外部事業者の実際の契約条件の証明として扱わない。
 
-- Router障害時はbounded retry後に`retry_scheduled`または`needs_attention`。本番・ハッカソン実演でmockへ黙って切り替えない。
-- ローカルテスト用Fake Adapterは可。ただし実Orch利用の要件を満たしたとは扱わない。
-- 接続完了条件は、指定SDK/APIを実際に呼び、返った結果がRoute選択へ使われ、無効Routeが拒否され、利用証跡をRunに保存できること。
-- 指定製品がモデル選択専用だった場合、論理Orch Routerはアプリ側で保ち、その製品をModel RouterのAdapterとして組み込む案にADRを更新する。製品の能力を確認せずAgent/Workflow選択を行えると仮定しない。
+現在の開発用接続、検証範囲、費用照合は [OrcaRouter接続](../apps/ai-server/ORCAROUTER.md) を正本とする。本番導入ではProvider Policy、送信データ、保持条件、IAM、予算、障害時運用を別途承認する。
 
-この未確定事項は文書作成を妨げないが、「指定Orch Router統合済み」という実装完了判定は保留となる。
-
-## 14. Model Router / Fallback
+## 14. Model Policy / Fallback
 
 モデル選択は`capability requirements → policy → provider adapter`とする。Agent定義やPlaybookにProvider SDK呼出しを埋め込まない。
 
 能力は単一文字列だけでなく、`reasoning / structured-output / vision / tool-calling / context-window / latency / data-policy`の組合せで表現。モデル名と優先順位は設定として管理し、実装開始時に利用可能性を確認して固定する。
 
-Mastra AgentのモデルにはModel Routerに対応するAdapterを注入する。MastraのTool loopを維持し、Agentの外側で別の汎用LLM loopを二重実装しない。具体的な接続方式と型は採用Mastra版に対して検証する。
+Mastra AgentにはModel Policyで許可したAdapterを注入する。MastraのTool loopを維持し、Agentの外側で別の汎用LLM loopを二重実装しない。具体的な接続方式と型は採用Mastra版に対して検証する。
 
 | エラー種別 | 方針 |
 |---|---|
@@ -773,8 +757,8 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 - document-ingestion / case-planning / task-preparation / case-guidanceの縦通し。
 - Monitoringは期限・待機状態の決定的検査と再計画要求まで。
 - Task、確認状態付きDeadline、本人Decision記録、Proposal、Approval、Evidence、Audit。
-- 必須Orch Routerの実接続、Route制約、利用証跡。
-- Model Routerと最低2 Providerの障害切替。
+- OrcaRouter経由の実推論、Application Route制約、Provider利用証跡。
+- Model Policyと互換モデルへの障害切替。
 - Firestore Workflow Storage Adapter、Suspend/Resume、再起動復旧。
 - Case lease、version検証、Idempotency、Outbox、重複配送処理。
 - 進捗ポーリング、承認待ち/書類待ち表示、取消・再試行。
@@ -792,10 +776,10 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 
 | 段階 | 実装 | 完了条件 |
 |---|---|---|
-| 0 | Orch実製品確認、SDK版固定、Firestore Snapshot Adapterスパイク | Orch実呼出し、保存→プロセス終了→再開が動く |
+| 0 | OrcaRouter接続、SDK版固定、Firestore Snapshot Adapterスパイク | gateway経由の実推論と、保存→プロセス終了→再開が動く |
 | 1 | workspace、依存制約、Backend Hono、認証、公開契約、Domain | 非AIのCase/Task CRUDが認可付きで通る |
 | 2 | AI Hono、Service認証、内部契約、Backend/AI Client、Outbox | 2サービス間のcontract testと重複配送試験が通る |
-| 3 | Command、version、監査、Context Engine、Playbook、Orch、Model Router、Case Agent | AIが内部API経由で提出した根拠付きProposalだけが検証を経て反映される |
+| 3 | Command、version、監査、Context Engine、Playbook、Route Registry、Model Policy、Case Agent | AIが内部API経由で提出した根拠付きProposalだけが検証を経て反映される |
 | 4 | 文書解析、書類待ち、承認待ち、準備資料、Verify | 再起動を跨いだ縦通しシナリオが成立 |
 | 5 | 画面接続、Evals、復旧手順、運用設定 | 受入条件を満たしてMVP完成 |
 
@@ -819,7 +803,7 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 - 準備資料の完了が、保険金請求受付や受領完了として表示されない。
 - 状態変更（Task status、確認、方針、進捗、既読、除外、利用停止）がPATCHでは変更できず、Commandでのみ遷移し実行者・時刻・出所が残る。
 - 公開APIのbodyで`source`/`agentRunId`/`confirmation`等を送っても拒否され、AI候補が正式状態に自動昇格しない。
-- 指定Orch Routerを実利用した証跡と、その結果に対応する実行Routeが確認できる。
+- OrcaRouterを経由したProvider利用証跡と、アプリケーションが許可した実行Routeを別々に確認できる。
 
 テストはDomainの状態遷移/期限/承認、Backend ↔ AIのconsumer/provider contract、Firestore Emulatorの並行処理、Storage Adapterの契約、AI Server再起動/重複配送の統合、一本のE2Eを中心とする。E2Eでは両サービスを実HTTPで接続し、in-process adapterへ差し替えない。LLM Evalsは抽出の根拠一致、Task妥当性、重大項目欠落、引用の正確性、越権Tool要求の拒否を評価する。実人物の書類をテストfixtureに含めない。
 
@@ -835,7 +819,7 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 | Mastra → Go Tool API | AI Hono → Backend HonoのRun scope付き内部API |
 | 独立したDocument/Planning/Guidance Agent | 共通Case Agent + Workflow + Playbook/権限モード |
 | Go側のAgentRun/Event/Audit | Backend Application/Firestoreで維持 |
-| Model Gateway | AI Server内のModel Router/Provider Adapter |
+| Model Gateway | AI Server内のModel Policy/OrcaRouter Adapter |
 
 既存Go実装がある場合は、先に公開契約・データ形・状態遷移を一覧化して互換性テストを作る。機能単位で切替え、同じCaseを旧Go Writerと新TypeScript Writerが無調整で同時更新する状態を作らない。既存データにはschemaVersionを付け、必要な移行はdry-run可能にする。実装が未着手ならGo用ディレクトリは作らない。
 
@@ -845,7 +829,7 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 
 | 項目 | 現時点の方針 | 実装前に必要な確認 |
 |---|---|---|
-| Orch Routerの製品 | 必須Adapterとして確保 | 公式URL、SDK/API名、必須利用の判定条件、対応機能 |
+| OrcaRouterの本番利用条件 | 推論Gateway Adapterとして開発接続済み | 契約、保持条件、上流Provider、必須利用の判定条件、費用照合 |
 | Mastra Storage互換 | Firestore Workflow Adapterを第一案 | 導入版の公開Storage契約と再起動試験 |
 | SDK/Node版 | サポート中の互換セットを固定 | package metadataと実接続で検証 |
 | LLM | 能力・送信データ条件を満たす2 Provider | 利用権限、モデル名、データ保持条件 |
@@ -854,7 +838,7 @@ Firestore Adapterの互換性が確保できない場合は、ADRでMastra runti
 | 保険手続きRule | 一つの確認済みPlaybookから開始 | 対象機関の最新案内と業務レビュー |
 | 保存期間/削除 | データ種別ごとに定義 | 業務要件と運用方針 |
 
-設計仕様書の作成は完了しても、上記の接続・互換性が検証されたことにはならない。特にOrchの製品特定とFirestore Snapshot実装は最初の技術検証として扱う。
+設計仕様書の更新は、本番接続・互換性・業務品質の検証完了を意味しない。OrcaRouterの開発用実推論とAI Runtime Snapshotは個別に検証し、本番のProvider Policy、IAM、保持条件、費用は配備前に再確認する。
 
 ### 参照資料（2026-09-20確認）
 

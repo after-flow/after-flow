@@ -47,9 +47,7 @@ make down                                            # 全停止
 ### 配送が有効になる条件
 
 workerが起動していても、Backend HTTPが `AI_CONNECTED_OPERATIONS` を受け付けなければAI向けOutboxは作られない。
-ローカルE2Eで有効にするのは `task_guidance` だけで、`.env` に `AI_CONNECTED_OPERATIONS=task_guidance` と
-`ORCAROUTER_API_KEY` を設定して `make up` し直す。既定は空のままにし、APIキーやworkerが無い環境で接続済みと表示しない。
-`case_planning`・`chat_reply`・`document_analysis` はこの段階では有効にしない。
+ローカルE2Eでは、試す操作だけを `.env` の `AI_CONNECTED_OPERATIONS` に指定し、`ORCAROUTER_API_KEY` を設定して `make up` し直す。例えば相談・手順案内・書類読み取りを試す場合は `task_guidance,chat_reply,document_analysis` とする。既定は空のままにし、APIキーやworkerが無い環境で接続済みと表示しない。`case_planning`は提案・承認・再開までを確認する場合だけ有効にする。
 
 AI Serverが未起動、readiness 503、timeout、5xxの場合、workerはイベントを成功扱いせずRETRYABLEとして残す。
 `OUTBOX_DELIVERY_TIMEOUT_MS` を超えると打ち切り、Runと案内を失敗として確定する。
@@ -88,7 +86,7 @@ tickが2周期以上出ない場合はcontainerの状態（`make ps`）とFirest
 - 各tickで担当tenantのRunを安定した100件ページで照合する。先行Inbox、Snapshot保存後に通知できなかった待機、期限切れlease/RUNNINGを回復する。
 - SnapshotメタデータはAI内部HTTP経由だけで確認。1件の照会失敗はfailedとして数え、後続Runを続ける。同意/権限失効RunはHTTP照会前に取消す。
 - `agent.resume` / `agent.recover` はSYSTEM生成。Scoped clientが保存済みRunの開始者を再認可してから配送する。
-- 実検査が未完了のため、`agent.document_analysis` と文書本文配送、DOCUMENTS条件の自動再開は無効。この実装を#27や実AI/Mastra/Orch接続完了とは扱わない。
+- `agent.document_analysis` は開発用`passthrough-dev`検査を明示した場合だけ配送できる。これは実OCRやマイナンバー検知・マスキングではない。DOCUMENTS条件の自動再開は本番相当の検査接続まで無効。
 
 ## 監視
 

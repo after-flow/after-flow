@@ -62,14 +62,14 @@ AIは提案者であり、業務状態の書き込み主体ではありません
 
 | 領域 | 現在の状態 |
 | --- | --- |
-| Frontend | 主要画面とMSWによるモック動作を実装済み。刷新済みUIを実Public APIへ接続する作業が今後の中心です。 |
+| Frontend | 主要画面は既定でBackend Public APIへ接続します。MSWは `VITE_USE_MOCK=true` のオフラインデモでだけ使用します。 |
 | Backend | Public/Internal API、業務ドメイン、Firestore/Storage Adapter、認証・認可境界、AgentRun/Outboxの基盤を実装済みです。 |
-| AI Agent | 実行Runtime、Workflow、Backend Client、評価などの基盤モジュールとテストがあります。ただし、標準起動時の本番向けProvider・Orchestrator・Runtime構成は未接続です。 |
-| Authentication | Firebase Authenticationを採用済みです。Frontend/Backendの実接続、失効確認、招待などは未完了です。 |
+| AI Agent | Runtime、Workflow、Backend Client、Mastra、OrcaRouter経由の開発用推論構成があります。業務操作は `AI_CONNECTED_OPERATIONS` で明示したものだけを受け付け、本番向けProvider・IAM・運用構成は未完了です。 |
+| Authentication | Firebase Client SDK、Backendのtoken検証境界、ローカルAuth Emulator、7日間のsession上限を実装済みです。本番Firebase接続、失効確認、招待は未完了です。 |
 | 非同期Worker | `make up` で `backend-worker` container が常駐し、Outboxの配送とRunの照合を行います。本番デプロイへの組み込みは未完了です。 |
 | 書類検査 | 検査状態とAI投入制御はありますが、マイナンバー等を実際に検出・マスキングする検査Adapterは未選定・未実装です。 |
 
-`/health` や `/internal/v1/health` の成功は、外部AI ProviderやOrchestratorまで準備できていることを意味しません。
+`/health` や `/internal/v1/health` の成功は、OrcaRouter、AI Runtime、Worker、業務操作まで準備できていることを意味しません。AI Serverの実行compositionは `/internal/v1/ready` で別に確認します。
 
 ## Dockerでまとめて起動する
 
@@ -177,9 +177,9 @@ Firestoreの永続化処理を変更した場合は、`pnpm test:firestore` に�
 
 ## ドキュメント
 
+- [ドキュメント案内](docs/README.md)
 - [アーキテクチャ](docs/architecture.md)
 - [AIエージェント構成](docs/agent-architecture.md)
-- [FrontendからBackendへの引き継ぎ](docs/backend-handoff-2026-09-21.md)
 - [CI/CD運用](docs/ci-cd.md)
 - [ローカルでSwagger UIから業務APIを試す](docs/runbooks/local-swagger.md)
 - [APIドキュメント](docs/api)

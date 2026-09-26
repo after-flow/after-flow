@@ -1,5 +1,7 @@
 # バックエンドへの申し送り（2026-09-21 フロントエンド刷新分）
 
+> **履歴資料:** これは2026-09-21時点のFrontend刷新で見つかった差分です。多くの項目は後続実装で解消されています。現在の公開契約は [Public OpenAPI](api/public-openapi.yaml) と [Frontend / Backend対応表](api/frontend-backend-mapping.md)、サービス状況は [Backend README](../apps/backend-server/README.md) を参照してください。
+
 フロントエンドを作り直した際に、API・Rule Engine・エージェント側で対応や判断が必要になった項目をまとめます。
 モック（`apps/web/src/mocks/`）は、ここに書いた動きを再現しています。
 迷ったときは、モックの挙動を手本にしてください（特に `apps/web/src/mocks/rules.ts` と `apps/web/src/mocks/analysis.ts`）。

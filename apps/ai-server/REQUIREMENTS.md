@@ -1,10 +1,10 @@
 # AI Server 要件定義
 
-> OrcaRouter接続の更新（2026-09-21）: 実製品は推論ゲートウェイ。本文の旧Orch業務Route APIの仮定に代わり、明示モデルへの実推論を接続する。詳細・検証範囲は [OrcaRouter接続](ORCAROUTER.md) を参照。業務経路は引き続きWorkflow/Playbookで制限する。
+> OrcaRouterは推論ゲートウェイとして扱う。業務経路はBackendのoperationとAI ServerのApplication Route Registryで制限し、外部製品に選択させない。詳細・検証範囲は [OrcaRouter接続](ORCAROUTER.md) を参照。
 
-- 版: 1.2
+- 版: 1.3
 - 決定日: 2026-09-20
-- 状態: 機能・責務・初期提供範囲を確定。実装・実接続の完了を示す文書ではない。
+- 状態: 機能・責務・初期提供範囲の正本。現在の接続状況は [AI Server README](README.md) を参照。
 - 対象: `apps/ai-server`。コアと検索・調査の2エージェントを同一AIサービス内で実装する。
 
 ## 1. 文書の位置付け
@@ -13,7 +13,7 @@
 
 Backend提供範囲の拡張は [Issue #3](https://github.com/mimish0778/after-flow/issues/3)、接続条件は [実行制御ADR](../../docs/adr/0003-execution-control.md)、[確定経路ADR](../../docs/adr/0004-confirmation-path.md)、[書類検査ADR](../../docs/adr/0002-document-inspection.md) を参照する。本書はこれらの必須境界を緩めない。
 
-技術製品・対象機関の資料・運用値の選定が必要な項目は第14章の提供開始条件として管理する。未接続をFakeや成功固定で補って本番提供可能としない。Mastra 1.67.0、Skill/Playbook定義、案内用2 Agent、内部HTTP、Context、P-01 Workflowを実装し合成fixtureで検証している。開発ComposeはOrcaRouter実モデルと永続Runtimeをハッカソン用設定で起動できるが、production用Policy・同意grant・Backend worker・画面E2Eは未接続。採用判断・実装範囲・Devinへの引継ぎは [実装方針](IMPLEMENTATION.md) を参照する。
+技術製品・対象機関の資料・運用値の選定が必要な項目は第14章の提供開始条件として管理する。未接続をFakeや成功固定で補って本番提供可能としない。Mastra 1.67.0、Skill/Playbook定義、2 Agent、内部HTTP、Context、主要Workflowを実装し合成fixtureで検証している。開発ComposeはOrcaRouter経由の推論と永続Runtimeをハッカソン用設定で起動できるが、production用Policy・同意grant・IAM・監視は未接続である。採用判断と実装範囲は [実装方針](IMPLEMENTATION.md) を参照する。
 
 ## 2. 目的と提供範囲
 
@@ -52,7 +52,7 @@ Backend：公開API・認可・正式状態・人の承認
         v
 AI Server / Hono（内部公開のみ）
 |
-+-- Orch Router：許可された業務経路の選択
++-- Application Route Registry：operationに対応するWorkflowを制限
 |
 +-- ハーネス：Mastra Agent / Workflow + アプリ固有の実行管理
     |
@@ -70,7 +70,7 @@ AI Server / Hono（内部公開のみ）
     |     許可された検索・Web/PDF取得ツール
     |
     +-- 共通基盤
-          Model Router・Backend Client・Schema検証
+          Model Policy・OrcaRouter Adapter・Backend Client・Schema検証
           実行上限・進捗記録・永続Snapshot・待機/再開
 
 検索結果・出典・適用条件・未確認事項
@@ -230,12 +230,12 @@ Toolは入力/出力Schema、許可Agent/モード/scope、timeout、最大出�
 
 Run/research/Action ID、Context・Skill・Playbook・Workflow・Rule・モデルの版、Tool結果参照、採用根拠、短い判断理由、時間・token・費用・失敗分類を記録する。秘密情報・原本全文を通常ログへ残さず、非公開の内部思考過程の保存を要求しない。
 
-## 10. Router・モデル接続
+## 10. 業務経路・モデル接続
 
-- Orch Routerは新規Runの許可経路を選択し、Mastraが実行する。検索の子処理は親の許可経路内で実行し、別の自律ルーターAgentを追加しない。
-- Orchは必須Adapter。製品の特定・実呼出し・返答検証・利用証跡をもって接続完了とする。自作switchやFakeへの黙った切替で代替しない。
+- Backendが許可したoperationをApplication Route RegistryでWorkflowへ対応付け、Mastraが実行する。検索の子処理は親の許可経路内で実行し、別の自律ルーターAgentを追加しない。
+- OrcaRouterは必須の推論Gateway Adapterとして隔離する。APIの実呼出し・応答検証・request ID・利用量の証跡を記録し、Fakeへの黙った切替で代替しない。
 - 再開では保存済みRouteだけを候補にし、別のWorkflowが必要なら新Runとして再計画する。
-- Model Routerは能力、構造化出力、Tool利用、Context量、情報提供Policy等からモデルを選ぶ。コアと検索で別モデルを選択可能だが、モデル数とAgent数は別に扱う。
+- Model Policyは能力、構造化出力、Tool利用、Context量、情報提供Policy等から許可モデルとFallback順を決める。コアと検索で別モデルを選択可能だが、モデル数とAgent数は別に扱う。
 - 最低2 Providerで障害切替を検証する。Fallback後も同じSchema・Tool権限・同意/データ取扱条件を守る。安全拒否や業務検証拒否の回避には使わない。
 - MastraのTool loopと重複する汎用推論ループを外側に実装しない。SDKの具体的な型・保存APIは採用版の公式契約で確認する。
 
@@ -263,7 +263,7 @@ Run/research/Action ID、Context・Skill・Playbook・Workflow・Rule・モデ�
 | A-09 | P-04の準備完了 | 指定資料版、必要項目、未解決事項、承認とEvidenceを確認し、外部申請完了と表示しない |
 | A-10 | 待機・再起動・先行イベント | プロセス終了後に再開でき、承認が先に届いてもイベントを失わず二重反映しない |
 | A-11 | 再送・取消・予算超過 | 重複Actionを適用せず、親子共有上限で停止し、途中結果と残作業を報告する |
-| A-12 | 実Router・Provider障害 | Orchの結果が経路に使われ、無効経路を拒否する。2 Provider間の切替で成功済みToolを再実行しない |
+| A-12 | 実Gateway・Provider障害 | OrcaRouter経由の利用証跡を記録し、Application Route Registryが無効経路を拒否する。Fallbackで成功済みToolを再実行しない |
 | A-13 | Backend/Webとの接続 | 独立プロセス・実HTTPで受付から結果取得まで通り、待機・部分完了・失敗を表示用DTOで区別できる |
 
 ### 評価方法
@@ -272,11 +272,11 @@ Run/research/Action ID、Context・Skill・Playbook・Workflow・Rule・モデ�
 - Skill/Playbookは正常、情報不足、矛盾、古い資料、訂正、越権誘導を含む固定の架空/合成ケースで評価する。同じケースを複数回実行し、成功率と時間・費用を記録する。
 - 根拠一致、引用の正確性、重大項目の欠落、確認済み/候補の区別、不要な調査を評価する。LLMの自己採点だけで合格にしない。
 - 固定ケースの期待動作をすべて確認し、権限越境・根拠捏造・無承認適用・訂正の無視が1件でもあれば提供を止める。試験合格を現実の全ケースへの無誤り保証としない。
-- Fakeによる基盤試験と実Adapter/モデル/Routerの評価を分けて報告する。P-01の段階完了とP-01〜P-04・A-01〜A-13を満たすMVP完了を区別する。
+- Fakeによる基盤試験と実Adapter/モデル/Gatewayの評価を分けて報告する。P-01の段階完了とP-01〜P-04・A-01〜A-13を満たすMVP完了を区別する。
 
 ## 13. 実装順序
 
-1. 内部契約・実行scopeを合わせ、Orchの製品確認とMastra Snapshot保存/プロセス終了/再開を技術検証する。
+1. 内部契約・実行scopeを合わせ、OrcaRouter経由の推論とMastra Snapshot保存/プロセス終了/再開を技術検証する。
 2. Context、Skill Registry、2つのAgent定義、Tool権限、ResearchRequest/Result、共有予算を実装する。
 3. P-01を独立Backendと実HTTPで接続し、調査→出典付き回答までを評価する。初期UI受入はチャット/手順案内と進捗取得を対象にする。
 4. 書類検査・配信条件を満たした後にP-02、正式確定経路の接続後にP-03を実装する。
@@ -289,7 +289,7 @@ Run/research/Action ID、Context・Skill・Playbook・Workflow・Rule・モデ�
 
 | 項目 | 維持する要件 | 有効化に必要な証拠 |
 |---|---|---|
-| Orch製品 | 必須Adapterと経路制約 | 製品/SDK/版の特定、実呼出しと経路選択の証跡 |
+| OrcaRouter | 必須の推論Gateway Adapter | SDK/版、実呼出し、request ID・利用量、送信データと保持条件の確認 |
 | Mastra/runtime保存 | 永続Snapshot・復旧 | 採用版の保存契約、業務DBと分離された設定、再起動試験 |
 | LLM/OCR/検索/取得Adapter | 許可された提供先、入出力契約 | 採用製品・版・利用権限・情報提供条件・実Adapter評価 |
 | Source Catalogと対象業務 | 確認済みの機関・地域・適用条件 | P-01の対象手続きとP-04の保険手続きについて資料と業務レビュー |
