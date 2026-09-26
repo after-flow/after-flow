@@ -1,6 +1,6 @@
 # AIエージェント構成
 
-[設計仕様](architecture.md)に基づく実装予定図。現在のAIサーバーはヘルスチェックのみ。Orch Routerの実製品は未確定。
+[設計仕様](architecture.md)に基づく現在の責務図。Primary Case Agentと読み取り専用の調査処理を分け、Backendだけが正式な業務状態を確定する。開発環境ではMastra、AI Runtime、OrcaRouter経由の推論を接続できるが、本番準備は別途必要である。
 
 ```mermaid
 flowchart TB
@@ -16,13 +16,13 @@ flowchart TB
     BUSINESS[("業務Firestore・原本Storage<br/>Backendのみアクセス")]
 
     subgraph AI["AI Server / Hono：内部公開のみ"]
-        ROUTER["Orch Router<br/>許可された実行経路を選択"]
+        ROUTER["Application Route Registry<br/>operationに対応するWorkflowを制限"]
         WORKFLOW["Mastra Workflow<br/>書類解析・計画・準備・案内<br/>監視・引継ぎ"]
         CONTEXT["Context Engine<br/>確認済み事実・候補・判断履歴・根拠"]
         PLAYBOOK["Playbook<br/>業務手順・制約・完了条件"]
         CORE["Primary Case Agent<br/>案件単位の計画・解釈・提案を集約<br/>案内モードには変更提案Toolを渡さない"]
         SUPPORT["読み取り専用の補助処理<br/>OCR・抽出・許可された情報源の検索・レビュー<br/>候補と助言のみ"]
-        MODEL["Model Router → Provider Adapter<br/>モデル選択・上限付き再試行・障害切替"]
+        MODEL["Model Policy → OrcaRouter Adapter<br/>許可モデル・上限付き再試行・障害切替"]
         TOOLS["Backend Client / Tools<br/>scope・Schema検証"]
         VERIFY["結果検証・再計画・待機・再開<br/>回数・時間・費用の上限"]
         SNAPSHOT[("永続Workflow Snapshot<br/>AI専用runtime領域")]

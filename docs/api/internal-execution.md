@@ -99,8 +99,9 @@ WaitRequestが消費したInbox IDとresume Job IDは永続化され、重複イ
 
 ## 未接続の範囲
 
-- DOCUMENTS条件の再開と文書本文配送は#25-27の実検査接続まで無効です。
+- 開発Composeでは`passthrough-dev`検査を明示した場合に限り、`document_analysis`へ埋め込みテキストを配送できます。実OCR、マイナンバー等の検知・マスキング、本番相当の文書検査は未接続です。
+- DOCUMENTS条件による自動再開は、本番相当の検査接続まで無効です。
 - AIは各Step前にcontrolを照会する必要があります。Backend側の取消は実AIプロセスの強制停止の証明ではありません。
-- 実AI/Mastra/Orchと本番サービスアカウントの接続検証は未実施です。livenessはreadinessの証明ではありません。
+- 開発用のMastra/OrcaRouter compositionと本番サービスアカウント、IAM、監視を含む接続検証は別です。livenessはreadinessの証明ではありません。
 
 Fake AI HTTPとのconsumer契約、実HTTPでのBackend provider、Emulator保存経路をテストします。

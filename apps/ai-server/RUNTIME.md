@@ -51,7 +51,7 @@ SDK retryは0に固定。複数Providerの実Fallbackは別PRで各attemptの課
 - WorkerのSTOPは協調停止。各外部呼出しでguardとAbortSignalを使い、heartbeat周期でもBackend取消を照合する。
 - 待機条件登録はBackend→Session.registerWait→Mastra suspend→snapshot保存→通知の順。通知を失ってもBackend照会で復旧する。
 - 保存失敗で202/完了を偽装しない。所有権を失ったWorkerは終端状態を書き換えない。
-- 実Orch/Provider/Source Catalog、業務別Handler、承認後の新Contextによる再検証、部分結果報告は後続PR。
+- 本番向けProvider Policy/Source Catalog、承認後の新Contextによる業務検証、部分結果の運用監視は別途必要。
 - mainは開発ハッカソン設定が揃う場合だけRuntimeを注入し、未設定時は503を維持する。ローカル接続を本番対応とは表示しない。
 
 検証: Firestore Emulatorで独立client間のclaim競合、Job衝突、旧所有権、累積上限、snapshot保存前後の再開、実Mastra Workflowの単一起動/完了、STOPを検証。Mastraの実ループでProvider/Tool実行前の予算停止を検証する。実Backendとの通し試験は後続。
@@ -69,4 +69,4 @@ mainはこのhostを使い、非productionでAPIキーがある場合だけハ�
 
 Backend Emulator試験に、独立AIプロセスへ実dispatchを送り、実Backend認証・Context・AI専用Firestore・
 実MastraチャットWorkflow・結果反映まで通す試験を追加する。二重配送しても返信は一つ。
-モデルとOrchは明示的な合成fixtureであり、実Provider品質やハッカソン接続の完了とは区別する。
+fixture試験のモデルは合成応答であり、OrcaRouter経由の実Provider品質評価とは区別する。

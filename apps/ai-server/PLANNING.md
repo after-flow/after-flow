@@ -18,7 +18,7 @@ WAIT再開は保存済み計画を使用し、Agent/提案送信を繰り返さ�
 
 ## 停止・本人意思の再検証
 
-案件の `planningRestriction` が非nullなら、Orch・モデル・検索・Proposal・承認待ちを開始せず、
+案件の `planningRestriction` が非nullなら、Workflow・モデル・検索・Proposal・承認待ちを開始せず、
 管理者への確認をWorkflowのquestionsに残し、BackendへNEEDS_ATTENTIONを報告する。
 停止情報が欠落しているBackendや古いSnapshotから、新しい提案を送らない。
 停止解除後は新Runで最新Contextから計画する。承認待ちからの再開でも最新の停止状態を確認し、
@@ -29,7 +29,7 @@ WAIT再開は保存済み計画を使用し、Agent/提案送信を繰り返さ�
 これはTemplateに指定された前提の照合であり、AIが相続方法の正否を判断する機能ではない。
 
 質問はWorkflow出力・Snapshot・Backendの実行結果に保持する。
-質問の画面操作導線、個別手続きの禁止、実Orch/Provider・業務資料を使う受入は継続課題。
+質問の画面操作導線、個別手続きの禁止、OrcaRouter経由の実モデル・業務資料を使う受入は継続課題。
 
 配置順はBackendの保存・提出防止PRを先行し、本変更でContext配信とAI側の検証を同時に更新する。
 旧AIは追加Contextを拒否し、新AIは停止情報のない旧Backendを拒否するため、両サービスの版を揃える。

@@ -104,7 +104,7 @@ pnpm --filter @aftercare/backend-server worker:once
 
 ## Authenticationと案件認可
 
-Firebase Authenticationを採用し、Google loginとメールアドレス・passwordを初期対象とする方針です。ただし、Firebase Client SDK、token失効確認、7日間のlogin上限、招待・共同利用などの実接続は未完了です。
+Firebase Authenticationを採用し、Google loginとメールアドレス・passwordを初期対象とします。FrontendのFirebase Client SDK、BackendのJWT検証境界、ローカルAuth Emulator、`auth_time`による7日間のlogin上限は実装済みです。本番projectへの接続、token失効・停止確認、招待・共同利用は未完了です。
 
 Firebaseはアカウントを認証し、Backendは保存済みmembershipを正本として案件ごとの権限を判定します。tenantやcase roleをtokenの自己申告だけで確定しません。詳細は [ADR 0001](../../docs/adr/0001-authentication-provider.md) を参照してください。
 
@@ -174,11 +174,11 @@ Emulatorで未検証の永続化動作を「確認済み」と扱わないでく
 
 ## 現在の未完了範囲
 
-- Firebase Authenticationの実装方式とstaging接続検証
+- Firebase Authenticationの本番project/JWKS、token失効・停止確認、staging接続検証
 - 同意文書と期限ルールの業務レビュー、本番用catalogの確定
 - 実書類検査Adapterの選定・実装
 - Outbox workerの常駐deploy、監視、alert
-- AI Provider、Orchestrator、対応operationとのE2E接続
-- 刷新後Frontendで必要になったAPI契約の確定と実装
+- 本番向けAI Provider、Runtime、対応operationとのE2E接続。ローカルComposeでは設定したoperationをOutbox経由で配送可能
+- 公開APIと画面の全シナリオを継続検証するブラウザーE2E
 
-Backendの次の作業は [Frontendからの引き継ぎ](../../docs/backend-handoff-2026-09-21.md) と [Outbox Runbook](../../docs/runbooks/outbox-worker.md) も参照してください。
+現在の契約は [Frontend / Backend対応表](../../docs/api/frontend-backend-mapping.md)、運用は [Outbox Runbook](../../docs/runbooks/outbox-worker.md) を参照してください。[Frontend刷新時の申し送り](../../docs/backend-handoff-2026-09-21.md) は2026-09-21時点の履歴資料です。

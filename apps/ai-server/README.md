@@ -141,7 +141,13 @@ pnpm --filter @aftercare/ai-server dev
 
 Runtimeには `AI_RUNTIME_PROJECT_ID`、`AI_RUNTIME_DATABASE_ID`、必要に応じて `AI_RUNTIME_EMULATOR_HOST` を設定します。`make up` はホスト非公開のAI専用Emulatorを起動し、AIコンテナを `restart: unless-stopped` で維持します。AIはBackend通信用、Runtime専用、OrcaRouter/許可済み公式HTTPS資料へのegress専用networkだけに参加します。`FIRESTORE_*`、`DOCUMENT_STORAGE_*`、`STORAGE_*`、`GOOGLE_APPLICATION_CREDENTIALS` など、Backendの業務データ用設定を流用してはいけません。
 
-ルート `.env` に `ORCAROUTER_API_KEY` を設定して `make up` を実行すると、`GET /internal/v1/ready` が200になります。キーが無いCIや `AI_RUNTIME_MODE=disabled` では503です。BackendのOutbox workerと公開画面からの操作は次の接続段階であり、開発Composeは `AI_CONNECTED_OPERATIONS` を既定で空のままにします。
+ルート `.env` に `ORCAROUTER_API_KEY` を設定して `make up` を実行すると、AI RuntimeとWorkerを含む実行compositionが接続され、`GET /internal/v1/ready` が200になります。キーが無いCIや `AI_RUNTIME_MODE=disabled` では503です。開発ComposeのBackend Outbox Workerは常駐しますが、画面からAI Runを起動するoperationは既定では空です。必要なものだけを明示します。
+
+```dotenv
+AI_CONNECTED_OPERATIONS=task_guidance,chat_reply,document_analysis
+```
+
+この設定はローカル開発用です。`document_analysis` は開発用の素通し検査を通った文書を扱いますが、実OCRやマイナンバー検出・マスキングを実装済みという意味ではありません。
 
 ## テストと評価
 
@@ -178,9 +184,10 @@ pnpm --filter @aftercare/ai-server eval:live-guidance --max-usd 5 --repetitions 
 
 - 本番向けAI Provider、credential、model allowlistの確定
 - production用のProvider Policy、同意grant、AI Runtime IAM/保持設定
-- Backend Outbox workerと公開画面からの実行配送
-- BackendとAI双方を含むdispatch、wait、resume、proposalのE2E検証
+- Backend Outbox workerの本番deploy、監視、alert。開発Composeでは常時実行済み
+- dispatch、wait、resume、proposalを含む本番相当環境でのE2E検証
 - AI専用Runtime Firestoreの本番project/database、IAM、index、保持期間の設定
+- 実書類検査・OCR・項目抽出、生成Artifact、定期実行の業務接続
 - production向けtimeout、DLQ、snapshot不整合、Provider障害の監視とRunbook
 - 品質・安全性・費用の継続評価と本番release基準の確定
 

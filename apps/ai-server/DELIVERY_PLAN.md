@@ -1,5 +1,7 @@
 # AI実装とPR一覧
 
+> **履歴資料:** これは初期実装をstacked PRで進めた時点の記録です。現在の状態は [AI Server README](README.md) と [実装方針](IMPLEMENTATION.md) を参照してください。
+
 起点: main `9385b67`。すべて前のブランチをbaseにしたstack。既存UIと業務のBackend所有、2 Agent、必須Orch利用を維持。
 
 | PR | 実装 |

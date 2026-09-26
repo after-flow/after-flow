@@ -1,7 +1,7 @@
 # ADR 0003: AgentRun・Outbox・Case leaseの実行制御
 
-- 状態: Backend内部契約・待機再開をFake AI HTTPで検証済み。実AI/Mastra統合は別Issue
-- 日付: 2026-09-20
+- 状態: Backend内部契約とAI Runtimeを開発環境で接続済み。本番配備・運用検証は未完了
+- 日付: 2026-09-20（2026-09-26 実装状況更新）
 - 関連Issue: #10（親）、#12（同意Policy）、#15（チャット）、#8（書類）
 
 ## 背景
@@ -53,7 +53,7 @@ AIの実行を受け付けてから結果が返るまでの間に、プロセス
 - 永続Outboxの配送・再配送・可視性タイムアウト、配送時の同意検査
 - AI Server向けHTTP Clientのポートと実装
 
-Backendの試験は独立したFake AI HTTPサーバーに対して行っています。実AIとMastraの統合は未検証です。
+Backendの契約試験は独立したFake AI HTTPサーバーで再現性を保ちます。後続実装により、開発ComposeではBackend Outbox Worker、AI Server、Mastra Workflow、AI Runtimeを実HTTPで接続できます。これは本番のIAM、監視、障害復旧まで検証済みという意味ではありません。
 
 ## 子Issueへ分割した範囲
 
@@ -73,6 +73,6 @@ Backendの試験は独立したFake AI HTTPサーバーに対して行ってい�
 - 同意・権限撤回はSnapshot HTTPの障害に依存せず取消し。AIは各Step前のcontrol照会でSTOPを確認する契約です。
 - Emulatorと独立Fake AI HTTPで先行承認、重複Job、遅着結果、lease失効、同意撤回、別workerプロセスでの待機復旧を検証。実Mastra Snapshot永続化の証明ではありません。
 
-## 対象外
+## 当初の対象外と後続実装
 
-AI Server内部のAgent・Workflow・Orch・Model Router・Mastra Snapshotの実装、サービス間の直接import、本番デプロイは含みません。AI側のタスクは別途検討します。
+このADRが決定した範囲には、AI Server内部のAgent・Workflow・OrcaRouter・Model Policy・Mastra Snapshotの実装と本番デプロイを含みません。AI側の実装は後続で追加されていますが、サービス間を直接importせず内部HTTPで接続する境界は維持します。

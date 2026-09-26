@@ -1,14 +1,16 @@
 # チャットWorkflow
 
-`chat-reply-v1`は認可済みのuser messageを取得し、ハーネスが毎回、承認済みSource Catalogを検索する。
-上位3件の公式資料を取得し、検索Agentが逐語引用を検証可能な調査結果にする。利用者の本文は検索Agentへ転送しない。
-コアAgentは検証済みの調査結果だけから、質問への直接回答を作る。一部の調査項目が未解決でも、根拠を確認できた範囲は回答し、内部の調査IDは表示しない。
+`chat-reply-v1`は認可済みのuser messageを取得し、決定的なintent分類を最初に行う。死亡後手続きの範囲外と外部行為の代行依頼は、Providerや検索を呼ぶ前に定型案内へ切り替える。
+
+公式制度を確認すべきintentでは、ハーネスが承認済みSource Catalogだけを検索し、検索Agentが取得済み資料から検証可能な調査結果を作る。利用者の本文を検索Agentへそのまま転送せず、ハーネスが許可した検索語と質問を使う。契約、口座、葬儀、遺品などの一般的な死亡後相談は、無関係な公式資料を根拠にせず、コアAgentが権限と出力範囲を制限した一般案内を返す。
+
+コアAgentは質問へ直接回答し、確認質問は本当に不足する案件情報に限定する。調査結果が得られない場合も、根拠がないことを隠さず一般案内を返し、出典不足だけを理由に回答を止めない。出典IDは実際に取得して回答を支えるものだけを残し、内部の調査IDやモデルが作った未知のIDは表示しない。
 
 報告前にBackendの取消、Context版/hash、有効期限、資料の鮮度を再検証する。
 paragraphs/questions/出典からハーネスが本文を組み立て、既存の`chat_reply`契約のbody/professionalNoticeへ送る。
 フロントのルート・表示・MSW fixtureは変更しない。引用先との参照整合は検査するが、文章の意味が根拠に支えられているかは品質評価も必要。
 
-接続モードではOrch route、Provider policy、Source Catalog、共有予算を実Handlerが適用する。
+接続モードではApplication route、Provider Policy、Source Catalog、共有予算を実Handlerが適用する。
 このWorkflowにはProposal/承認/正式変更Toolを登録しない。専門家の判断を代行せず、noticeの表示を引継ぎ実行済みとは扱わない。
 
 実Mastraの確認質問・調査/引用・非転送と、古いContext/未取得根拠での報告拒否を合成fixtureで検証する。
