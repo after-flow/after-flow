@@ -1,5 +1,5 @@
 # Local development image shared by three independent containers.
-FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS development
+FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS development
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 WORKDIR /workspace
@@ -41,7 +41,7 @@ FROM development AS ai-build
 RUN pnpm --filter @aftercare/ai-server... build \
     && pnpm --filter @aftercare/ai-server deploy --legacy --prod /opt/ai
 
-FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS runtime
+FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS runtime
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080
 WORKDIR /app
 USER node
