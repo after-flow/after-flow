@@ -25,8 +25,8 @@
     "smoke:orca": "pnpm --filter @aftercare/ai-server smoke:orca"
   },
   "devDependencies": {
-    "oxlint": "^1.81.0",
+    "oxlint": "^1.85.0",
     "typescript": "~6.0.2",
-    "yaml": "2.8.3"
+    "yaml": "2.9.1"
   }
 }
