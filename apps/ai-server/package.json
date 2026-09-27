@@ -26,7 +26,7 @@
     "@ai-sdk/openai-compatible": "1.0.54",
     "@google-cloud/firestore": "9.2.0",
     "@hono/node-server": "2.1.1",
-    "@mastra/core": "1.67.0",
+    "@mastra/core": "1.69.0",
     "hono": "4.13.8",
     "parse5": "8.0.0",
     "pdfjs-dist": "6.3.289",
