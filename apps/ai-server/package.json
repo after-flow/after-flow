@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@aftercare/internal-contracts": "workspace:*",
-    "@ai-sdk/openai-compatible": "1.0.54",
+    "@ai-sdk/openai-compatible": "3.0.55",
     "@google-cloud/firestore": "9.2.0",
     "@hono/node-server": "2.1.1",
     "@mastra/core": "1.67.0",
